@@ -44,6 +44,10 @@ else
   info "Updated to $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
 fi
 
+# ── Stop running containers (prevents SQLite lock during build) ───────────────
+info "Stopping running containers…"
+docker compose down --timeout 15
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 if [[ -n "$NO_CACHE" ]]; then
   info "Building images (no cache)…"
@@ -53,7 +57,7 @@ fi
 docker compose build $NO_CACHE
 
 # ── Deploy ────────────────────────────────────────────────────────────────────
-info "Restarting containers…"
+info "Starting containers…"
 docker compose up -d --remove-orphans
 
 # ── Health check ─────────────────────────────────────────────────────────────
