@@ -1,0 +1,327 @@
+import { useState, useEffect, useRef } from "react";
+import axios from "axios";
+import CandidateCard from "./CandidateCard.jsx";
+import FilterPanel from "./FilterPanel.jsx";
+
+const SETUP_COLORS = {
+  breakout: "bg-green-500",
+  pullback: "bg-blue-500",
+  pattern: "bg-purple-500",
+  momentum: "bg-yellow-500",
+  none: "bg-gray-500",
+};
+
+const PHASE_LABELS = {
+  idle: null, starting: "Starting", snapshot: "Snapshot",
+  screening: "Screening", charting: "Charting", analyzing: "Analyzing",
+  deep_analysis: "Deep Analysis", done: "Done", error: "Error",
+};
+
+const PHASE_COLORS = {
+  snapshot: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  screening: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  charting: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  analyzing: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30",
+  deep_analysis: "bg-pink-500/20 text-pink-400 border-pink-500/30",
+  done: "bg-green-500/20 text-green-400 border-green-500/30",
+  error: "bg-red-500/20 text-red-400 border-red-500/30",
+  starting: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+};
+
+function ScanProgress({ progress }) {
+  if (!progress || progress.phase === "idle") return null;
+  const phase = progress.phase;
+  const pct = Math.min(progress.percent ?? 0, 100);
+  const colorClass = PHASE_COLORS[phase] ?? PHASE_COLORS.starting;
+  return (
+    <div className="mb-4 p-4 bg-gray-900 border border-gray-800 rounded-xl">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          {phase !== "done" && phase !== "error" && (
+            <span className="inline-block w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+          )}
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${colorClass}`}>
+            {PHASE_LABELS[phase] ?? phase}
+          </span>
+          {progress.candidates_found > 0 && (
+            <span className="text-xs text-green-400">{progress.candidates_found} found</span>
+          )}
+        </div>
+        <span className="text-sm font-bold text-white">{pct}%</span>
+      </div>
+      <div className="w-full bg-gray-800 rounded-full h-2 mb-2">
+        <div className="h-2 rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${pct}%` }} />
+      </div>
+      {progress.message && <p className="text-xs text-gray-400 truncate">{progress.message}</p>}
+    </div>
+  );
+}
+
+export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart }) {
+  const [candidates, setCandidates] = useState([]);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
+  const [lastFetched, setLastFetched] = useState(null);
+  const [filters, setFilters] = useState({ setup_type: "", min_confidence: "" });
+  const [sortBy, setSortBy] = useState("confidence");
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [activeFilter, setActiveFilter] = useState(null);
+  const [budget, setBudget] = useState(null);
+  const pollRef = useRef(null);
+
+  useEffect(() => {
+    fetchCandidates(true);
+    fetchActiveFilter();
+    fetchBudget();
+    if (scanStatus?.running) startPolling();
+    return () => stopPolling();
+  }, []);
+
+  async function fetchActiveFilter() {
+    try {
+      const res = await axios.get("/api/filters");
+      const active = res.data.find(p => p.is_active) ?? null;
+      setActiveFilter(active);
+    } catch {}
+  }
+
+  async function fetchBudget() {
+    try {
+      const res = await axios.get("/api/portfolio/budget");
+      setBudget(res.data);
+    } catch {}
+  }
+
+  async function fetchCandidates(isInitial = false) {
+    if (isInitial) setInitialLoading(true);
+    else setRefreshing(true);
+    setError(null);
+    try {
+      const params = {};
+      if (filters.setup_type) params.setup_type = filters.setup_type;
+      if (filters.min_confidence) params.min_confidence = filters.min_confidence;
+      const res = await axios.get("/api/candidates", { params });
+      setCandidates(res.data);
+      setLastFetched(new Date());
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      if (isInitial) setInitialLoading(false);
+      else setRefreshing(false);
+    }
+  }
+
+  async function fetchStatus() {
+    try {
+      const res = await axios.get("/api/scan/status");
+      onScanStatusChange(res.data);
+      return res.data;
+    } catch { return null; }
+  }
+
+  function startPolling() {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
+      const status = await fetchStatus();
+      if (status && !status.running) {
+        stopPolling();
+        fetchCandidates();
+      }
+    }, 3000);
+  }
+
+  function stopPolling() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }
+
+  async function triggerScan() {
+    setError(null);
+    if (candidates.length > 0) {
+      if (!confirm(`Heute existieren bereits ${candidates.length} Kandidaten. Ergebnisse ersetzen und neu scannen?`)) return;
+    }
+    try {
+      await axios.post("/api/scan/trigger");
+      onScanStatusChange((prev) => ({
+        ...prev, running: true,
+        progress: { phase: "starting", message: "Initializing scan…", percent: 0, processed: 0, total: 0, candidates_found: 0 },
+      }));
+      onScanStart();
+      startPolling();
+    } catch (err) {
+      setError("Scan failed: " + err.message);
+    }
+  }
+
+  const isScanning = scanStatus?.running;
+  const progress = scanStatus?.progress;
+
+  // Sort candidates
+  const sorted = [...candidates].sort((a, b) => {
+    if (sortBy === "confidence") return b.confidence - a.confidence;
+    if (sortBy === "setup") return (a.setup_type || "").localeCompare(b.setup_type || "");
+    return 0;
+  });
+
+  return (
+    <div className="max-w-7xl mx-auto">
+      {/* Filter Profile Panel */}
+      {showFilterPanel && (
+        <FilterPanel onClose={() => { setShowFilterPanel(false); fetchActiveFilter(); }} />
+      )}
+
+      {/* Toolbar */}
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <select
+            value={filters.setup_type}
+            onChange={e => setFilters(f => ({ ...f, setup_type: e.target.value }))}
+            className="bg-gray-900 border border-gray-700 text-gray-300 text-sm rounded-lg px-3 py-2"
+          >
+            <option value="">All setups</option>
+            <option value="breakout">Breakout</option>
+            <option value="pullback">Pullback</option>
+            <option value="pattern">Pattern</option>
+            <option value="momentum">Momentum</option>
+          </select>
+          <select
+            value={filters.min_confidence}
+            onChange={e => setFilters(f => ({ ...f, min_confidence: e.target.value }))}
+            className="bg-gray-900 border border-gray-700 text-gray-300 text-sm rounded-lg px-3 py-2"
+          >
+            <option value="">Min confidence</option>
+            <option value="6">≥ 6</option>
+            <option value="7">≥ 7</option>
+            <option value="8">≥ 8</option>
+            <option value="9">≥ 9</option>
+          </select>
+          <button
+            onClick={() => fetchCandidates(false)}
+            className="text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-2 rounded-lg"
+          >
+            Apply
+          </button>
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value)}
+            className="bg-gray-900 border border-gray-700 text-gray-300 text-sm rounded-lg px-3 py-2 ml-2"
+          >
+            <option value="confidence">Sort: Confidence</option>
+            <option value="setup">Sort: Setup</option>
+          </select>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {/* Active filter badge */}
+          {activeFilter ? (
+            <button
+              onClick={() => setShowFilterPanel(s => !s)}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-indigo-500/40 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-900/40 transition"
+              title="Aktives Filter-Profile"
+            >
+              <span className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" />
+              <span className="font-medium">{activeFilter.name}</span>
+              <span className="text-indigo-400/70 text-xs">
+                RSI {activeFilter.rsi_min}–{activeFilter.rsi_max} · Conf ≥{activeFilter.confidence_min}
+              </span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowFilterPanel(s => !s)}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-gray-700 bg-gray-800/50 text-gray-500 hover:text-gray-300 transition"
+              title="Kein Filter aktiv — Standard wird verwendet"
+            >
+              <span className="w-2 h-2 rounded-full bg-gray-500 shrink-0" />
+              Kein Filter aktiv
+            </button>
+          )}
+          <button
+            onClick={() => setShowFilterPanel(s => !s)}
+            className={`px-3 py-2 text-sm rounded-lg border transition flex items-center gap-1.5 ${
+              showFilterPanel
+                ? "bg-indigo-900/50 border-indigo-500/50 text-indigo-300"
+                : "bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200"
+            }`}
+          >
+            ⚙ Filter-Profile
+          </button>
+          {lastFetched && (
+            <span className="text-xs text-gray-500">Updated {lastFetched.toLocaleTimeString()}</span>
+          )}
+          <button
+            onClick={() => fetchCandidates(false)}
+            disabled={refreshing}
+            className="px-3 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {refreshing ? (
+              <span className="inline-block w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+            ) : "↻"} Refresh
+          </button>
+          <button
+            onClick={triggerScan}
+            disabled={isScanning}
+            className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition disabled:opacity-50 flex items-center gap-2"
+          >
+            {isScanning ? (
+              <><span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Scanning…</>
+            ) : "Scan starten"}
+          </button>
+        </div>
+      </div>
+
+      {/* Progress */}
+      {isScanning && <ScanProgress progress={progress} />}
+
+      {/* Stats */}
+      <div className="flex gap-3 mb-4 flex-wrap">
+        {["breakout", "pullback", "pattern", "momentum"].map((type) => (
+          <div key={type} className="flex items-center gap-2 bg-gray-900 rounded-lg px-3 py-2">
+            <span className={`w-2 h-2 rounded-full ${SETUP_COLORS[type]}`} />
+            <span className="text-gray-400 text-xs capitalize">{type}</span>
+            <span className="text-white font-semibold text-xs">{candidates.filter(c => c.setup_type === type).length}</span>
+          </div>
+        ))}
+        <div className="flex items-center gap-2 bg-gray-900 rounded-lg px-3 py-2 ml-auto">
+          <span className="text-gray-400 text-xs">Total</span>
+          <span className="text-white font-semibold text-xs">{candidates.length}</span>
+        </div>
+      </div>
+
+      {/* Last scan info */}
+      {scanStatus?.last_scan && !isScanning && (
+        <div className="mb-4 p-3 bg-gray-900 rounded-lg text-xs text-gray-400">
+          Last scan: <span className="text-gray-200">{scanStatus.last_scan.scan_date}</span>
+          {" "}— {scanStatus.last_scan.saved ?? 0} results, {scanStatus.last_scan.candidates_screened ?? 0} screened
+          {scanStatus.last_scan.regime && <span className="ml-2">· regime: {scanStatus.last_scan.regime}</span>}
+        </div>
+      )}
+
+      {error && (
+        <div className="mb-4 p-3 bg-red-900/30 border border-red-700 rounded-lg text-red-300 text-sm">{error}</div>
+      )}
+
+      {initialLoading && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {[...Array(8)].map((_, i) => <div key={i} className="bg-gray-900 rounded-xl h-80 animate-pulse" />)}
+        </div>
+      )}
+
+      {!initialLoading && !error && candidates.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-24 text-gray-500">
+          <svg className="w-16 h-16 mb-4 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+          <p className="text-lg font-medium">No candidates for today</p>
+          <p className="text-sm mt-1">Click "Scan starten" to run the daily scan.</p>
+        </div>
+      )}
+
+      {!initialLoading && sorted.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {sorted.map((c) => <CandidateCard key={c.id} candidate={c} budget={budget} />)}
+        </div>
+      )}
+    </div>
+  );
+}
