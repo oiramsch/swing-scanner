@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# update.sh — Pull latest code from GitHub and redeploy containers.
-# Safe: .env and data/swing_scanner.db are gitignored and never touched by git.
+# update.sh — Download latest code from GitHub (no git required) and redeploy.
+# Safe: .env and data/ are gitignored → never in the archive → never overwritten.
 #
 # Usage:
 #   ./update.sh           # normal update (uses Docker layer cache)
@@ -11,11 +11,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+GITHUB_REPO="oiramsch/swing-scanner"
+BRANCH="main"
+ARCHIVE_URL="https://github.com/${GITHUB_REPO}/archive/refs/heads/${BRANCH}.tar.gz"
+TMP_ARCHIVE="/tmp/swing-update.tar.gz"
+TMP_DIR="/tmp/swing-update"
+
 # ── Colours ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
-info()    { echo -e "${GREEN}[update]${NC} $*"; }
-warn()    { echo -e "${YELLOW}[update]${NC} $*"; }
-abort()   { echo -e "${RED}[update] ERROR:${NC} $*" >&2; exit 1; }
+info()  { echo -e "${GREEN}[update]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[update]${NC} $*"; }
+abort() { echo -e "${RED}[update] ERROR:${NC} $*" >&2; exit 1; }
 
 # ── Args ─────────────────────────────────────────────────────────────────────
 NO_CACHE=""
@@ -25,26 +31,48 @@ done
 
 # ── Pre-flight checks ─────────────────────────────────────────────────────────
 [[ -f ".env" ]] || abort ".env not found — copy .env.example and fill in your keys first."
+command -v curl   >/dev/null 2>&1 || abort "curl not found in PATH."
 command -v docker >/dev/null 2>&1 || abort "docker not found in PATH."
 
-# ── Ensure data dir exists (DB lives here) ────────────────────────────────────
 mkdir -p data
 info "data/ directory: OK"
 
-# ── Git pull ──────────────────────────────────────────────────────────────────
-info "Pulling latest code from GitHub…"
-git fetch origin
-LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse "@{u}" 2>/dev/null || echo "")
+# ── Download from GitHub ──────────────────────────────────────────────────────
+info "Downloading latest code from GitHub (${GITHUB_REPO}@${BRANCH})…"
+curl -fsSL "$ARCHIVE_URL" -o "$TMP_ARCHIVE" \
+  || abort "Download failed — check your internet connection."
 
-if [[ -n "$REMOTE" && "$LOCAL" == "$REMOTE" ]]; then
-  warn "Already up to date ($(git rev-parse --short HEAD)). Redeploying anyway."
-else
-  git pull --ff-only || abort "git pull failed — resolve conflicts manually."
-  info "Updated to $(git rev-parse --short HEAD): $(git log -1 --pretty=%s)"
+# ── Extract ───────────────────────────────────────────────────────────────────
+rm -rf "$TMP_DIR"
+mkdir -p "$TMP_DIR"
+# GitHub archive root is "swing-scanner-main/" → strip it
+tar -xzf "$TMP_ARCHIVE" -C "$TMP_DIR" --strip-components=1
+info "Extracted to ${TMP_DIR}"
+
+# ── Sync files (.env and data/ are gitignored → not in archive → safe) ────────
+info "Syncing files…"
+cp -r "$TMP_DIR"/. ./
+
+# ── Cleanup temp files ────────────────────────────────────────────────────────
+rm -rf "$TMP_ARCHIVE" "$TMP_DIR"
+
+# ── Show latest commit info (optional — requires curl + python3) ──────────────
+COMMIT_INFO=""
+if command -v python3 >/dev/null 2>&1; then
+  COMMIT_INFO=$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/commits/${BRANCH}" 2>/dev/null \
+    | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    sha = d['sha'][:7]
+    msg = d['commit']['message'].split('\n')[0]
+    print(f'{sha} — {msg}')
+except: pass
+" 2>/dev/null || echo "")
 fi
+[[ -n "$COMMIT_INFO" ]] && info "Version: ${COMMIT_INFO}"
 
-# ── Stop running containers (prevents SQLite lock during build) ───────────────
+# ── Stop running containers ───────────────────────────────────────────────────
 info "Stopping running containers…"
 docker compose down --timeout 15
 
@@ -70,14 +98,14 @@ for i in $(seq 1 $RETRIES); do
     info "Backend is healthy."
     break
   fi
-  [[ $i -eq $RETRIES ]] && warn "Backend health check timed out — check logs with: docker compose logs -f backend"
+  [[ $i -eq $RETRIES ]] && warn "Health check timed out — check: docker compose logs -f backend"
   sleep 5
 done
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 info "Deploy complete."
-echo -e "  Commit : $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
-echo -e "  App    : http://$(hostname -I | awk '{print $1}'):8888/"
+[[ -n "$COMMIT_INFO" ]] && echo -e "  Version: ${COMMIT_INFO}"
+echo -e "  App:     http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'NAS-IP'):8888/"
 echo ""
 docker compose ps
