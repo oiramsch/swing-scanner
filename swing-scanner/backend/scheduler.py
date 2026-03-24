@@ -20,6 +20,7 @@ from backend.database import (
     init_db,
     save_scan_funnel,
     save_scan_result,
+    update_candidate_status,
     update_deep_analysis,
 )
 from backend.deep_analyzer import deep_analyze
@@ -37,6 +38,58 @@ from backend.signal_checker import run_portfolio_signal_check
 from backend.watchlist import check_watchlist_alerts
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Output-quality validation helpers (1.0b Fix A / B / C)
+# ---------------------------------------------------------------------------
+
+def _has_full_setup(analysis: dict) -> bool:
+    """
+    Fix B: A tradeable candidate needs entry_zone + stop_loss + target.
+    If any is missing → watchlist_pending (observe, don't trade).
+    """
+    return all([
+        analysis.get("entry_zone"),
+        analysis.get("stop_loss"),
+        analysis.get("target"),
+    ])
+
+
+def _is_direction_mismatch(analysis: dict) -> bool:
+    """
+    Fix C: Detect hidden short setups in long-only modules.
+    stop_loss > entry_mid means the stop is ABOVE the entry → short logic.
+    All current modules are long-only, so this is always a mismatch.
+    """
+    from backend.news_checker import _parse_entry_mid, _parse_price
+    entry_mid = _parse_entry_mid(analysis.get("entry_zone"))
+    stop      = _parse_price(analysis.get("stop_loss"))
+    if entry_mid and stop and stop > entry_mid:
+        return True
+    return False
+
+
+def _classify_candidate(analysis: dict, ticker: str, module: Optional[str]) -> str:
+    """
+    Returns the candidate_status string for a newly analyzed candidate.
+    Called before saving to DB; Fix A is applied later (post deep-analysis).
+    """
+    if not _has_full_setup(analysis):
+        logger.info(
+            "[Fix-B] %s → watchlist_pending (missing entry/stop/target) [module=%s]",
+            ticker, module,
+        )
+        return "watchlist_pending"
+
+    if _is_direction_mismatch(analysis):
+        logger.info(
+            "[Fix-C] %s → direction_mismatch (stop > entry in long module) [module=%s]",
+            ticker, module,
+        )
+        return "direction_mismatch"
+
+    return "active"
 
 
 async def startup(ctx: dict):
@@ -165,6 +218,10 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
             flags.append("technicals_invalid")
 
         import json as _json
+        # Fix B + C: classify before saving
+        module_name      = candidate.get("strategy_module")
+        candidate_status = _classify_candidate(analysis, ticker, module_name)
+
         try:
             result = ScanResult(
                 ticker=ticker,
@@ -191,10 +248,13 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
                 crv_valid=analysis.get("crv_valid", True),
                 technical_setup_valid=analysis.get("technical_setup_valid", True),
                 invalidation_reason=analysis.get("invalidation_reason"),
-                strategy_module=candidate.get("strategy_module"),
+                strategy_module=module_name,
+                candidate_status=candidate_status,
             )
             saved_result = save_scan_result(result)
-            saved_results.append((saved_result, indicators, candidate.get("df")))
+            # Only queue for deep analysis if the candidate is active
+            if candidate_status == "active":
+                saved_results.append((saved_result, indicators, candidate.get("df")))
             saved += 1
         except Exception as exc:
             logger.warning("DB save failed for %s: %s", ticker, exc)
@@ -251,7 +311,19 @@ async def _run_deep_analysis(
             )
             if analysis:
                 update_deep_analysis(sr.id, analysis)
-                logger.info("Deep analysis saved for %s", sr.ticker)
+                # Fix A: deep analysis says "avoid" → demote to filtered_avoid
+                if analysis.get("recommendation") == "avoid":
+                    update_candidate_status(sr.id, "filtered_avoid")
+                    logger.info(
+                        "[Fix-A] %s → filtered_avoid (deep analysis score=%s)",
+                        sr.ticker, analysis.get("overall_score"),
+                    )
+                else:
+                    logger.info(
+                        "Deep analysis saved for %s (score=%s rec=%s)",
+                        sr.ticker, analysis.get("overall_score"),
+                        analysis.get("recommendation"),
+                    )
         except Exception as exc:
             logger.warning("Deep analysis failed for %s: %s", sr.ticker, exc)
 

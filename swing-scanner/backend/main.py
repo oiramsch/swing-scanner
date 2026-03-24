@@ -32,6 +32,7 @@ from backend.database import (
     get_closed_positions,
     get_funnel_history,
     get_journal_entries,
+    get_watchlist_pending,
     get_journal_entry,
     get_latest_funnel,
     get_latest_market_update,
@@ -177,6 +178,7 @@ async def list_candidates(
     setup_type: Optional[str] = None,
     min_confidence: Optional[int] = None,
     sector: Optional[str] = None,
+    include_filtered: bool = False,   # power-user toggle: show all statuses
 ):
     scan_date = date.today()
     if date_str:
@@ -187,6 +189,13 @@ async def list_candidates(
 
     results = get_results_for_date(scan_date)
 
+    # Fix A/B/C: only show actionable candidates by default
+    if not include_filtered:
+        results = [
+            r for r in results
+            if (r.candidate_status or "active") == "active"
+        ]
+
     if setup_type:
         results = [r for r in results if r.setup_type == setup_type]
     if min_confidence is not None:
@@ -194,6 +203,23 @@ async def list_candidates(
     if sector:
         results = [r for r in results if r.sector == sector]
 
+    return [r.model_dump() for r in results]
+
+
+@app.get("/api/candidates/watchlist-pending")
+async def list_watchlist_pending(date_str: Optional[str] = None):
+    """
+    Returns candidates with no complete setup (entry+stop+target missing).
+    These are 'watch, not trade' — show in a separate UI section.
+    """
+    from backend.database import get_watchlist_pending
+    scan_date = date.today()
+    if date_str:
+        try:
+            scan_date = date.fromisoformat(date_str)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format.")
+    results = get_watchlist_pending(scan_date)
     return [r.model_dump() for r in results]
 
 

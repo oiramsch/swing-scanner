@@ -67,6 +67,9 @@ def _apply_migrations():
         ("filterprofile", "volume_multiplier", "REAL DEFAULT 1.5"),
         # v2.5 — ScanResult strategy_module tag
         ("scanresult", "strategy_module", "TEXT"),
+        # v2.5 — candidate quality status
+        # active | watchlist_pending | direction_mismatch | filtered_avoid
+        ("scanresult", "candidate_status", "TEXT DEFAULT 'active'"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -331,6 +334,12 @@ class ScanResult(SQLModel, table=True):
     technical_setup_valid: bool = True       # False if news event invalidates technicals
     invalidation_reason: Optional[str] = None  # Explanation if technical_setup_valid=False
     strategy_module: Optional[str] = None   # v2.5 — which strategy module found this (e.g. "Bear Relative Strength")
+    # v2.5 — output quality status
+    # active             — normal, actionable candidate
+    # watchlist_pending  — no full setup (entry+stop+target missing) → watch, not trade
+    # direction_mismatch — stop > entry in a long module → hidden short setup
+    # filtered_avoid     — deep analysis recommendation == "avoid"
+    candidate_status: str = "active"
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -642,6 +651,28 @@ def get_recent_scan_results(days: int = 20) -> list[ScanResult]:
     cutoff = date.today() - timedelta(days=days)
     with Session(get_engine()) as session:
         stmt = select(ScanResult).where(ScanResult.scan_date >= cutoff)
+        return list(session.exec(stmt).all())
+
+
+def update_candidate_status(result_id: int, status: str) -> None:
+    """Set the candidate_status for a ScanResult (used by post-processing filters)."""
+    with Session(get_engine()) as session:
+        result = session.get(ScanResult, result_id)
+        if result:
+            result.candidate_status = status
+            session.add(result)
+            session.commit()
+
+
+def get_watchlist_pending(scan_date: date) -> list[ScanResult]:
+    """Return candidates with no full setup — for the 'watch, not trade' section."""
+    with Session(get_engine()) as session:
+        stmt = (
+            select(ScanResult)
+            .where(ScanResult.scan_date == scan_date)
+            .where(ScanResult.candidate_status == "watchlist_pending")
+            .order_by(ScanResult.confidence.desc())
+        )
         return list(session.exec(stmt).all())
 
 
