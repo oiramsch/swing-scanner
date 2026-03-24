@@ -87,7 +87,7 @@ def _alpaca_grouped_daily_sync() -> list[dict]:
         batch = symbols[i : i + batch_size]
         try:
             snapshots = data.get_stock_snapshot(
-                StockSnapshotRequest(symbol_or_symbols=batch)
+                StockSnapshotRequest(symbol_or_symbols=batch, feed="iex")
             )
             for sym, snap in snapshots.items():
                 bar = getattr(snap, "daily_bar", None) or getattr(snap, "latest_bar", None)
@@ -125,6 +125,7 @@ def _alpaca_fetch_ohlcv_sync(ticker: str, days: int) -> Optional[pd.DataFrame]:
                 start=start,
                 end=end,
                 adjustment="all",
+                feed="iex",  # Free plan: IEX feed (SIP requires paid subscription)
             )
         )
     except Exception as exc:
