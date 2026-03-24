@@ -372,14 +372,24 @@ export default function CandidateCard({ candidate: c, budget = null }) {
                 Deep Analysis
               </button>
             )}
-            {c.entry_zone && c.stop_loss && (
-              <button
-                onClick={() => setShowOrder(true)}
-                className="flex-1 text-xs py-1.5 bg-green-700/30 hover:bg-green-700/60 text-green-300 rounded border border-green-600/40 transition font-medium"
-              >
-                Kaufen
-              </button>
-            )}
+            {c.entry_zone && c.stop_loss && (() => {
+              const entry = parseFloat(String(c.entry_zone).match(/[\d.]+/g)?.slice(-1)[0]);
+              const stop  = parseFloat(c.stop_loss);
+              const validLong = !isNaN(entry) && !isNaN(stop) && stop < entry;
+              return validLong ? (
+                <button
+                  onClick={() => setShowOrder(true)}
+                  className="flex-1 text-xs py-1.5 bg-green-700/30 hover:bg-green-700/60 text-green-300 rounded border border-green-600/40 transition font-medium"
+                >
+                  Kaufen
+                </button>
+              ) : (
+                <span className="flex-1 text-xs py-1.5 text-center text-orange-500/70 border border-orange-800/30 rounded bg-orange-900/10"
+                  title="Stop ≥ Entry — Short-Setup, kein Long-Kauf möglich">
+                  ⚠ Short-Setup
+                </span>
+              );
+            })()}
             <button
               onClick={() => setShowPortfolio(true)}
               className="flex-1 text-xs py-1.5 bg-gray-700/40 hover:bg-gray-700/70 text-gray-300 rounded border border-gray-600/40 transition"
