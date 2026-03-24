@@ -177,9 +177,9 @@ export default function App() {
           </div>
         )}
         {/* Tab Navigation */}
-        <div className="flex items-center px-4 min-w-0">
-          <span className="text-white font-bold mr-4 py-3 text-sm shrink-0 hidden sm:block">Swing Scanner</span>
-          <nav className="flex gap-1 overflow-x-auto scrollbar-none min-w-0">
+        <div className="flex items-center px-4 min-w-0 gap-2">
+          <span className="text-white font-bold mr-2 py-3 text-sm shrink-0 hidden sm:block">Swing Scanner</span>
+          <nav className="flex gap-1 overflow-x-auto scrollbar-none min-w-0 flex-1">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
@@ -194,6 +194,13 @@ export default function App() {
               </button>
             ))}
           </nav>
+          <button
+            onClick={handleLogout}
+            className="shrink-0 text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-500 hover:text-gray-300 rounded border border-gray-700 transition"
+            title={`Abmelden (${currentUser?.email})`}
+          >
+            ⏻
+          </button>
         </div>
       </header>
 
