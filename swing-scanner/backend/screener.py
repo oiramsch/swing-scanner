@@ -420,6 +420,9 @@ async def run_screener(
 
     candidates: list[dict] = []
     processed = 0
+    ohlcv_ok = 0
+    ohlcv_none = 0
+    filtered_out = 0
     max_cap = settings.max_candidates
 
     for item in pre_candidates:
@@ -440,11 +443,14 @@ async def run_screener(
         try:
             df = await fetch_ohlcv(ticker, days=settings.lookback_days)
             if df is None:
+                ohlcv_none += 1
                 continue
 
+            ohlcv_ok += 1
             df = compute_indicators(df)
 
             if not passes_filter(df, params, regime=regime):
+                filtered_out += 1
                 continue
 
             indicators = get_indicator_snapshot(df)
@@ -456,7 +462,12 @@ async def run_screener(
 
         except Exception as exc:
             logger.warning("Error processing %s: %s", ticker, exc)
+            ohlcv_none += 1
             continue
 
-    logger.info("Screener done: %d candidates from %d screened", len(candidates), processed)
+    logger.info(
+        "Screener done: %d candidates from %d screened "
+        "(OHLCV ok=%d, no-data=%d, filtered-out=%d)",
+        len(candidates), processed, ohlcv_ok, ohlcv_none, filtered_out,
+    )
     return candidates

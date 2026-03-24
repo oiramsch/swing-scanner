@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import PositionCard from "./PositionCard.jsx";
 import AddPositionModal from "./AddPositionModal.jsx";
@@ -15,10 +15,23 @@ export default function PortfolioTab() {
   const [aiReport, setAiReport] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [marketUpdate, setMarketUpdate] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const intervalRef = useRef(null);
+
+  const refresh = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setRefreshing(true);
+    await fetchPortfolio();
+    setLastUpdated(new Date());
+    if (showSpinner) setRefreshing(false);
+  }, []);
 
   useEffect(() => {
-    fetchPortfolio();
+    refresh();
     fetchMarketUpdate();
+    // Auto-refresh every 60 seconds for live P&L
+    intervalRef.current = setInterval(() => refresh(), 60_000);
+    return () => clearInterval(intervalRef.current);
   }, []);
 
   async function fetchMarketUpdate() {
@@ -72,22 +85,40 @@ export default function PortfolioTab() {
       {/* Budget summary */}
       {portfolio && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-white font-semibold">Portfolio Overview</h2>
-            <div className="flex gap-2">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div>
+              <h2 className="text-white font-semibold">Portfolio Overview</h2>
+              {lastUpdated && (
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Updated {lastUpdated.toLocaleTimeString()} · auto-refresh every 60s
+                </p>
+              )}
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => refresh(true)}
+                disabled={refreshing}
+                className="text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg disabled:opacity-50 flex items-center gap-1.5"
+                title="Manuell aktualisieren"
+              >
+                {refreshing
+                  ? <span className="inline-block w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                  : "↻"
+                }
+              </button>
               <button
                 onClick={runAiCheck}
                 disabled={aiLoading}
                 className="text-sm px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 border border-indigo-500/30 rounded-lg disabled:opacity-50 flex items-center gap-1.5"
               >
                 {aiLoading && <span className="inline-block w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />}
-                KI Portfolio-Check
+                KI Check
               </button>
               <button
                 onClick={() => setShowBudget(true)}
                 className="text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg"
               >
-                Budget bearbeiten
+                Budget
               </button>
               <button
                 onClick={() => setShowAdd(true)}

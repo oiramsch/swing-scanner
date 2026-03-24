@@ -64,6 +64,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
   const [error, setError] = useState(null);
   const [lastFetched, setLastFetched] = useState(null);
   const [filters, setFilters] = useState({ setup_type: "", min_confidence: "" });
+  const [minCrv, setMinCrv] = useState("");
   const [sortBy, setSortBy] = useState("confidence");
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [activeFilter, setActiveFilter] = useState(null);
@@ -156,12 +157,15 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
   const isScanning = scanStatus?.running;
   const progress = scanStatus?.progress;
 
-  // Sort candidates
-  const sorted = [...candidates].sort((a, b) => {
-    if (sortBy === "confidence") return b.confidence - a.confidence;
-    if (sortBy === "setup") return (a.setup_type || "").localeCompare(b.setup_type || "");
-    return 0;
-  });
+  // Sort + CRV filter (client-side — data already fetched)
+  const sorted = [...candidates]
+    .filter(c => !minCrv || (c.crv_calculated != null && c.crv_calculated >= parseFloat(minCrv)))
+    .sort((a, b) => {
+      if (sortBy === "confidence") return b.confidence - a.confidence;
+      if (sortBy === "setup") return (a.setup_type || "").localeCompare(b.setup_type || "");
+      if (sortBy === "crv") return (b.crv_calculated || 0) - (a.crv_calculated || 0);
+      return 0;
+    });
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -171,8 +175,8 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
       )}
 
       {/* Toolbar */}
-      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
           <select
             value={filters.setup_type}
             onChange={e => setFilters(f => ({ ...f, setup_type: e.target.value }))}
@@ -195,6 +199,18 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
             <option value="8">≥ 8</option>
             <option value="9">≥ 9</option>
           </select>
+          {/* CRV Filter — client-side, no refetch needed */}
+          <select
+            value={minCrv}
+            onChange={e => setMinCrv(e.target.value)}
+            className="bg-gray-900 border border-gray-700 text-gray-300 text-sm rounded-lg px-3 py-2"
+            title="Min. Chance-Risiko-Verhältnis"
+          >
+            <option value="">CRV: alle</option>
+            <option value="1.5">CRV ≥ 1.5</option>
+            <option value="2.0">CRV ≥ 2.0 ✅</option>
+            <option value="3.0">CRV ≥ 3.0 🔥</option>
+          </select>
           <button
             onClick={() => fetchCandidates(false)}
             className="text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-2 rounded-lg"
@@ -204,9 +220,10 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
           <select
             value={sortBy}
             onChange={e => setSortBy(e.target.value)}
-            className="bg-gray-900 border border-gray-700 text-gray-300 text-sm rounded-lg px-3 py-2 ml-2"
+            className="bg-gray-900 border border-gray-700 text-gray-300 text-sm rounded-lg px-3 py-2"
           >
             <option value="confidence">Sort: Confidence</option>
+            <option value="crv">Sort: CRV</option>
             <option value="setup">Sort: Setup</option>
           </select>
         </div>

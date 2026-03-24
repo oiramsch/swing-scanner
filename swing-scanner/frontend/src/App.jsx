@@ -86,14 +86,14 @@ export default function App() {
           </div>
         )}
         {/* Tab Navigation */}
-        <div className="flex items-center px-4">
-          <span className="text-white font-bold mr-6 py-3 text-sm">Swing Scanner</span>
-          <nav className="flex gap-1">
+        <div className="flex items-center px-4 min-w-0">
+          <span className="text-white font-bold mr-4 py-3 text-sm shrink-0 hidden sm:block">Swing Scanner</span>
+          <nav className="flex gap-1 overflow-x-auto scrollbar-none min-w-0">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
                   activeTab === tab.id
                     ? "border-indigo-500 text-indigo-400"
                     : "border-transparent text-gray-400 hover:text-gray-200"
