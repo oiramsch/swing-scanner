@@ -29,6 +29,7 @@ def init_db():
     SQLModel.metadata.create_all(get_engine())
     _apply_migrations()
     _seed_default_filters()
+    _migrate_filter_defaults()
     logger.info("Database initialized.")
 
 
@@ -82,6 +83,62 @@ def _apply_migrations():
 def get_session():
     with Session(get_engine()) as session:
         yield session
+
+
+def _migrate_filter_defaults():
+    """
+    v2.4 — Ensure the 3 built-in filter presets have the correct canonical values.
+    Runs on every startup; only touches rows whose name matches exactly.
+    User-created custom filters are never modified.
+    """
+    import sqlalchemy
+    engine = get_engine()
+    updates = [
+        # name, column, value
+        # Strikt — high quality, few results
+        ("Strikt", "price_min",          20.0),
+        ("Strikt", "price_max",         500.0),
+        ("Strikt", "avg_volume_min",  1000000),
+        ("Strikt", "rsi_min",            45.0),
+        ("Strikt", "rsi_max",            70.0),
+        ("Strikt", "price_above_sma50",     1),  # True
+        ("Strikt", "price_above_sma20",     0),  # False
+        ("Strikt", "volume_multiplier",   1.5),
+        ("Strikt", "confidence_min",        7),
+        # Standard — recommended default (bear-aware: sma20 not sma50)
+        ("Standard", "price_min",        10.0),
+        ("Standard", "price_max",       500.0),
+        ("Standard", "avg_volume_min",  500000),
+        ("Standard", "rsi_min",          35.0),
+        ("Standard", "rsi_max",          75.0),
+        ("Standard", "price_above_sma50",   0),  # False — sma50 too restrictive in bear
+        ("Standard", "price_above_sma20",   1),  # True  — requires short-term uptrend
+        ("Standard", "volume_multiplier", 1.0),
+        ("Standard", "confidence_min",      6),
+        # Breit — maximum results, more noise
+        ("Breit", "price_min",            5.0),
+        ("Breit", "price_max",          999.0),
+        ("Breit", "avg_volume_min",    200000),
+        ("Breit", "rsi_min",             25.0),
+        ("Breit", "rsi_max",             80.0),
+        ("Breit", "price_above_sma50",      0),  # False
+        ("Breit", "price_above_sma20",      0),  # False
+        ("Breit", "volume_multiplier",    0.8),
+        ("Breit", "confidence_min",         5),
+    ]
+    with engine.connect() as conn:
+        for name, col, val in updates:
+            try:
+                conn.execute(
+                    sqlalchemy.text(
+                        f"UPDATE filterprofile SET {col} = :val WHERE name = :name"
+                    ),
+                    {"val": val, "name": name},
+                )
+            except Exception as exc:
+                logger.warning("Filter migration failed (%s.%s): %s", name, col, exc)
+        conn.commit()
+    logger.info("Filter defaults migration applied (Strikt / Standard / Breit).")
 
 
 def _seed_default_filters():
