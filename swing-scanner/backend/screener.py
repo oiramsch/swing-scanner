@@ -90,11 +90,12 @@ def _alpaca_grouped_daily_sync() -> list[dict]:
                 StockSnapshotRequest(symbol_or_symbols=batch)
             )
             for sym, snap in snapshots.items():
-                if snap.latest_bar:
+                bar = getattr(snap, "daily_bar", None) or getattr(snap, "latest_bar", None)
+                if bar:
                     result.append({
                         "ticker": sym,
-                        "close": float(snap.latest_bar.close),
-                        "volume": int(snap.latest_bar.volume),
+                        "close": float(bar.close),
+                        "volume": int(bar.volume),
                     })
         except Exception as exc:
             logger.warning(
