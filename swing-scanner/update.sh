@@ -92,7 +92,9 @@ docker compose up -d --remove-orphans
 info "Waiting for backend to become healthy…"
 RETRIES=12
 for i in $(seq 1 $RETRIES); do
-  if docker compose ps backend 2>/dev/null | grep -q "(healthy)"; then
+  CID=$(docker compose ps -q backend 2>/dev/null | head -1)
+  STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$CID" 2>/dev/null || echo "")
+  if [[ "$STATUS" == "healthy" ]]; then
     info "Backend is healthy."
     break
   fi
