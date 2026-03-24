@@ -15,7 +15,7 @@ from backend.chart_fetcher import render_chart
 from backend.config import settings
 from backend.database import ScanResult, clear_results_for_date, init_db, save_scan_result, update_deep_analysis
 from backend.deep_analyzer import deep_analyze
-from backend.market_regime import get_current_regime, update_market_regime
+from backend.market_regime import ensure_regime_current, get_current_regime, update_market_regime
 from backend.news_checker import run_full_news_check
 from backend.notifier import (
     notify_scan_complete,
@@ -54,7 +54,8 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
     logger.info("=== daily_scan started ===")
     scan_date = date.today()
     clear_results_for_date(scan_date)
-    regime = get_current_regime()
+    # Always ensure regime is fresh — never scan with stale/missing data
+    regime = await ensure_regime_current(max_age_hours=12)
 
     try:
         candidates = await run_screener(progress_cb=progress_cb, regime=regime)

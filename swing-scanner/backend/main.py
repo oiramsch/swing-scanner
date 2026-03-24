@@ -115,9 +115,19 @@ def _update_progress(phase, message, processed, total, candidates_found, percent
 
 @app.on_event("startup")
 async def on_startup():
+    import asyncio
     init_db()
     CHARTS_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("DB initialized, charts dir ready.")
+    # Kick off a background regime refresh so the UI always shows a current value
+    async def _warm_regime():
+        try:
+            from backend.market_regime import ensure_regime_current
+            regime = await ensure_regime_current(max_age_hours=12)
+            logger.info("Startup regime check: %s", regime)
+        except Exception as exc:
+            logger.warning("Startup regime check failed: %s", exc)
+    asyncio.create_task(_warm_regime())
 
 
 # ---------------------------------------------------------------------------
@@ -135,10 +145,8 @@ async def health():
 
 @app.get("/api/market-regime")
 async def get_market_regime():
-    regime = get_latest_regime()
-    if regime is None:
-        return {"regime": "neutral", "date": None, "spy_close": None}
-    return regime.model_dump()
+    from backend.market_regime import get_regime_status
+    return get_regime_status()
 
 
 @app.post("/api/market-regime/update")

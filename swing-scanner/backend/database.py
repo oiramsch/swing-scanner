@@ -28,6 +28,7 @@ def get_engine():
 def init_db():
     SQLModel.metadata.create_all(get_engine())
     _apply_migrations()
+    _seed_default_filters()
     logger.info("Database initialized.")
 
 
@@ -60,6 +61,8 @@ def _apply_migrations():
         ("portfolioposition", "exit_trigger_json", "TEXT"),
         ("portfolioposition", "position_size_warning", "TEXT"),
         ("portfolioposition", "setting_generated_at", "TEXT"),
+        # v2.3 — FilterProfile volume_multiplier
+        ("filterprofile", "volume_multiplier", "REAL DEFAULT 1.5"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -79,6 +82,60 @@ def _apply_migrations():
 def get_session():
     with Session(get_engine()) as session:
         yield session
+
+
+def _seed_default_filters():
+    """Create the 3 built-in filter presets if none exist yet."""
+    with Session(get_engine()) as session:
+        existing = list(session.exec(select(FilterProfile)).all())
+        if existing:
+            return  # Already seeded — don't overwrite user settings
+
+        defaults = [
+            FilterProfile(
+                name="Strikt",
+                price_min=20.0,
+                price_max=500.0,
+                avg_volume_min=1_000_000,
+                rsi_min=45.0,
+                rsi_max=70.0,
+                price_above_sma50=True,
+                price_above_sma20=False,
+                volume_multiplier=1.5,
+                confidence_min=7,
+                is_active=False,
+            ),
+            FilterProfile(
+                name="Standard",
+                price_min=10.0,
+                price_max=500.0,
+                avg_volume_min=500_000,
+                rsi_min=35.0,
+                rsi_max=75.0,
+                price_above_sma50=False,
+                price_above_sma20=True,
+                volume_multiplier=1.0,
+                confidence_min=6,
+                is_active=True,   # ← default active
+            ),
+            FilterProfile(
+                name="Breit",
+                price_min=5.0,
+                price_max=999.0,
+                avg_volume_min=200_000,
+                rsi_min=25.0,
+                rsi_max=80.0,
+                price_above_sma50=False,
+                price_above_sma20=False,
+                volume_multiplier=0.8,
+                confidence_min=5,
+                is_active=False,
+            ),
+        ]
+        for fp in defaults:
+            session.add(fp)
+        session.commit()
+        logger.info("Seeded 3 default filter profiles (Strikt / Standard / Breit).")
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +222,7 @@ class FilterProfile(SQLModel, table=True):
     setup_types: str = '["breakout","pullback","pattern","momentum"]'
     confidence_min: int = 6
     respect_market_regime: bool = True
+    volume_multiplier: float = 1.5
     is_active: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

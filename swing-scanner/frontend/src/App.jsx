@@ -17,15 +17,17 @@ const TABS = [
 ];
 
 const REGIME_COLORS = {
-  bull: "bg-green-900/60 text-green-300 border-green-700",
-  bear: "bg-red-900/60 text-red-300 border-red-700",
+  bull:    "bg-green-900/60 text-green-300 border-green-700",
+  bear:    "bg-red-900/60 text-red-300 border-red-700",
   neutral: "bg-yellow-900/60 text-yellow-300 border-yellow-700",
+  unknown: "bg-gray-800/60 text-gray-400 border-gray-700",
 };
-const REGIME_ICONS = { bull: "📈", bear: "📉", neutral: "➡️" };
+const REGIME_ICONS = { bull: "📈", bear: "📉", neutral: "➡️", unknown: "❓" };
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("scanner");
   const [regime, setRegime] = useState(null);
+  const [regimeRefreshing, setRegimeRefreshing] = useState(false);
   const [scanStatus, setScanStatus] = useState(null);
   const pollRef = useRef(null);
 
@@ -39,6 +41,21 @@ export default function App() {
       const res = await axios.get("/api/market-regime");
       setRegime(res.data);
     } catch {}
+  }
+
+  async function refreshRegime() {
+    setRegimeRefreshing(true);
+    try {
+      await axios.post("/api/market-regime/update");
+      // Poll until updated (max ~30s)
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const res = await axios.get("/api/market-regime");
+        setRegime(res.data);
+        if (!res.data.stale) break;
+      }
+    } catch {}
+    setRegimeRefreshing(false);
   }
 
   async function fetchScanStatus() {
@@ -71,18 +88,39 @@ export default function App() {
       {/* Global Header */}
       <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
         {/* Market Regime Banner */}
-        {regime?.regime && (
-          <div className={`px-4 py-1 text-xs font-medium border-b flex items-center gap-2 ${REGIME_COLORS[regime.regime] || REGIME_COLORS.neutral}`}>
-            <span>{REGIME_ICONS[regime.regime]}</span>
-            <span>Market Regime: <strong>{regime.regime?.toUpperCase()}</strong></span>
+        {regime && (
+          <div className={`px-4 py-1 text-xs font-medium border-b flex items-center gap-2 flex-wrap ${REGIME_COLORS[regime.regime] ?? REGIME_COLORS.unknown}`}>
+            <span>{REGIME_ICONS[regime.regime] ?? "❓"}</span>
+            <span>Market Regime: <strong>{(regime.regime ?? "unknown").toUpperCase()}</strong></span>
+            {regime.stale && (
+              <span className="bg-orange-900/40 text-orange-300 border border-orange-700/40 px-1.5 py-0.5 rounded text-[10px] font-semibold">
+                ⚠️ VERALTET
+              </span>
+            )}
             {regime.spy_close && (
-              <span className="opacity-70 ml-2">
+              <span className="opacity-70">
                 SPY ${regime.spy_close?.toFixed(2)} · SMA50 ${regime.spy_sma50?.toFixed(2)} · SMA200 ${regime.spy_sma200?.toFixed(2)}
               </span>
             )}
-            {regime.date && (
-              <span className="ml-auto opacity-60">Updated: {regime.date}</span>
-            )}
+            <span className="ml-auto flex items-center gap-2 opacity-70">
+              {regime.age_hours != null && (
+                <span>
+                  {regime.age_hours < 1
+                    ? "gerade aktualisiert"
+                    : `vor ${Math.round(regime.age_hours)}h`}
+                </span>
+              )}
+              <button
+                onClick={refreshRegime}
+                disabled={regimeRefreshing}
+                className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 transition disabled:opacity-50 text-[10px]"
+                title="Regime jetzt aktualisieren"
+              >
+                {regimeRefreshing ? (
+                  <span className="inline-block w-2.5 h-2.5 border border-current border-t-transparent rounded-full animate-spin" />
+                ) : "↻"}
+              </button>
+            </span>
           </div>
         )}
         {/* Tab Navigation */}

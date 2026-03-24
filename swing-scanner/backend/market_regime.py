@@ -6,9 +6,15 @@ bear    — SPY < SMA50           → pullback setups only
 neutral — otherwise             → conservative
 
 Data source: yfinance (via DataProvider) — no API key needed.
+
+Key function:
+  ensure_regime_current() — call before every scan to guarantee a fresh regime.
+  It auto-refreshes if the DB is empty OR if data is older than max_age_hours.
+  Never returns "neutral" due to missing data — only when SPY is actually neutral.
 """
+import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime, time
 from typing import Optional
 
 import pandas as pd
@@ -27,7 +33,6 @@ async def _fetch_spy_ohlcv(days: int = 260) -> Optional[pd.DataFrame]:
     if df is None or df.empty:
         logger.warning("SPY OHLCV returned no data")
         return None
-    # We only need Close for regime detection
     return df[["Close"]].copy()
 
 
@@ -73,12 +78,76 @@ async def update_market_regime() -> Optional[MarketRegime]:
     return saved
 
 
+async def ensure_regime_current(max_age_hours: int = 12) -> str:
+    """
+    Guarantee a fresh market regime before scanning.
+
+    - If no regime in DB → fetches live (blocks until done)
+    - If regime older than max_age_hours → refreshes in place
+    - Returns the regime string (bull | neutral | bear)
+
+    This NEVER returns "neutral" as a fallback for missing data.
+    Use this instead of get_current_regime() in the scan pipeline.
+    """
+    latest = get_latest_regime()
+
+    if latest is None:
+        logger.info("No regime in DB — fetching live now (blocking scan until done)…")
+        mr = await update_market_regime()
+        return mr.regime if mr else "neutral"
+
+    # Age = time since midnight of the regime's date
+    regime_datetime = datetime.combine(latest.date, time.min)
+    age_hours = (datetime.utcnow() - regime_datetime).total_seconds() / 3600
+
+    if age_hours > max_age_hours:
+        logger.info(
+            "Regime from %s is %.1fh old (threshold: %dh) — refreshing…",
+            latest.date, age_hours, max_age_hours,
+        )
+        mr = await update_market_regime()
+        return mr.regime if mr else latest.regime
+
+    logger.info("Regime current: %s (%.1fh old)", latest.regime, age_hours)
+    return latest.regime
+
+
 def get_current_regime() -> str:
-    """Return current regime string (bull/bear/neutral), defaulting to neutral."""
+    """
+    Sync read of the stored regime (no network call).
+    Returns "unknown" — NOT "neutral" — when no data exists.
+    Use ensure_regime_current() in async contexts for a guaranteed fresh value.
+    """
     latest = get_latest_regime()
     if latest is None:
-        return "neutral"
+        return "unknown"
     delta = (date.today() - latest.date).days
     if delta > 3:
-        return "neutral"
+        # Stale but don't pretend it's neutral — return last known value
+        logger.warning("Regime data is %d days old — using stale value: %s", delta, latest.regime)
+        return latest.regime
     return latest.regime
+
+
+def get_regime_status() -> dict:
+    """Return regime + metadata for the API response."""
+    latest = get_latest_regime()
+    if latest is None:
+        return {
+            "regime": "unknown",
+            "date": None,
+            "spy_close": None,
+            "spy_sma50": None,
+            "spy_sma200": None,
+            "age_hours": None,
+            "stale": True,
+        }
+
+    regime_datetime = datetime.combine(latest.date, time.min)
+    age_hours = round((datetime.utcnow() - regime_datetime).total_seconds() / 3600, 1)
+
+    return {
+        **latest.model_dump(),
+        "age_hours": age_hours,
+        "stale": age_hours > 28,  # stale if older than ~1 trading day
+    }

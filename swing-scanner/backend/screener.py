@@ -96,7 +96,7 @@ def _get_filter_params(fp: Optional[FilterProfile]) -> dict:
         "rsi_max":           fp.rsi_max,
         "price_above_sma50": fp.price_above_sma50,
         "price_above_sma20": fp.price_above_sma20,
-        "volume_multiplier": settings.volume_multiplier,
+        "volume_multiplier": getattr(fp, "volume_multiplier", settings.volume_multiplier),
     }
 
 
@@ -200,6 +200,12 @@ async def run_screener(
     filtered_out  = 0
     max_cap       = settings.max_candidates
 
+    # Per-step funnel counters
+    fail_sma    = 0
+    fail_rsi    = 0
+    fail_volume = 0
+    fail_other  = 0
+
     for item in pre_candidates:
         if len(candidates) >= max_cap:
             break
@@ -224,16 +230,31 @@ async def run_screener(
             ohlcv_ok += 1
             df = compute_indicators(df)
 
+            # Granular rejection tracking
+            if df is None or len(df) < 51:
+                fail_other += 1
+                continue
+            latest = df.iloc[-1]
             if not passes_filter(df, params, regime=regime):
                 filtered_out += 1
+                # Determine why it was rejected (for diagnostics)
+                if params["price_above_sma50"] and latest["Close"] <= latest.get("SMA_50", 0):
+                    fail_sma += 1
+                elif params["price_above_sma20"] and latest["Close"] <= latest.get("SMA_20", 0):
+                    fail_sma += 1
+                elif not (params["rsi_min"] <= latest.get("RSI_14", 0) <= params["rsi_max"]):
+                    fail_rsi += 1
+                else:
+                    fail_volume += 1
                 continue
 
             indicators = get_indicator_snapshot(df)
             candidates.append({"ticker": ticker, "df": df, "indicators": indicators})
             logger.info(
-                "Candidate #%d: %s (RSI=%.1f, Close=%.2f)",
+                "Candidate #%d: %s (RSI=%.1f, Close=%.2f, VolMult=%.1f)",
                 len(candidates), ticker,
                 indicators["rsi14"], indicators["close"],
+                params["volume_multiplier"],
             )
 
         except Exception as exc:
@@ -241,8 +262,11 @@ async def run_screener(
             ohlcv_none += 1
 
     logger.info(
-        "Screener done: %d candidates from %d screened "
-        "(OHLCV ok=%d, no-data=%d, filtered-out=%d)",
-        len(candidates), processed, ohlcv_ok, ohlcv_none, filtered_out,
+        "Screener funnel — universe: %d → snapshot: %d → price/vol: %d → "
+        "OHLCV ok: %d → SMA fail: %d → RSI fail: %d → Vol fail: %d → "
+        "other fail: %d → no data: %d → CANDIDATES: %d",
+        len(symbols), len(all_tickers), total,
+        ohlcv_ok, fail_sma, fail_rsi, fail_volume,
+        fail_other, ohlcv_none, len(candidates),
     )
     return candidates
