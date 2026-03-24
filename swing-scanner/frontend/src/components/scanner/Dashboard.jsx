@@ -131,6 +131,8 @@ function ScanProgress({ progress }) {
 
 export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart }) {
   const [candidates, setCandidates] = useState([]);
+  const [watchlistPending, setWatchlistPending] = useState([]);
+  const [showWatchlist, setShowWatchlist] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
@@ -147,6 +149,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
 
   useEffect(() => {
     fetchCandidates(true);
+    fetchWatchlistPending();
     fetchActiveFilter();
     fetchBudget();
     fetchFunnel();
@@ -173,6 +176,13 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
     try {
       const res = await axios.get("/api/portfolio/budget");
       setBudget(res.data);
+    } catch {}
+  }
+
+  async function fetchWatchlistPending() {
+    try {
+      const res = await axios.get("/api/candidates/watchlist-pending");
+      setWatchlistPending(res.data || []);
     } catch {}
   }
 
@@ -210,6 +220,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
       if (status && !status.running) {
         stopPolling();
         fetchCandidates();
+        fetchWatchlistPending();
         fetchFunnel();
       }
     }, 3000);
@@ -453,6 +464,42 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
       {!initialLoading && sorted.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {sorted.map((c) => <CandidateCard key={c.id} candidate={c} budget={budget} />)}
+        </div>
+      )}
+
+      {/* Watchlist Pending — no complete setup, observe only */}
+      {watchlistPending.length > 0 && (
+        <div className="mt-6">
+          <button
+            onClick={() => setShowWatchlist(w => !w)}
+            className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-900 border border-gray-800 rounded-xl text-sm text-gray-400 hover:text-gray-200 transition"
+          >
+            <span>
+              ⏳ Beobachtungsliste — wartet auf Setup-Signal
+              <span className="ml-2 text-xs bg-gray-800 px-2 py-0.5 rounded-full">{watchlistPending.length}</span>
+            </span>
+            <span className="text-gray-600">{showWatchlist ? "▲" : "▼"}</span>
+          </button>
+
+          {showWatchlist && (
+            <div className="mt-2 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+              <div className="px-4 py-2 border-b border-gray-800 text-xs text-gray-500">
+                Diese Kandidaten wurden vom Scanner erkannt, haben aber kein vollständiges Entry/Stop/Target-Setup. Beobachten — kein Trade-Signal.
+              </div>
+              <div className="divide-y divide-gray-800">
+                {watchlistPending.map(c => (
+                  <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
+                    <span className="text-white font-semibold text-sm w-16">{c.ticker}</span>
+                    {c.strategy_module && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500">{c.strategy_module}</span>
+                    )}
+                    <span className="text-xs text-gray-500 flex-1 truncate">{c.reasoning || "Kein Setup ableitbar"}</span>
+                    <span className="text-[10px] text-yellow-600 shrink-0">Beobachten</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

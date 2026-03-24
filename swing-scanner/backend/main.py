@@ -332,10 +332,23 @@ async def list_candidates(
 
     # Fix A/B/C: only show actionable candidates by default
     if not include_filtered:
-        results = [
-            r for r in results
-            if (r.candidate_status or "active") == "active"
-        ]
+        actionable = []
+        for r in results:
+            status = r.candidate_status or "active"
+            if status != "active":
+                continue
+            # Safety net for old NULL-status records: skip direction mismatches
+            if r.entry_zone and r.stop_loss:
+                try:
+                    import re as _re
+                    nums = [float(x) for x in _re.findall(r"[\d.]+", str(r.entry_zone))]
+                    entry_trigger = max(nums) if nums else None
+                    if entry_trigger and float(r.stop_loss) >= entry_trigger:
+                        continue  # stop >= entry → direction mismatch
+                except Exception:
+                    pass
+            actionable.append(r)
+        results = actionable
 
     if setup_type:
         results = [r for r in results if r.setup_type == setup_type]
