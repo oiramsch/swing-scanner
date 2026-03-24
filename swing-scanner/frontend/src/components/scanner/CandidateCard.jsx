@@ -34,15 +34,25 @@ const FLAG_CONFIG = {
   technicals_invalid: { label: () => "CHARTTECHNIK UNGÜLTIG", color: "bg-red-500/20 text-red-300 border-red-500/30" },
 };
 
-function ConfidenceBar({ value }) {
-  const pct = (value / 10) * 100;
-  const color = value >= 8 ? "bg-green-500" : value >= 6 ? "bg-yellow-500" : "bg-red-500";
+function ConfidenceBar({ confidence, compositeScore }) {
+  const pct = (confidence / 10) * 100;
+  const color = confidence >= 8 ? "bg-green-500" : confidence >= 6 ? "bg-yellow-500" : "bg-red-500";
+  const hasScore = compositeScore != null && compositeScore !== confidence;
+  const scoreDiff = hasScore ? compositeScore - confidence : 0;
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-1.5 bg-gray-800 rounded-full">
         <div className={`h-1.5 rounded-full ${color}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs text-gray-400 w-4 text-right">{value}</span>
+      <span className="text-xs text-gray-400 w-4 text-right">{confidence}</span>
+      {hasScore && (
+        <span
+          className={`text-[11px] font-semibold tabular-nums ${scoreDiff > 0 ? "text-green-400" : "text-orange-400"}`}
+          title={`Score = Conf ${confidence} × CRV-Faktor = ${compositeScore}`}
+        >
+          →{compositeScore.toFixed(1)}
+        </span>
+      )}
     </div>
   );
 }
@@ -226,8 +236,8 @@ export default function CandidateCard({ candidate: c, budget = null }) {
             <p className="text-xs text-gray-500">{c.pattern_name}</p>
           )}
 
-          {/* Confidence */}
-          <ConfidenceBar value={c.confidence} />
+          {/* Confidence + composite score */}
+          <ConfidenceBar confidence={c.confidence} compositeScore={c.composite_score} />
 
           {/* Entry / Stop / Target */}
           <div className="grid grid-cols-3 gap-1 text-xs">

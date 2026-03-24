@@ -281,6 +281,17 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
         module_name      = candidate.get("strategy_module")
         candidate_status = _classify_candidate(analysis, ticker, module_name)
 
+        # 1.2 — CRV-adjusted composite score
+        # Formula: confidence * clamp(crv / 2.0, 0.5, 1.5)
+        # CRV=2.0 → neutral (1.0×), below → penalty, above → bonus
+        _conf = analysis.get("confidence", 0)
+        _crv  = analysis.get("crv_calculated")
+        if _crv and _crv > 0:
+            _factor = max(0.5, min(1.5, _crv / 2.0))
+            _composite = round(_conf * _factor, 2)
+        else:
+            _composite = float(_conf)
+
         try:
             result = ScanResult(
                 ticker=ticker,
@@ -309,6 +320,7 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
                 invalidation_reason=analysis.get("invalidation_reason"),
                 strategy_module=module_name,
                 candidate_status=candidate_status,
+                composite_score=_composite,
             )
             saved_result = save_scan_result(result)
             # Only queue for deep analysis if the candidate is active

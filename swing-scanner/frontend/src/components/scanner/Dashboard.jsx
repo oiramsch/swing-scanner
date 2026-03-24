@@ -66,7 +66,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
   const [lastFetched, setLastFetched] = useState(null);
   const [filters, setFilters] = useState({ setup_type: "", min_confidence: "" });
   const [minCrv, setMinCrv] = useState("");
-  const [sortBy, setSortBy] = useState("confidence");
+  const [sortBy, setSortBy] = useState("score");
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [activeFilter, setActiveFilter] = useState(null);
   const [budget, setBudget] = useState(null);
@@ -173,9 +173,10 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
   const sorted = [...candidates]
     .filter(c => !minCrv || (c.crv_calculated != null && c.crv_calculated >= parseFloat(minCrv)))
     .sort((a, b) => {
+      if (sortBy === "score")      return (b.composite_score ?? b.confidence) - (a.composite_score ?? a.confidence);
       if (sortBy === "confidence") return b.confidence - a.confidence;
-      if (sortBy === "setup") return (a.setup_type || "").localeCompare(b.setup_type || "");
-      if (sortBy === "crv") return (b.crv_calculated || 0) - (a.crv_calculated || 0);
+      if (sortBy === "setup")      return (a.setup_type || "").localeCompare(b.setup_type || "");
+      if (sortBy === "crv")        return (b.crv_calculated || 0) - (a.crv_calculated || 0);
       return 0;
     });
 
@@ -234,6 +235,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
             onChange={e => setSortBy(e.target.value)}
             className="bg-gray-900 border border-gray-700 text-gray-300 text-sm rounded-lg px-3 py-2"
           >
+            <option value="score">Sort: Score ★</option>
             <option value="confidence">Sort: Confidence</option>
             <option value="crv">Sort: CRV</option>
             <option value="setup">Sort: Setup</option>

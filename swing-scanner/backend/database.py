@@ -70,6 +70,8 @@ def _apply_migrations():
         # v2.5 — candidate quality status
         # active | watchlist_pending | direction_mismatch | filtered_avoid
         ("scanresult", "candidate_status", "TEXT DEFAULT 'active'"),
+        # v2.6 — CRV-adjusted composite score for ranking
+        ("scanresult", "composite_score", "REAL"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -340,6 +342,10 @@ class ScanResult(SQLModel, table=True):
     # direction_mismatch — stop > entry in a long module → hidden short setup
     # filtered_avoid     — deep analysis recommendation == "avoid"
     candidate_status: str = "active"
+    # v2.6 — CRV-adjusted composite ranking score
+    # Formula: confidence * clamp(crv / 2.0, 0.5, 1.5)
+    # CRV=2.0 is neutral, below=penalty, above=bonus
+    composite_score: Optional[float] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -655,7 +661,11 @@ def get_results_for_date(scan_date: date) -> list[ScanResult]:
         stmt = (
             select(ScanResult)
             .where(ScanResult.scan_date == scan_date)
-            .order_by(ScanResult.confidence.desc())
+            # Sort by composite_score (CRV-adjusted) falling back to raw confidence
+            .order_by(
+                ScanResult.composite_score.desc().nulls_last(),
+                ScanResult.confidence.desc(),
+            )
         )
         return list(session.exec(stmt).all())
 
