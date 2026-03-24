@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
+import GhostPortfolioSection from "./GhostPortfolioSection.jsx";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, Legend,
@@ -321,6 +322,11 @@ export default function PerformanceTab() {
           </table>
         </div>
       )}
+
+      {/* Ghost Portfolio — silent prediction tracker */}
+      <div className="border-t border-gray-800 pt-6">
+        <GhostPortfolioSection />
+      </div>
     </div>
   );
 }

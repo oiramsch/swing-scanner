@@ -77,6 +77,44 @@ def cancel_order(creds: dict, order_id: str) -> None:
     logger.info("Order cancelled: %s", order_id)
 
 
+def get_alpaca_positions(creds: dict) -> list[dict]:
+    """Return all open positions from Alpaca."""
+    client = _get_trading_client(creds)
+    positions = client.get_all_positions()
+    return [_position_to_dict(p) for p in positions]
+
+
+def place_market_sell(creds: dict, *, ticker: str, qty: float) -> dict:
+    """Place a market sell order for an existing position."""
+    from alpaca.trading.requests import MarketOrderRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce
+
+    client = _get_trading_client(creds)
+    req = MarketOrderRequest(
+        symbol=ticker.upper(),
+        qty=qty,
+        side=OrderSide.SELL,
+        time_in_force=TimeInForce.DAY,
+    )
+    order = client.submit_order(req)
+    logger.info("Market sell order placed: %s × %s", ticker, qty)
+    return _order_to_dict(order)
+
+
+def _position_to_dict(pos) -> dict:
+    return {
+        "ticker":           str(pos.symbol),
+        "qty":              float(pos.qty),
+        "avg_entry_price":  float(pos.avg_entry_price),
+        "current_price":    float(pos.current_price) if pos.current_price else None,
+        "market_value":     float(pos.market_value) if pos.market_value else None,
+        "unrealized_pl":    float(pos.unrealized_pl) if pos.unrealized_pl else None,
+        "unrealized_plpc":  float(pos.unrealized_plpc) if pos.unrealized_plpc else None,
+        "side":             str(pos.side),
+        "cost_basis":       float(pos.cost_basis) if pos.cost_basis else None,
+    }
+
+
 def _order_to_dict(order) -> dict:
     return {
         "id":               str(order.id),

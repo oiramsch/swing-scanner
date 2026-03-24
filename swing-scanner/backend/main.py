@@ -882,7 +882,7 @@ async def refresh_market_update():
     from backend.market_update import get_market_context, generate_market_update
     from backend.portfolio import enrich_position
     try:
-        context = await get_market_context()
+        context = get_market_context()
         open_positions = get_open_positions()
         positions_data = []
         for pos in open_positions:
@@ -1198,3 +1198,37 @@ async def get_live_quotes(
 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _fetch)
+
+
+# ---------------------------------------------------------------------------
+# Alpaca Positions + Market Sell
+# ---------------------------------------------------------------------------
+
+@app.get("/api/portfolio/alpaca")
+async def get_alpaca_positions(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Return all open Alpaca positions for the current user."""
+    from backend.trading import get_alpaca_positions as _get_positions
+    try:
+        creds = get_broker_credentials(current_user.tenant_id)
+        return _get_positions(creds)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/orders/sell")
+async def place_sell_order(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Place a market sell order for an existing Alpaca position.
+    Body: { ticker, qty }
+    """
+    from backend.trading import place_market_sell
+    try:
+        creds = get_broker_credentials(current_user.tenant_id)
+        return place_market_sell(creds, ticker=data["ticker"], qty=float(data["qty"]))
+    except KeyError as e:
+        raise HTTPException(status_code=422, detail=f"Missing field: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

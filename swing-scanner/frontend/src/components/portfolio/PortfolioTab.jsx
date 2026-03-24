@@ -5,6 +5,7 @@ import AddPositionModal from "./AddPositionModal.jsx";
 import BudgetSettings from "./BudgetSettings.jsx";
 import PortfolioAIReport from "./PortfolioAIReport.jsx";
 import MarketUpdateBanner from "./MarketUpdateBanner.jsx";
+import AlpacaPositions from "./AlpacaPositions.jsx";
 
 export default function PortfolioTab() {
   const [portfolio, setPortfolio] = useState(null);
@@ -179,6 +180,9 @@ export default function PortfolioTab() {
           <PositionCard key={pos.id} position={pos} onUpdate={fetchPortfolio} />
         ))}
       </div>
+
+      {/* Alpaca Live Positions */}
+      <AlpacaPositions />
 
       {showAdd && <AddPositionModal onClose={() => setShowAdd(false)} onSaved={fetchPortfolio} budget={portfolio?.budget} />}
       {showBudget && <BudgetSettings budget={portfolio?.budget} onClose={() => setShowBudget(false)} onSaved={fetchPortfolio} />}

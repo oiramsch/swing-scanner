@@ -452,7 +452,7 @@ async def market_update_auto(ctx: dict):
         )
         import json as _json
 
-        context = await get_market_context()
+        context = get_market_context()
         open_positions = get_open_positions()
 
         if not open_positions:

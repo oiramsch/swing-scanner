@@ -3,19 +3,16 @@ Daily market update: fetch market context, generate AI portfolio impact analysis
 """
 import json
 import logging
-from datetime import date, timedelta
+from datetime import date
 from typing import Optional
 
 import anthropic
-import httpx
 
 from backend.config import settings
 from backend.database import MarketUpdate, save_market_update
 from backend.market_regime import get_current_regime
 
 logger = logging.getLogger(__name__)
-
-POLYGON_BASE = "https://api.polygon.io"
 
 # Sector ETFs for sector movers
 SECTOR_ETFS = {
@@ -33,49 +30,33 @@ SECTOR_ETFS = {
 }
 
 
-def _headers() -> dict:
-    return {"Authorization": f"Bearer {settings.polygon_api_key}"}
-
-
-async def _fetch_daily_change(ticker: str) -> Optional[float]:
-    """Fetch today's change % for a ticker via Polygon daily open/close."""
-    today = date.today()
-    # Try yesterday if today's data not available yet
-    for days_back in [0, 1, 2]:
-        target = today - timedelta(days=days_back)
-        url = f"{POLYGON_BASE}/v1/open-close/{ticker}/{target.isoformat()}"
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(url, headers=_headers(), params={"adjusted": "true"})
-                if resp.status_code == 200:
-                    data = resp.json()
-                    open_p = data.get("open")
-                    close_p = data.get("close")
-                    if open_p and close_p and open_p > 0:
-                        return round(((close_p - open_p) / open_p) * 100, 2)
-        except Exception as exc:
-            logger.debug("Daily change fetch failed for %s: %s", ticker, exc)
+def _fetch_daily_change(ticker: str) -> Optional[float]:
+    """Fetch today's (or last trading day's) change % via yfinance."""
+    try:
+        import yfinance as yf
+        hist = yf.Ticker(ticker).history(period="5d")
+        if len(hist) < 2:
+            return None
+        prev_close = hist["Close"].iloc[-2]
+        last_close = hist["Close"].iloc[-1]
+        if prev_close and prev_close > 0:
+            return round(((last_close - prev_close) / prev_close) * 100, 2)
+    except Exception as exc:
+        logger.debug("Daily change fetch failed for %s: %s", ticker, exc)
     return None
 
 
-async def get_market_context() -> dict:
+def get_market_context() -> dict:
     """
     Fetch current market data: SPY, QQQ, VIX, sector movers, regime.
     Returns a dict ready for the AI prompt.
     """
-    import asyncio
-
-    # Fetch SPY, QQQ, VIX + sector ETFs concurrently
+    # Fetch SPY, QQQ, VIXY + sector ETFs via yfinance (no API key needed)
     tickers_to_fetch = ["SPY", "QQQ", "VIXY"] + list(SECTOR_ETFS.values())
-    tasks = [_fetch_daily_change(t) for t in tickers_to_fetch]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
 
     changes = {}
-    for ticker, result in zip(tickers_to_fetch, results):
-        if isinstance(result, Exception) or result is None:
-            changes[ticker] = None
-        else:
-            changes[ticker] = result
+    for ticker in tickers_to_fetch:
+        changes[ticker] = _fetch_daily_change(ticker)
 
     spy_change = changes.get("SPY")
     qqq_change = changes.get("QQQ")
