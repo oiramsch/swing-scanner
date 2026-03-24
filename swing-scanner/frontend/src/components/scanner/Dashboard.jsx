@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import CandidateCard from "./CandidateCard.jsx";
 import FilterPanel from "./FilterPanel.jsx";
+import FunnelDiagnostics from "./FunnelDiagnostics.jsx";
 
 const SETUP_COLORS = {
   breakout: "bg-green-500",
@@ -70,6 +71,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
   const [activeFilter, setActiveFilter] = useState(null);
   const [budget, setBudget] = useState(null);
   const [funnel, setFunnel] = useState(null);
+  const [showFunnel, setShowFunnel] = useState(false);
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -273,6 +275,17 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
           >
             ⚙ <span className="hidden sm:inline">Filter-Profile</span>
           </button>
+          <button
+            onClick={() => setShowFunnel(s => !s)}
+            className={`px-3 py-2 text-sm rounded-lg border transition flex items-center gap-1.5 ${
+              showFunnel
+                ? "bg-orange-900/40 border-orange-600/50 text-orange-300"
+                : "bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200"
+            }`}
+            title="Filter-Funnel-Diagnostics"
+          >
+            ▽ <span className="hidden sm:inline">Funnel</span>
+          </button>
           {lastFetched && (
             <span className="text-xs text-gray-500 hidden sm:inline">Updated {lastFetched.toLocaleTimeString()}</span>
           )}
@@ -296,6 +309,13 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
           </button>
         </div>
       </div>
+
+      {/* Funnel Diagnostics */}
+      {showFunnel && (
+        <div className="mb-4">
+          <FunnelDiagnostics initialFunnel={funnel} />
+        </div>
+      )}
 
       {/* Progress */}
       {isScanning && <ScanProgress progress={progress} />}
@@ -359,31 +379,9 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
           )}
 
           {/* Funnel summary — helps diagnose which filter is blocking results */}
-          {funnel?.modules && Object.keys(funnel.modules).length > 0 && (
-            <div className="mt-4 max-w-lg w-full bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <p className="text-xs font-semibold text-gray-400 mb-3">Scan-Funnel (letzter Lauf)</p>
-              {Object.entries(funnel.modules).map(([name, stats]) => (
-                <div key={name} className="mb-3 last:mb-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-gray-300">📊 {name}</span>
-                    <span className="text-xs text-gray-500">
-                      {stats.pre_filter} → {stats.candidates} Kandidaten
-                    </span>
-                  </div>
-                  {/* Top rejection reasons */}
-                  <div className="flex flex-wrap gap-1">
-                    {Object.entries(stats.rejections ?? {})
-                      .filter(([, count]) => count > 0)
-                      .sort(([, a], [, b]) => b - a)
-                      .slice(0, 4)
-                      .map(([reason, count]) => (
-                        <span key={reason} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400">
-                          {reason}: {count}
-                        </span>
-                      ))}
-                  </div>
-                </div>
-              ))}
+          {funnel && funnel.status !== "no_funnel" && (
+            <div className="mt-4 w-full max-w-2xl">
+              <FunnelDiagnostics initialFunnel={funnel} />
             </div>
           )}
         </div>
