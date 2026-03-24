@@ -45,8 +45,8 @@ curl -fsSL "$ARCHIVE_URL" -o "$TMP_ARCHIVE" \
 # ── Extract ───────────────────────────────────────────────────────────────────
 rm -rf "$TMP_DIR"
 mkdir -p "$TMP_DIR"
-# GitHub archive root is "swing-scanner-main/" → strip it
-tar -xzf "$TMP_ARCHIVE" -C "$TMP_DIR" --strip-components=1
+# GitHub archive root is "reponame-main/swing-scanner/" → strip both levels
+tar -xzf "$TMP_ARCHIVE" -C "$TMP_DIR" --strip-components=2
 info "Extracted to ${TMP_DIR}"
 
 # ── Sync files (.env and data/ are gitignored → not in archive → safe) ────────
