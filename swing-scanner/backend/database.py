@@ -540,6 +540,45 @@ class MarketRegime(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class PredictionArchive(SQLModel, table=True):
+    """
+    Ghost Portfolio — silent ML data collector (v2.5 / Phase 1.7).
+
+    Every active + watchlist_pending scan result is archived here automatically.
+    A daily cron job resolves PENDING predictions against EOD data.
+    This table is the ground truth for future ML training (Phase 4).
+
+    Status lifecycle:
+      PENDING  → WIN      if daily_high >= target_price
+      PENDING  → LOSS     if daily_low  <= stop_loss
+      PENDING  → TIMEOUT  if age >= 14 days (neither stop nor target hit)
+
+    TIMEOUT is a distinct label — never reclassified to LOSS.
+    Predictions without stop/target (watchlist_pending) stay PENDING
+    until manually resolved or TIMEOUT.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    scan_date: date = Field(index=True)          # The date the scan ran
+    ticker: str = Field(index=True)
+    regime: str                                  # bull | bear | neutral
+    strategy_module: str = "unknown"             # which module found this
+    candidate_status: str = "active"             # active | watchlist_pending
+    setup_type: Optional[str] = None
+    # Trade levels (parsed floats — None for watchlist_pending without setup)
+    entry_price: Optional[float] = None          # midpoint of entry_zone
+    stop_loss: Optional[float] = None
+    target_price: Optional[float] = None
+    crv: Optional[float] = None
+    confidence: int = 0
+    # Resolution
+    status: str = "PENDING"                      # PENDING | WIN | LOSS | TIMEOUT
+    resolved_at: Optional[datetime] = None
+    resolved_price: Optional[float] = None
+    days_to_resolve: Optional[int] = None
+    notes: Optional[str] = None
+
+
 class ScanFunnel(SQLModel, table=True):
     """Persists the filter funnel breakdown for every scan run."""
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -1081,6 +1120,111 @@ def update_market_update_notified(update_id: int):
 # ---------------------------------------------------------------------------
 # ScanFunnel CRUD
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# PredictionArchive CRUD
+# ---------------------------------------------------------------------------
+
+def archive_prediction(pred: PredictionArchive) -> PredictionArchive:
+    with Session(get_engine()) as session:
+        session.add(pred)
+        session.commit()
+        session.refresh(pred)
+        return pred
+
+
+def get_archived_tickers_for_date(scan_date: date) -> set[str]:
+    """Return set of tickers already archived for a given scan_date (for dedup)."""
+    with Session(get_engine()) as session:
+        stmt = select(PredictionArchive.ticker).where(
+            PredictionArchive.scan_date == scan_date
+        )
+        return set(session.exec(stmt).all())
+
+
+def get_pending_predictions() -> list[PredictionArchive]:
+    """Return all predictions still awaiting resolution."""
+    with Session(get_engine()) as session:
+        stmt = (
+            select(PredictionArchive)
+            .where(PredictionArchive.status == "PENDING")
+            .order_by(PredictionArchive.scan_date.asc())
+        )
+        return list(session.exec(stmt).all())
+
+
+def resolve_prediction(
+    pred_id: int,
+    status: str,
+    resolved_price: Optional[float] = None,
+    notes: Optional[str] = None,
+) -> None:
+    with Session(get_engine()) as session:
+        pred = session.get(PredictionArchive, pred_id)
+        if not pred:
+            return
+        pred.status        = status
+        pred.resolved_at   = datetime.utcnow()
+        pred.resolved_price = resolved_price
+        pred.days_to_resolve = (date.today() - pred.scan_date).days
+        if notes:
+            pred.notes = notes
+        session.add(pred)
+        session.commit()
+
+
+def get_prediction_stats() -> dict:
+    """
+    Aggregate stats for the /api/predictions/stats endpoint.
+    Returns overall counts + breakdown by regime and strategy_module.
+    """
+    with Session(get_engine()) as session:
+        all_preds = list(session.exec(select(PredictionArchive)).all())
+
+    if not all_preds:
+        return {"total": 0, "message": "No predictions archived yet."}
+
+    from collections import defaultdict
+
+    total   = len(all_preds)
+    pending = sum(1 for p in all_preds if p.status == "PENDING")
+    wins    = sum(1 for p in all_preds if p.status == "WIN")
+    losses  = sum(1 for p in all_preds if p.status == "LOSS")
+    timeouts = sum(1 for p in all_preds if p.status == "TIMEOUT")
+
+    decided = wins + losses
+    win_rate = round(wins / decided * 100, 1) if decided else None
+
+    # Avg days to resolve (WIN + LOSS only)
+    resolved_days = [
+        p.days_to_resolve for p in all_preds
+        if p.status in ("WIN", "LOSS") and p.days_to_resolve is not None
+    ]
+    avg_days = round(sum(resolved_days) / len(resolved_days), 1) if resolved_days else None
+
+    # Breakdown by regime
+    by_regime: dict = defaultdict(lambda: {"WIN": 0, "LOSS": 0, "TIMEOUT": 0, "PENDING": 0})
+    for p in all_preds:
+        by_regime[p.regime][p.status] += 1
+
+    # Breakdown by module
+    by_module: dict = defaultdict(lambda: {"WIN": 0, "LOSS": 0, "TIMEOUT": 0, "PENDING": 0})
+    for p in all_preds:
+        by_module[p.strategy_module][p.status] += 1
+
+    return {
+        "total":         total,
+        "pending":       pending,
+        "wins":          wins,
+        "losses":        losses,
+        "timeouts":      timeouts,
+        "win_rate_pct":  win_rate,
+        "avg_days_to_resolve": avg_days,
+        "by_regime":     dict(by_regime),
+        "by_module":     dict(by_module),
+        "note":          f"ML training ready when decided >= 500 (currently {decided})",
+    }
+
 
 def save_scan_funnel(funnel: ScanFunnel) -> ScanFunnel:
     with Session(get_engine()) as session:

@@ -347,6 +347,44 @@ async def get_funnel_history_endpoint(days: int = 30):
 
 
 # ---------------------------------------------------------------------------
+# Ghost Portfolio — Predictions (1.7)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/predictions/stats")
+async def get_prediction_stats_endpoint():
+    """Aggregated Win/Loss/Timeout stats for all archived predictions."""
+    from backend.database import get_prediction_stats
+    return get_prediction_stats()
+
+
+@app.get("/api/predictions")
+async def list_predictions(
+    status: Optional[str] = None,
+    regime: Optional[str] = None,
+    limit: int = 100,
+):
+    """
+    List archived predictions.
+    ?status=PENDING|WIN|LOSS|TIMEOUT
+    ?regime=bull|bear|neutral
+    """
+    from backend.database import PredictionArchive
+    from sqlmodel import Session, select
+    from backend.database import get_engine
+
+    with Session(get_engine()) as session:
+        q = select(PredictionArchive)
+        if status:
+            q = q.where(PredictionArchive.status == status.upper())
+        if regime:
+            q = q.where(PredictionArchive.regime == regime)
+        q = q.order_by(PredictionArchive.scan_date.desc()).limit(limit)
+        preds = list(session.exec(q).all())
+
+    return [p.model_dump() for p in preds]
+
+
+# ---------------------------------------------------------------------------
 # Filter Profiles
 # ---------------------------------------------------------------------------
 

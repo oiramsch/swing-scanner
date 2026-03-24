@@ -14,10 +14,16 @@ from backend.analyzer import analyze_chart
 from backend.chart_fetcher import render_chart
 from backend.config import settings
 from backend.database import (
+    PredictionArchive,
     ScanFunnel,
     ScanResult,
+    archive_prediction,
     clear_results_for_date,
+    get_archived_tickers_for_date,
+    get_pending_predictions,
+    get_watchlist_pending,
     init_db,
+    resolve_prediction,
     save_scan_funnel,
     save_scan_result,
     update_candidate_status,
@@ -95,6 +101,59 @@ def _classify_candidate(analysis: dict, ticker: str, module: Optional[str]) -> s
 async def startup(ctx: dict):
     init_db()
     logger.info("ARQ worker started.")
+
+
+# ---------------------------------------------------------------------------
+# Ghost Portfolio helpers (1.7)
+# ---------------------------------------------------------------------------
+
+def _archive_scan_results(scan_date, regime: str) -> int:
+    """
+    Archive today's active + watchlist_pending scan results into
+    prediction_archive for ML data collection.
+    Deduplicates by ticker + scan_date — safe to call multiple times.
+    Returns count of newly archived predictions.
+    """
+    from backend.database import get_results_for_date
+    from backend.news_checker import _parse_entry_mid, _parse_price
+
+    active_results   = get_results_for_date(scan_date)   # status=active only
+    watchlist_results = get_watchlist_pending(scan_date)  # status=watchlist_pending
+    all_results = active_results + watchlist_results
+
+    already_archived = get_archived_tickers_for_date(scan_date)
+    new_count = 0
+
+    for r in all_results:
+        if r.ticker in already_archived:
+            continue
+
+        entry_price  = _parse_entry_mid(r.entry_zone)
+        stop_loss    = _parse_price(r.stop_loss)
+        target_price = _parse_price(r.target)
+
+        pred = PredictionArchive(
+            scan_date       = scan_date,
+            ticker          = r.ticker,
+            regime          = regime,
+            strategy_module = r.strategy_module or "unknown",
+            candidate_status= r.candidate_status or "active",
+            setup_type      = r.setup_type,
+            entry_price     = entry_price,
+            stop_loss       = stop_loss,
+            target_price    = target_price,
+            crv             = r.crv_calculated,
+            confidence      = r.confidence,
+        )
+        archive_prediction(pred)
+        already_archived.add(r.ticker)
+        new_count += 1
+
+    logger.info(
+        "Ghost Portfolio: archived %d new predictions for %s (regime=%s)",
+        new_count, scan_date, regime,
+    )
+    return new_count
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +329,13 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
     except Exception as exc:
         logger.error("Deep analysis batch failed: %s", exc)
 
+    # Ghost Portfolio — archive for ML data collection
+    try:
+        archived = _archive_scan_results(scan_date, regime)
+        logger.info("Ghost Portfolio: %d predictions archived", archived)
+    except Exception as exc:
+        logger.warning("Ghost Portfolio archiving failed: %s", exc)
+
     # Notify
     top_tickers = [r[0].ticker for r in saved_results[:3]]
     notify_scan_complete(saved, top_tickers)
@@ -424,6 +490,91 @@ async def market_update_auto(ctx: dict):
         logger.error("Market update auto failed: %s", exc)
 
 
+async def ghost_portfolio_resolve(ctx: dict):
+    """
+    22:20 UTC — Resolve pending Ghost Portfolio predictions against EOD data.
+
+    Resolution rules (in order):
+      1. TIMEOUT  — scan_date is >= 14 days ago (regardless of stop/target)
+      2. LOSS     — today's low  <= stop_loss
+      3. WIN      — today's high >= target_price
+      4. Skip     — no stop AND no target (watchlist_pending without setup)
+
+    Only resolves predictions that are at least 1 day old (entry happens
+    the day AFTER the scan, so day-0 data is irrelevant).
+    """
+    logger.info("=== ghost_portfolio_resolve ===")
+    from backend.providers import get_data_provider
+
+    pending  = get_pending_predictions()
+    today    = date.today()
+    provider = get_data_provider()
+    resolved = 0
+    skipped  = 0
+
+    for pred in pending:
+        days_open = (today - pred.scan_date).days
+
+        # Must be at least 1 day old — entry happens next day after scan
+        if days_open < 1:
+            skipped += 1
+            continue
+
+        # Rule 1: TIMEOUT
+        if days_open >= 14:
+            resolve_prediction(
+                pred.id, "TIMEOUT",
+                notes=f"expired after {days_open} days without hitting stop or target",
+            )
+            resolved += 1
+            logger.info("Ghost [TIMEOUT] %s (day %d)", pred.ticker, days_open)
+            continue
+
+        # Rules 2+3: need EOD data — only if stop or target is set
+        if not pred.stop_loss and not pred.target_price:
+            skipped += 1
+            continue
+
+        try:
+            df = await provider.get_daily_bars(pred.ticker, days=3)
+            if df is None or df.empty:
+                skipped += 1
+                continue
+
+            latest     = df.iloc[-1]
+            daily_high = float(latest["High"])
+            daily_low  = float(latest["Low"])
+
+            if pred.stop_loss and daily_low <= pred.stop_loss:
+                resolve_prediction(
+                    pred.id, "LOSS",
+                    resolved_price=daily_low,
+                    notes=f"stop {pred.stop_loss:.2f} hit (low={daily_low:.2f})",
+                )
+                resolved += 1
+                logger.info("Ghost [LOSS] %s — low %.2f <= stop %.2f",
+                            pred.ticker, daily_low, pred.stop_loss)
+
+            elif pred.target_price and daily_high >= pred.target_price:
+                resolve_prediction(
+                    pred.id, "WIN",
+                    resolved_price=daily_high,
+                    notes=f"target {pred.target_price:.2f} hit (high={daily_high:.2f})",
+                )
+                resolved += 1
+                logger.info("Ghost [WIN] %s — high %.2f >= target %.2f",
+                            pred.ticker, daily_high, pred.target_price)
+
+        except Exception as exc:
+            logger.warning("Ghost resolve failed for %s: %s", pred.ticker, exc)
+            skipped += 1
+
+    logger.info(
+        "Ghost Portfolio resolve: %d resolved, %d skipped (of %d pending)",
+        resolved, skipped, len(pending),
+    )
+
+
 async def daily_summary_notification(ctx: dict):
     """22:55 UTC — Send daily summary email + push (includes market update)."""
     logger.info("=== daily_summary_notification ===")
@@ -484,6 +635,7 @@ class WorkerSettings:
     functions = [
         daily_scan,
         market_regime_update,
+        ghost_portfolio_resolve,
         portfolio_signal_check,
         watchlist_check,
         performance_update,
@@ -493,6 +645,7 @@ class WorkerSettings:
     cron_jobs = [
         cron(market_regime_update, hour={22}, minute={0}, run_at_startup=False),
         cron(daily_scan, hour={_hour}, minute={_minute}, run_at_startup=False),
+        cron(ghost_portfolio_resolve, hour={22}, minute={20}, run_at_startup=False),
         cron(portfolio_signal_check, hour={22}, minute={30}, run_at_startup=False),
         cron(watchlist_check, hour={22}, minute={35}, run_at_startup=False),
         cron(performance_update, hour={22}, minute={45}, run_at_startup=False),
