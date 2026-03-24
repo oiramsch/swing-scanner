@@ -130,18 +130,16 @@ export default function CandidateCard({ candidate: c, budget = null }) {
 
         {/* Chart thumbnail */}
         {chartFile && !imgError ? (
-          <div className={`relative bg-gray-950 overflow-hidden ${isInvalidated ? "mt-[52px]" : ""}`}
-            style={{ height: isInvalidated ? "100px" : "128px" }}>
+          <div className={`bg-gray-950 overflow-hidden ${isInvalidated ? "mt-[52px]" : ""}`}>
             <img
               src={`/api/charts/${chartFile}`}
               alt={`${c.ticker} chart`}
-              className="w-full h-full object-cover object-top cursor-pointer hover:scale-105 transition-transform"
+              className="w-full h-auto block cursor-pointer"
               onError={() => setImgError(true)}
             />
           </div>
         ) : (
-          <div className={`bg-gray-950 flex items-center justify-center text-gray-700 text-xs ${isInvalidated ? "mt-[52px]" : ""}`}
-            style={{ height: "128px" }}>
+          <div className={`bg-gray-950 flex items-center justify-center text-gray-700 text-xs h-32 ${isInvalidated ? "mt-[52px]" : ""}`}>
             No chart
           </div>
         )}

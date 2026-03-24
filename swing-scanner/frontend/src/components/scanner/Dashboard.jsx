@@ -228,7 +228,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
           </select>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Active filter badge */}
           {activeFilter ? (
             <button
@@ -238,7 +238,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
             >
               <span className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" />
               <span className="font-medium">{activeFilter.name}</span>
-              <span className="text-indigo-400/70 text-xs">
+              <span className="text-indigo-400/70 text-xs hidden sm:inline">
                 RSI {activeFilter.rsi_min}–{activeFilter.rsi_max} · Conf ≥{activeFilter.confidence_min}
               </span>
             </button>
@@ -249,7 +249,8 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
               title="Kein Filter aktiv — Standard wird verwendet"
             >
               <span className="w-2 h-2 rounded-full bg-gray-500 shrink-0" />
-              Kein Filter aktiv
+              <span className="hidden sm:inline">Kein Filter aktiv</span>
+              <span className="sm:hidden">Filter</span>
             </button>
           )}
           <button
@@ -260,10 +261,10 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
                 : "bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200"
             }`}
           >
-            ⚙ Filter-Profile
+            ⚙ <span className="hidden sm:inline">Filter-Profile</span>
           </button>
           {lastFetched && (
-            <span className="text-xs text-gray-500">Updated {lastFetched.toLocaleTimeString()}</span>
+            <span className="text-xs text-gray-500 hidden sm:inline">Updated {lastFetched.toLocaleTimeString()}</span>
           )}
           <button
             onClick={() => fetchCandidates(false)}
@@ -272,12 +273,12 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
           >
             {refreshing ? (
               <span className="inline-block w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-            ) : "↻"} Refresh
+            ) : "↻"} <span className="hidden sm:inline">Refresh</span>
           </button>
           <button
             onClick={triggerScan}
             disabled={isScanning}
-            className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition disabled:opacity-50 flex items-center gap-2"
+            className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"
           >
             {isScanning ? (
               <><span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Scanning…</>
