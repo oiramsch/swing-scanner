@@ -11,7 +11,6 @@ const SETUP_COLORS = {
   none: "bg-gray-500/20 text-gray-400 border-gray-500/30",
 };
 
-// Strategy module badge colors
 const MODULE_COLORS = {
   "Bull Breakout":          "bg-green-500/15 text-green-400 border-green-500/30",
   "Bear Relative Strength": "bg-orange-500/15 text-orange-300 border-orange-500/30",
@@ -23,14 +22,13 @@ const MODULE_ICONS = {
   "Mean Reversion":         "🔄",
 };
 
-// Flag badge config: label, color classes
 const FLAG_CONFIG = {
-  gap_up:           { label: (c) => `GAP UP +${c.gap_pct?.toFixed(1)}%`, color: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
-  gap_down:         { label: (c) => `GAP DOWN ${c.gap_pct?.toFixed(1)}%`, color: "bg-orange-500/20 text-orange-300 border-orange-500/30" },
-  post_earnings:    { label: () => "POST-EARNINGS",        color: "bg-orange-500/20 text-orange-300 border-orange-500/30" },
-  pre_earnings:     { label: () => "EARNINGS BALD",        color: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
-  corporate_action: { label: () => "CORPORATE ACTION",     color: "bg-red-500/20 text-red-300 border-red-500/30" },
-  low_crv:          { label: (c) => `CRV: ${c.crv_calculated?.toFixed(1)} ⛔`, color: "bg-orange-500/20 text-orange-300 border-orange-500/30" },
+  gap_up:             { label: (c) => `GAP UP +${c.gap_pct?.toFixed(1)}%`,  color: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
+  gap_down:           { label: (c) => `GAP DOWN ${c.gap_pct?.toFixed(1)}%`, color: "bg-orange-500/20 text-orange-300 border-orange-500/30" },
+  post_earnings:      { label: () => "POST-EARNINGS",        color: "bg-orange-500/20 text-orange-300 border-orange-500/30" },
+  pre_earnings:       { label: () => "EARNINGS BALD",        color: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
+  corporate_action:   { label: () => "CORPORATE ACTION",     color: "bg-red-500/20 text-red-300 border-red-500/30" },
+  low_crv:            { label: (c) => `CRV: ${c.crv_calculated?.toFixed(1)} ⛔`, color: "bg-orange-500/20 text-orange-300 border-orange-500/30" },
   technicals_invalid: { label: () => "CHARTTECHNIK UNGÜLTIG", color: "bg-red-500/20 text-red-300 border-red-500/30" },
 };
 
@@ -61,10 +59,8 @@ function CRVBadge({ crv, crvValid }) {
   if (!crv) return null;
   const color = crvValid === false
     ? "text-red-400"
-    : crv >= 2.0
-    ? "text-green-400"
-    : crv >= 1.5
-    ? "text-yellow-400"
+    : crv >= 2.0 ? "text-green-400"
+    : crv >= 1.5 ? "text-yellow-400"
     : "text-red-400";
   const icon = crvValid === false ? "⛔" : crv >= 2.0 ? "✅" : crv >= 1.5 ? "⚠️" : "⛔";
   return (
@@ -74,7 +70,19 @@ function CRVBadge({ crv, crvValid }) {
   );
 }
 
-// Parse first number from entry_zone string like "150.00-152.00" or "150.00"
+// 1.3 — Parse entry zone into structured trigger price display
+// "150.00-152.00" → { low: 150, high: 152, trigger: 152 }
+// "150.00"        → { low: 150, high: null, trigger: 150 }
+function parseEntryZone(entryZone) {
+  if (!entryZone) return null;
+  const nums = String(entryZone).match(/[\d.]+/g)?.map(Number) ?? [];
+  if (nums.length === 0) return null;
+  if (nums.length === 1) return { low: nums[0], high: null, trigger: nums[0] };
+  const [lo, hi] = [Math.min(...nums), Math.max(...nums)];
+  return { low: lo, high: hi, trigger: hi };
+}
+
+// Legacy: first number only (used elsewhere)
 function parseEntryPrice(entryZone) {
   if (!entryZone) return "";
   const match = String(entryZone).match(/[\d.]+/);
@@ -83,34 +91,64 @@ function parseEntryPrice(entryZone) {
 
 function parseFlags(flagsJson) {
   if (!flagsJson) return [];
-  try {
-    return typeof flagsJson === "string" ? JSON.parse(flagsJson) : flagsJson;
-  } catch { return []; }
+  try { return typeof flagsJson === "string" ? JSON.parse(flagsJson) : flagsJson; }
+  catch { return []; }
 }
 
 function parseHeadlines(headlinesJson) {
   if (!headlinesJson) return [];
-  try {
-    return typeof headlinesJson === "string" ? JSON.parse(headlinesJson) : headlinesJson;
-  } catch { return []; }
+  try { return typeof headlinesJson === "string" ? JSON.parse(headlinesJson) : headlinesJson; }
+  catch { return []; }
+}
+
+// 1.5 — Chart lightbox for full-screen zoom on mobile tap
+function ChartLightbox({ src, ticker, onClose }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="relative max-w-full max-h-full" onClick={e => e.stopPropagation()}>
+        <button
+          onClick={onClose}
+          className="absolute -top-8 right-0 text-gray-400 hover:text-white text-sm"
+        >
+          ✕ Schließen
+        </button>
+        <img
+          src={src}
+          alt={`${ticker} chart`}
+          className="max-w-[95vw] max-h-[85vh] object-contain rounded-lg"
+        />
+        <p className="text-center text-gray-500 text-xs mt-2">{ticker} — Chart</p>
+      </div>
+    </div>
+  );
 }
 
 export default function CandidateCard({ candidate: c, budget = null }) {
   const [showDeep, setShowDeep] = useState(false);
   const [showPortfolio, setShowPortfolio] = useState(false);
   const [showHeadlines, setShowHeadlines] = useState(false);
+  const [showChart, setShowChart] = useState(false);    // 1.5 lightbox
+  const [showDimmed, setShowDimmed] = useState(false);  // 1.3 override dim
   const [imgError, setImgError] = useState(false);
   const [addedToWatchlist, setAddedToWatchlist] = useState(false);
 
   const colorClass = SETUP_COLORS[c.setup_type] || SETUP_COLORS.none;
   const chartFile = c.chart_path ? c.chart_path.split("/").pop() : null;
+  const chartSrc = chartFile ? `/api/charts/${chartFile}` : null;
   const flags = parseFlags(c.flags);
   const headlines = parseHeadlines(c.news_headlines);
 
-  const hasWarnings = flags.length > 0;
-  const isInvalidated = flags.includes("technicals_invalid");
+  // 1.3 — classify card quality
+  const isInvalidated   = flags.includes("technicals_invalid");
+  const hasCorporateAction = flags.includes("corporate_action");
+  // Dim cards with invalidated technicals (unless user overrides)
+  const isDimmed = isInvalidated && !showDimmed;
 
-  // Pre-fill data for AddPositionModal
+  const nonTechFlags = flags.filter(f => f !== "technicals_invalid");
+
   const portfolioPrefill = {
     ticker: c.ticker,
     entry_price: parseEntryPrice(c.entry_zone),
@@ -131,49 +169,89 @@ export default function CandidateCard({ candidate: c, budget = null }) {
     } catch {}
   }
 
+  // 1.3 — entry zone parsed
+  const entryZoneParsed = parseEntryZone(c.entry_zone);
+
   return (
     <>
-      <div className={`bg-gray-900 border rounded-xl overflow-hidden hover:border-gray-600 transition-colors flex flex-col relative ${
-        isInvalidated ? "border-red-800/60" : "border-gray-800"
-      }`}>
+      {/* 1.5 Chart Lightbox */}
+      {showChart && chartSrc && (
+        <ChartLightbox src={chartSrc} ticker={c.ticker} onClose={() => setShowChart(false)} />
+      )}
 
-        {/* Technicals-invalid overlay banner */}
-        {isInvalidated && (
-          <div className="absolute inset-x-0 top-0 z-10 bg-red-900/70 border-b border-red-700/60 px-3 py-1.5 text-xs text-red-200 flex items-start gap-1.5">
-            <span className="shrink-0">🚫</span>
-            <span>
-              <span className="font-semibold">Charttechnisches Setup durch News-Event überlagert</span>
-              {c.invalidation_reason && (
-                <span className="block text-red-300/80 mt-0.5">{c.invalidation_reason}</span>
-              )}
+      <div className={`bg-gray-900 border rounded-xl overflow-hidden transition-colors flex flex-col relative ${
+        isDimmed
+          ? "border-red-900/40 opacity-40 grayscale hover:opacity-80 hover:grayscale-0 cursor-pointer"
+          : isInvalidated
+          ? "border-red-800/60 hover:border-gray-600"
+          : "border-gray-800 hover:border-gray-600"
+      }`}
+        onClick={isDimmed ? () => setShowDimmed(true) : undefined}
+      >
+
+        {/* 1.3 — Technicals-invalid dim overlay with "einblenden" hint */}
+        {isDimmed && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center">
+            <span className="bg-gray-900/80 text-red-400 text-xs px-3 py-1.5 rounded-lg border border-red-800/50 pointer-events-none">
+              🚫 Charttechnik ungültig — tippen zum Einblenden
             </span>
           </div>
         )}
 
-        {/* Chart thumbnail */}
-        {chartFile && !imgError ? (
-          <div className={`bg-gray-950 overflow-hidden ${isInvalidated ? "mt-[52px]" : ""}`}>
+        {/* 1.3 — Invalidation banner (only when user opted to show dimmed card) */}
+        {isInvalidated && !isDimmed && (
+          <div className="bg-red-900/70 border-b border-red-700/60 px-3 py-1.5 text-xs text-red-200 flex items-start gap-1.5">
+            <span className="shrink-0">🚫</span>
+            <span className="flex-1">
+              <span className="font-semibold">Charttechnik durch News-Event überlagert</span>
+              {c.invalidation_reason && (
+                <span className="block text-red-300/80 mt-0.5">{c.invalidation_reason}</span>
+              )}
+            </span>
+            <button
+              onClick={() => setShowDimmed(true)}
+              className="shrink-0 text-red-400/60 hover:text-red-300 text-[10px] border border-red-800/40 px-1.5 py-0.5 rounded"
+            >
+              dimmen
+            </button>
+          </div>
+        )}
+
+        {/* 1.3 — Corporate action prominent warning */}
+        {hasCorporateAction && !isDimmed && (
+          <div className="bg-red-950/80 border-b border-red-700 px-3 py-2 text-xs text-red-200 flex items-center gap-2">
+            <span className="text-base shrink-0">⚠️</span>
+            <div>
+              <span className="font-bold text-red-300">CORPORATE ACTION</span>
+              <span className="text-red-400/70 ml-1">— Setup kann durch Ereignis ungültig sein</span>
+            </div>
+          </div>
+        )}
+
+        {/* Chart thumbnail — 1.5 tap-to-zoom */}
+        {chartSrc && !imgError ? (
+          <div className="bg-gray-950 overflow-hidden">
             <img
-              src={`/api/charts/${chartFile}`}
+              src={chartSrc}
               alt={`${c.ticker} chart`}
-              className="w-full h-auto block cursor-pointer"
+              className="w-full h-auto block cursor-zoom-in active:opacity-80 transition-opacity"
+              onClick={e => { e.stopPropagation(); setShowChart(true); }}
               onError={() => setImgError(true)}
             />
           </div>
         ) : (
-          <div className={`bg-gray-950 flex items-center justify-center text-gray-700 text-xs h-32 ${isInvalidated ? "mt-[52px]" : ""}`}>
+          <div className="bg-gray-950 flex items-center justify-center text-gray-700 text-xs h-32">
             No chart
           </div>
         )}
 
-        <div className="p-3 flex flex-col gap-2 flex-1">
+        <div className={`p-3 flex flex-col gap-2 flex-1 ${isDimmed ? "pointer-events-none select-none" : ""}`}>
           {/* Header */}
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-white font-bold text-base">{c.ticker}</span>
                 {c.exchange && <span className="text-gray-600 text-xs">{c.exchange}</span>}
-                {/* News icon */}
                 {headlines.length > 0 && (
                   <button
                     onClick={() => setShowHeadlines(h => !h)}
@@ -206,10 +284,10 @@ export default function CandidateCard({ candidate: c, budget = null }) {
             </div>
           )}
 
-          {/* Flag badges */}
-          {hasWarnings && (
+          {/* Non-critical flag badges (exclude corporate_action + technicals_invalid — shown separately above) */}
+          {nonTechFlags.filter(f => f !== "corporate_action").length > 0 && (
             <div className="flex flex-wrap gap-1">
-              {flags.map(flag => {
+              {nonTechFlags.filter(f => f !== "corporate_action").map(flag => {
                 const cfg = FLAG_CONFIG[flag];
                 if (!cfg) return null;
                 return (
@@ -239,11 +317,22 @@ export default function CandidateCard({ candidate: c, budget = null }) {
           {/* Confidence + composite score */}
           <ConfidenceBar confidence={c.confidence} compositeScore={c.composite_score} />
 
-          {/* Entry / Stop / Target */}
+          {/* 1.3 — Entry / Stop / Target with trigger price */}
           <div className="grid grid-cols-3 gap-1 text-xs">
             <div className="bg-gray-800 rounded p-1.5">
               <div className="text-gray-500 text-[10px]">Entry</div>
-              <div className="text-white font-medium">{c.entry_zone || "—"}</div>
+              <div className="text-white font-medium leading-tight">
+                {entryZoneParsed ? (
+                  entryZoneParsed.high
+                    ? <>${entryZoneParsed.low}–{entryZoneParsed.high}</>
+                    : <>${entryZoneParsed.low}</>
+                ) : (c.entry_zone || "—")}
+              </div>
+              {entryZoneParsed?.high && (
+                <div className="text-indigo-400 text-[10px] mt-0.5">
+                  Trigger ≤${entryZoneParsed.high}
+                </div>
+              )}
             </div>
             <div className="bg-gray-800 rounded p-1.5">
               <div className="text-gray-500 text-[10px]">Stop</div>
@@ -301,7 +390,6 @@ export default function CandidateCard({ candidate: c, budget = null }) {
       {showDeep && (
         <DeepAnalysisModal candidate={c} onClose={() => setShowDeep(false)} />
       )}
-
       {showPortfolio && (
         <AddPositionModal
           prefill={portfolioPrefill}

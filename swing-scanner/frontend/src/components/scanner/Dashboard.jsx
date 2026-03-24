@@ -4,6 +4,77 @@ import CandidateCard from "./CandidateCard.jsx";
 import FilterPanel from "./FilterPanel.jsx";
 import FunnelDiagnostics from "./FunnelDiagnostics.jsx";
 
+// 1.4 — Regime → best module mapping
+const REGIME_MODULE = {
+  bear:    "Bear Relative Strength",
+  bull:    "Bull Breakout",
+  neutral: "Mean Reversion",
+};
+
+function AdaptiveHint({ hint, onModuleActivated }) {
+  const [modules, setModules] = useState(null);
+  const [activating, setActivating] = useState(false);
+  const [activated, setActivated] = useState(false);
+
+  const suggestedModuleName = REGIME_MODULE[hint.regime] ?? null;
+
+  async function loadAndActivate() {
+    if (activating || activated) return;
+    setActivating(true);
+    try {
+      const res = await axios.get("/api/strategy-modules");
+      const all = res.data.modules ?? [];
+      const target = all.find(m => m.name === suggestedModuleName);
+      if (target && !target.is_active) {
+        await axios.post(`/api/strategy-modules/${target.id}/toggle`);
+        setActivated(true);
+        if (onModuleActivated) onModuleActivated();
+      } else if (target?.is_active) {
+        setActivated(true); // already active
+      }
+      setModules(all);
+    } catch {}
+    setActivating(false);
+  }
+
+  return (
+    <div className="mt-6 max-w-2xl w-full bg-orange-900/20 border border-orange-700/40 rounded-xl p-4 text-left">
+      <div className="flex items-start gap-3">
+        <span className="text-2xl shrink-0">💡</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-orange-300 mb-1">Adaptiver Modus</p>
+          <p className="text-xs text-orange-200/80 leading-relaxed mb-3">
+            {hint.suggestion}
+          </p>
+          {suggestedModuleName && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-gray-400">Empfohlenes Modul:</span>
+              <span className="text-xs font-semibold text-orange-300 px-2 py-0.5 rounded border border-orange-700/50 bg-orange-900/30">
+                {suggestedModuleName}
+              </span>
+              {!activated ? (
+                <button
+                  onClick={loadAndActivate}
+                  disabled={activating}
+                  className="text-xs px-3 py-1 bg-orange-600/30 hover:bg-orange-600/50 text-orange-200 rounded border border-orange-600/50 transition disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {activating ? (
+                    <><span className="inline-block w-3 h-3 border border-orange-400 border-t-transparent rounded-full animate-spin" /> Aktiviere…</>
+                  ) : "Modul aktivieren"}
+                </button>
+              ) : (
+                <span className="text-xs text-green-400 flex items-center gap-1">
+                  ✓ aktiviert
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const SETUP_COLORS = {
   breakout: "bg-green-500",
   pullback: "bg-blue-500",
@@ -365,19 +436,9 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
           <p className="text-lg font-medium">Keine Kandidaten für heute</p>
           <p className="text-sm mt-1">Klick auf "Scan starten" um den Tages-Scan zu starten.</p>
 
-          {/* Adaptive hint — shown after a scan ran and found 0 results */}
+          {/* 1.4 — Adaptive hint with module activation */}
           {funnel?.adaptive_hint && (
-            <div className="mt-6 max-w-lg w-full bg-orange-900/20 border border-orange-700/40 rounded-xl p-4 text-left">
-              <div className="flex items-start gap-2">
-                <span className="text-xl shrink-0">💡</span>
-                <div>
-                  <p className="text-sm font-semibold text-orange-300 mb-1">Adaptiver Hinweis</p>
-                  <p className="text-xs text-orange-200/80 leading-relaxed">
-                    {funnel.adaptive_hint.suggestion}
-                  </p>
-                </div>
-              </div>
-            </div>
+            <AdaptiveHint hint={funnel.adaptive_hint} onModuleActivated={fetchFunnel} />
           )}
 
           {/* Funnel summary — helps diagnose which filter is blocking results */}
