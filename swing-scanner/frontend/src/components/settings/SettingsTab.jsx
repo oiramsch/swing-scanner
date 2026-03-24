@@ -296,7 +296,7 @@ function ModulesSection() {
   async function loadModules() {
     try {
       const res = await axios.get("/api/strategy-modules");
-      setModules(res.data);
+      setModules(res.data.modules ?? res.data);
     } catch {}
   }
 
