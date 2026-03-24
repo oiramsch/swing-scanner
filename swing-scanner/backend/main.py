@@ -108,8 +108,9 @@ async def auth_middleware(request: Request, call_next):
     PUBLIC_PATHS = {"/health", "/api/auth/login"}
     path = request.url.path
 
-    # Allow public paths and static assets
-    if path in PUBLIC_PATHS or not path.startswith("/api/"):
+    # Allow public paths, static assets, and chart images
+    # (chart images are loaded via <img> tags which cannot send Bearer headers)
+    if path in PUBLIC_PATHS or not path.startswith("/api/") or path.startswith("/api/charts/"):
         return await call_next(request)
 
     # Check for Bearer token

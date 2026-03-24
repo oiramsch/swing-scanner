@@ -1,5 +1,21 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component } from "react";
 import axios from "axios";
+
+class ErrorBoundary extends Component {
+  state = { error: null };
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="bg-red-900/20 border border-red-700/50 rounded-xl p-4 text-sm text-red-300">
+          <div className="font-semibold mb-1">Render-Fehler in Einstellungen</div>
+          <pre className="text-xs text-red-400 whitespace-pre-wrap">{String(this.state.error)}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function Section({ title, children }) {
   return (
@@ -386,10 +402,10 @@ export default function SettingsTab({ currentUser, onLogout }) {
         </button>
       </div>
 
-      <BrokerSection currentUser={currentUser} />
-      <ModulesSection />
-      <ScannerSection />
-      <PasswordSection currentUser={currentUser} onLogout={onLogout} />
+      <ErrorBoundary><BrokerSection currentUser={currentUser} /></ErrorBoundary>
+      <ErrorBoundary><ModulesSection /></ErrorBoundary>
+      <ErrorBoundary><ScannerSection /></ErrorBoundary>
+      <ErrorBoundary><PasswordSection currentUser={currentUser} onLogout={onLogout} /></ErrorBoundary>
     </div>
   );
 }
