@@ -30,6 +30,7 @@ def init_db():
     _apply_migrations()
     _seed_default_filters()
     _migrate_filter_defaults()
+    _seed_strategy_modules()
     logger.info("Database initialized.")
 
 
@@ -64,6 +65,8 @@ def _apply_migrations():
         ("portfolioposition", "setting_generated_at", "TEXT"),
         # v2.3 — FilterProfile volume_multiplier
         ("filterprofile", "volume_multiplier", "REAL DEFAULT 1.5"),
+        # v2.5 — ScanResult strategy_module tag
+        ("scanresult", "strategy_module", "TEXT"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -195,6 +198,98 @@ def _seed_default_filters():
         logger.info("Seeded 3 default filter profiles (Strikt / Standard / Breit).")
 
 
+def _seed_strategy_modules():
+    """Seed 3 built-in regime-switching strategy modules (runs only if none exist)."""
+    with Session(get_engine()) as session:
+        if session.exec(select(StrategyModule)).first():
+            return  # already seeded
+
+        modules = [
+            # ── Modul 1: Bull Breakout ─────────────────────────────────────
+            StrategyModule(
+                name="Bull Breakout",
+                description=(
+                    "Classic bull-market filter. Requires price above SMA20 & SMA50. "
+                    "Targets breakout and momentum setups in a confirmed uptrend."
+                ),
+                regime="bull",
+                direction="long",
+                is_active=True,
+                auto_activate=True,
+                price_min=15.0,
+                price_max=500.0,
+                avg_volume_min=500_000,
+                rsi_min=45.0,
+                rsi_max=75.0,
+                price_above_sma20=True,
+                price_above_sma50=True,
+                close_above_sma200=None,   # don't filter — assumed in bull
+                rsi_bear_cap=None,         # no bear cap in bull regime
+                volume_multiplier=1.2,
+                relative_strength_vs_spy=False,
+                confidence_min=6,
+                setup_types='["breakout","momentum"]',
+            ),
+            # ── Modul 2: Bear Relative Strength ───────────────────────────
+            StrategyModule(
+                name="Bear Relative Strength",
+                description=(
+                    "Bear-market filter. Finds 'spartans' — stocks holding up better than the "
+                    "broad market. Removes SMA20/50 requirement; instead requires close > SMA200 "
+                    "(long-term uptrend intact) and relative strength vs SPY over 20 days."
+                ),
+                regime="bear",
+                direction="long",
+                is_active=True,
+                auto_activate=True,
+                price_min=10.0,
+                price_max=500.0,
+                avg_volume_min=500_000,
+                rsi_min=35.0,
+                rsi_max=65.0,
+                price_above_sma20=None,    # don't filter — most stocks are below SMA20 in bear
+                price_above_sma50=False,   # explicitly disabled
+                close_above_sma200=True,   # long-term uptrend must remain intact
+                rsi_bear_cap=65.0,         # override default 60-cap → allow up to 65
+                volume_multiplier=1.0,
+                relative_strength_vs_spy=True,
+                confidence_min=6,
+                setup_types='["pullback","reversal","momentum"]',
+            ),
+            # ── Modul 3: Mean Reversion ───────────────────────────────────
+            StrategyModule(
+                name="Mean Reversion",
+                description=(
+                    "Catches extremely oversold stocks with reversal signals. "
+                    "Price must be far below SMA20 (deep pullback), RSI < 40, "
+                    "and close to major support (SMA200). Smaller position sizes recommended."
+                ),
+                regime="bear",  # also activates in neutral via any-logic
+                direction="long",
+                is_active=True,
+                auto_activate=True,
+                price_min=10.0,
+                price_max=500.0,
+                avg_volume_min=300_000,
+                rsi_min=20.0,
+                rsi_max=40.0,
+                price_above_sma20=False,   # explicitly must be below SMA20 (deep pullback)
+                price_above_sma50=False,
+                close_above_sma200=None,   # don't require — stock may be deeply oversold
+                rsi_bear_cap=None,         # RSI max=40 already handles this
+                volume_multiplier=0.8,
+                relative_strength_vs_spy=False,
+                confidence_min=5,
+                setup_types='["reversal","pullback"]',
+                feature_flags_json='{"position_size_reduce": true, "note": "Reduce size 50% due to mean-reversion risk"}',
+            ),
+        ]
+        for m in modules:
+            session.add(m)
+        session.commit()
+        logger.info("Seeded 3 strategy modules: Bull Breakout / Bear Relative Strength / Mean Reversion.")
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -235,6 +330,7 @@ class ScanResult(SQLModel, table=True):
     crv_valid: bool = True                   # True if CRV >= 1.5
     technical_setup_valid: bool = True       # False if news event invalidates technicals
     invalidation_reason: Optional[str] = None  # Explanation if technical_setup_valid=False
+    strategy_module: Optional[str] = None   # v2.5 — which strategy module found this (e.g. "Bear Relative Strength")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -281,6 +377,45 @@ class FilterProfile(SQLModel, table=True):
     respect_market_regime: bool = True
     volume_multiplier: float = 1.5
     is_active: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyModule(SQLModel, table=True):
+    """
+    Regime-switching strategy module (v2.5).
+
+    Each module defines a complete filter configuration tailored to a specific
+    market regime. The scanner auto-selects all active modules matching the
+    current regime and runs them in parallel.
+
+    regime:  bull | bear | neutral | any
+    direction: long | short | both  (short requires broker support)
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    description: Optional[str] = None
+    regime: str = "any"                     # bull | bear | neutral | any
+    direction: str = "long"                 # long | short | both
+    is_active: bool = True
+    auto_activate: bool = True              # auto-use when regime matches
+    # Price / volume filters
+    price_min: float = 10.0
+    price_max: float = 500.0
+    avg_volume_min: int = 500_000
+    # Technical filters (Optional = None means "skip this filter")
+    rsi_min: float = 35.0
+    rsi_max: float = 75.0
+    price_above_sma20: Optional[bool] = None    # None = don't filter
+    price_above_sma50: Optional[bool] = None    # None = don't filter
+    close_above_sma200: Optional[bool] = None   # None = don't filter
+    rsi_bear_cap: Optional[float] = None        # Override default 60-cap in bear regime
+    volume_multiplier: float = 1.0
+    relative_strength_vs_spy: bool = False      # Require ticker to outperform SPY 20d return
+    # Output / ranking
+    confidence_min: int = 6
+    setup_types: str = '["breakout","pullback","pattern","momentum"]'
+    # Feature flags as JSON: {"allow_short": false, "allow_earnings": false}
+    feature_flags_json: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -565,6 +700,53 @@ def delete_filter(filter_id: int):
         if fp:
             session.delete(fp)
             session.commit()
+
+
+# ---------------------------------------------------------------------------
+# StrategyModule CRUD
+# ---------------------------------------------------------------------------
+
+def get_all_modules() -> list[StrategyModule]:
+    with Session(get_engine()) as session:
+        return list(session.exec(select(StrategyModule)).all())
+
+
+def get_modules_for_regime(regime: str) -> list[StrategyModule]:
+    """Return active auto-activating modules for a given regime (includes 'any')."""
+    with Session(get_engine()) as session:
+        stmt = select(StrategyModule).where(
+            StrategyModule.is_active == True,
+            StrategyModule.auto_activate == True,
+        )
+        all_active = list(session.exec(stmt).all())
+    return [m for m in all_active if m.regime in (regime, "any")]
+
+
+def get_module(module_id: int) -> Optional[StrategyModule]:
+    with Session(get_engine()) as session:
+        return session.get(StrategyModule, module_id)
+
+
+def save_module(m: StrategyModule) -> StrategyModule:
+    with Session(get_engine()) as session:
+        session.add(m)
+        session.commit()
+        session.refresh(m)
+        return m
+
+
+def update_module(module_id: int, data: dict) -> Optional[StrategyModule]:
+    with Session(get_engine()) as session:
+        m = session.get(StrategyModule, module_id)
+        if not m:
+            return None
+        for k, v in data.items():
+            if hasattr(m, k):
+                setattr(m, k, v)
+        session.add(m)
+        session.commit()
+        session.refresh(m)
+        return m
 
 
 # ---------------------------------------------------------------------------

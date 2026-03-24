@@ -11,6 +11,18 @@ const SETUP_COLORS = {
   none: "bg-gray-500/20 text-gray-400 border-gray-500/30",
 };
 
+// Strategy module badge colors
+const MODULE_COLORS = {
+  "Bull Breakout":          "bg-green-500/15 text-green-400 border-green-500/30",
+  "Bear Relative Strength": "bg-orange-500/15 text-orange-300 border-orange-500/30",
+  "Mean Reversion":         "bg-purple-500/15 text-purple-300 border-purple-500/30",
+};
+const MODULE_ICONS = {
+  "Bull Breakout":          "🚀",
+  "Bear Relative Strength": "🛡️",
+  "Mean Reversion":         "🔄",
+};
+
 // Flag badge config: label, color classes
 const FLAG_CONFIG = {
   gap_up:           { label: (c) => `GAP UP +${c.gap_pct?.toFixed(1)}%`, color: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
@@ -172,6 +184,17 @@ export default function CandidateCard({ candidate: c, budget = null }) {
               {c.setup_type}
             </span>
           </div>
+
+          {/* Strategy module tag */}
+          {c.strategy_module && (
+            <div className="flex items-center gap-1">
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
+                MODULE_COLORS[c.strategy_module] ?? "bg-gray-700/50 text-gray-400 border-gray-600"
+              }`}>
+                {MODULE_ICONS[c.strategy_module] ?? "📊"} {c.strategy_module}
+              </span>
+            </div>
+          )}
 
           {/* Flag badges */}
           {hasWarnings && (

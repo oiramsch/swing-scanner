@@ -26,7 +26,12 @@ import pandas as pd
 import ta as ta_lib
 
 from backend.config import settings
-from backend.database import FilterProfile, get_active_filter
+from backend.database import (
+    FilterProfile,
+    StrategyModule,
+    get_active_filter,
+    get_modules_for_regime,
+)
 from backend.providers import get_data_provider
 
 logger = logging.getLogger(__name__)
@@ -57,10 +62,11 @@ async def fetch_ohlcv(ticker: str, days: int = 60):
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["SMA_20"] = ta_lib.trend.sma_indicator(df["Close"], window=20)
-    df["SMA_50"] = ta_lib.trend.sma_indicator(df["Close"], window=50)
-    df["EMA_9"]  = ta_lib.trend.ema_indicator(df["Close"], window=9)
-    df["RSI_14"] = ta_lib.momentum.rsi(df["Close"], window=14)
+    df["SMA_20"]  = ta_lib.trend.sma_indicator(df["Close"], window=20)
+    df["SMA_50"]  = ta_lib.trend.sma_indicator(df["Close"], window=50)
+    df["SMA_200"] = ta_lib.trend.sma_indicator(df["Close"], window=200)
+    df["EMA_9"]   = ta_lib.trend.ema_indicator(df["Close"], window=9)
+    df["RSI_14"]  = ta_lib.momentum.rsi(df["Close"], window=14)
     df["ATRr_14"] = ta_lib.volatility.average_true_range(
         df["High"], df["Low"], df["Close"], window=14
     )
@@ -73,10 +79,11 @@ def get_indicator_snapshot(df: pd.DataFrame) -> dict:
     return {
         "close":    round(float(latest["Close"]), 2),
         "volume":   int(latest["Volume"]),
-        "sma20":    round(float(latest.get("SMA_20") or 0), 2),
-        "sma50":    round(float(latest.get("SMA_50") or 0), 2),
-        "ema9":     round(float(latest.get("EMA_9")  or 0), 2),
-        "rsi14":    round(float(latest.get("RSI_14") or 0), 2),
+        "sma20":    round(float(latest.get("SMA_20")  or 0), 2),
+        "sma50":    round(float(latest.get("SMA_50")  or 0), 2),
+        "sma200":   round(float(latest.get("SMA_200") or 0), 2),
+        "ema9":     round(float(latest.get("EMA_9")   or 0), 2),
+        "rsi14":    round(float(latest.get("RSI_14")  or 0), 2),
         "atr14":    round(float(latest.get("ATRr_14") or 0), 2),
         "vol_ma20": round(float(latest.get("Vol_MA20") or 0), 2),
     }
@@ -86,45 +93,77 @@ def get_indicator_snapshot(df: pd.DataFrame) -> dict:
 # Filter logic
 # ---------------------------------------------------------------------------
 
-def _get_filter_params(fp: Optional[FilterProfile]) -> dict:
-    if fp is None:
+def _get_filter_params(source) -> dict:
+    """
+    Build a filter params dict from a FilterProfile, StrategyModule, or None.
+    StrategyModule can have nullable booleans (None = skip that filter).
+    """
+    if source is None:
         return {
-            "price_min":         settings.min_price,
-            "price_max":         9_999.0,
-            "avg_volume_min":    settings.min_volume,
-            "rsi_min":           settings.min_rsi,
-            "rsi_max":           settings.max_rsi,
-            "price_above_sma50": True,
-            "price_above_sma20": False,
-            "volume_multiplier": settings.volume_multiplier,
+            "price_min":          settings.min_price,
+            "price_max":          9_999.0,
+            "avg_volume_min":     settings.min_volume,
+            "rsi_min":            settings.min_rsi,
+            "rsi_max":            settings.max_rsi,
+            "price_above_sma50":  True,
+            "price_above_sma20":  False,
+            "close_above_sma200": None,
+            "rsi_bear_cap":       60.0,
+            "volume_multiplier":  settings.volume_multiplier,
+            "relative_strength_vs_spy": False,
         }
+    if isinstance(source, StrategyModule):
+        return {
+            "price_min":          source.price_min,
+            "price_max":          source.price_max,
+            "avg_volume_min":     source.avg_volume_min,
+            "rsi_min":            source.rsi_min,
+            "rsi_max":            source.rsi_max,
+            "price_above_sma50":  source.price_above_sma50,   # may be None
+            "price_above_sma20":  source.price_above_sma20,   # may be None
+            "close_above_sma200": source.close_above_sma200,  # may be None
+            "rsi_bear_cap":       source.rsi_bear_cap,         # may be None → use module's rsi_max
+            "volume_multiplier":  source.volume_multiplier,
+            "relative_strength_vs_spy": source.relative_strength_vs_spy,
+        }
+    # FilterProfile (legacy)
     return {
-        "price_min":         fp.price_min,
-        "price_max":         fp.price_max,
-        "avg_volume_min":    fp.avg_volume_min,
-        "rsi_min":           fp.rsi_min,
-        "rsi_max":           fp.rsi_max,
-        "price_above_sma50": fp.price_above_sma50,
-        "price_above_sma20": fp.price_above_sma20,
-        "volume_multiplier": getattr(fp, "volume_multiplier", settings.volume_multiplier),
+        "price_min":          source.price_min,
+        "price_max":          source.price_max,
+        "avg_volume_min":     source.avg_volume_min,
+        "rsi_min":            source.rsi_min,
+        "rsi_max":            source.rsi_max,
+        "price_above_sma50":  source.price_above_sma50,
+        "price_above_sma20":  source.price_above_sma20,
+        "close_above_sma200": None,
+        "rsi_bear_cap":       60.0,
+        "volume_multiplier":  getattr(source, "volume_multiplier", settings.volume_multiplier),
+        "relative_strength_vs_spy": False,
     }
 
 
-def _filter_reason(df: pd.DataFrame, params: dict, regime: str = "neutral") -> Optional[str]:
+def _filter_reason(
+    df: pd.DataFrame,
+    params: dict,
+    regime: str = "neutral",
+    spy_20d_return: Optional[float] = None,
+) -> Optional[str]:
     """
     Returns the rejection reason string if the ticker fails any filter,
     or None if it passes all filters.
 
     Reasons:
-      insufficient_bars — less than 51 OHLCV rows
-      nan_indicators    — SMA50 or RSI14 not yet computed (not enough history)
-      price_range       — price outside [price_min, price_max]
-      volume_min        — snapshot volume below avg_volume_min
-      sma50             — close <= SMA50 (when price_above_sma50=True)
-      sma20             — close <= SMA20 (when price_above_sma20=True)
-      rsi_range         — RSI outside [rsi_min, rsi_max]
-      rsi_bear          — RSI > 60 in bear regime (extra bear-market filter)
-      volume_surge      — current volume < volume_multiplier × 20d avg volume
+      insufficient_bars    — less than 51 OHLCV rows
+      nan_indicators       — SMA50 or RSI14 not yet computed
+      price_range          — price outside [price_min, price_max]
+      volume_min           — snapshot volume below avg_volume_min
+      sma50                — close <= SMA50 (when price_above_sma50=True)
+      sma20                — close <= SMA20 (when price_above_sma20=True)
+      sma200               — close <= SMA200 (when close_above_sma200=True)
+      rsi_range            — RSI outside [rsi_min, rsi_max]
+      rsi_bear             — RSI above bear cap (default 60 in bear regime)
+      volume_surge         — volume < volume_multiplier × 20d avg
+      relative_strength    — ticker 20d return < SPY 20d return
     """
     if df is None or len(df) < 51:
         return "insufficient_bars"
@@ -142,27 +181,49 @@ def _filter_reason(df: pd.DataFrame, params: dict, regime: str = "neutral") -> O
         return "price_range"
     if volume < params["avg_volume_min"]:
         return "volume_min"
-    if params["price_above_sma50"] and close <= float(sma50_val):
+
+    # SMA filters — None means "skip"
+    if params.get("price_above_sma50") is True and close <= float(sma50_val):
         return "sma50"
-    if params["price_above_sma20"] and close <= float(latest.get("SMA_20") or 0):
+    if params.get("price_above_sma20") is True and close <= float(latest.get("SMA_20") or 0):
         return "sma20"
+    if params.get("close_above_sma200") is True:
+        sma200 = latest.get("SMA_200")
+        if sma200 is not None and not pd.isna(sma200) and close <= float(sma200):
+            return "sma200"
 
     rsi = float(rsi_val)
     if not (params["rsi_min"] <= rsi <= params["rsi_max"]):
         return "rsi_range"
-    if regime == "bear" and rsi > 60:
-        return "rsi_bear"
+
+    # Bear-regime RSI cap: use module's rsi_bear_cap if set, else 60 default
+    if regime == "bear":
+        bear_cap = params.get("rsi_bear_cap") or 60.0
+        if rsi > bear_cap:
+            return "rsi_bear"
 
     avg_vol = float(df["Volume"].iloc[-20:-1].mean())
     if volume < avg_vol * params["volume_multiplier"]:
         return "volume_surge"
 
+    # Relative strength vs SPY (only if module requires it)
+    if params.get("relative_strength_vs_spy") and spy_20d_return is not None:
+        if len(df) >= 21:
+            ticker_20d_return = (close - float(df["Close"].iloc[-21])) / float(df["Close"].iloc[-21])
+            if ticker_20d_return <= spy_20d_return:
+                return "relative_strength"
+
     return None  # passes all filters
 
 
-def passes_filter(df: pd.DataFrame, params: dict, regime: str = "neutral") -> bool:
+def passes_filter(
+    df: pd.DataFrame,
+    params: dict,
+    regime: str = "neutral",
+    spy_20d_return: Optional[float] = None,
+) -> bool:
     """Thin wrapper kept for backward compatibility."""
-    return _filter_reason(df, params, regime) is None
+    return _filter_reason(df, params, regime, spy_20d_return) is None
 
 
 def pre_filter_snapshot(item: dict, params: dict) -> bool:
@@ -175,7 +236,109 @@ def pre_filter_snapshot(item: dict, params: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Main screener
+# Core per-module screening loop
+# ---------------------------------------------------------------------------
+
+async def _run_single_module(
+    module_name: str,
+    params: dict,
+    pre_candidates: list[dict],
+    provider,
+    regime: str,
+    spy_20d_return: Optional[float],
+    max_cap: int,
+    progress_cb: Optional[Callable] = None,
+    progress_offset: int = 0,
+) -> tuple[list[dict], dict]:
+    """
+    Run the OHLCV + indicator + filter loop for one set of params.
+    Returns (candidates, rejection_counts).
+    """
+    candidates: list[dict] = []
+    rejection: dict[str, int] = {
+        "insufficient_bars": 0, "nan_indicators": 0,
+        "price_range": 0, "volume_min": 0,
+        "sma50": 0, "sma20": 0, "sma200": 0,
+        "rsi_range": 0, "rsi_bear": 0, "volume_surge": 0,
+        "relative_strength": 0, "error": 0,
+    }
+    ohlcv_ok = 0
+    ohlcv_none = 0
+    total = len(pre_candidates)
+
+    for i, item in enumerate(pre_candidates):
+        if len(candidates) >= max_cap:
+            break
+        ticker = item["ticker"]
+        if progress_cb:
+            pct = progress_offset + int((i / max(total, 1)) * 50)
+            progress_cb("screening", f"[{module_name}] {ticker} ({i+1}/{total})",
+                        i + 1, total, len(candidates), pct)
+        try:
+            df = await provider.get_daily_bars(ticker, days=settings.lookback_days)
+            if df is None:
+                ohlcv_none += 1
+                rejection["insufficient_bars"] += 1
+                continue
+            ohlcv_ok += 1
+            df = compute_indicators(df)
+            reason = _filter_reason(df, params, regime=regime, spy_20d_return=spy_20d_return)
+            if reason is not None:
+                rejection[reason] = rejection.get(reason, 0) + 1
+                continue
+            indicators = get_indicator_snapshot(df)
+            candidates.append({
+                "ticker":          ticker,
+                "df":              df,
+                "indicators":      indicators,
+                "strategy_module": module_name,
+            })
+            logger.info(
+                "[%s] Candidate #%d: %s (RSI=%.1f, Close=%.2f, SMA20=%.2f, SMA200=%.2f)",
+                module_name, len(candidates), ticker,
+                indicators["rsi14"], indicators["close"],
+                indicators["sma20"], indicators["sma200"],
+            )
+        except Exception as exc:
+            logger.warning("[%s] Error on %s: %s", module_name, ticker, exc)
+            ohlcv_none += 1
+            rejection["error"] += 1
+
+    return candidates, {
+        "ohlcv_ok": ohlcv_ok, "ohlcv_none": ohlcv_none,
+        "rejections": rejection,
+    }
+
+
+async def _get_spy_20d_return() -> Optional[float]:
+    """Fetch SPY's 20-day price return for relative-strength filter."""
+    try:
+        provider = get_data_provider()
+        df = await provider.get_daily_bars("SPY", days=30)
+        if df is not None and len(df) >= 21:
+            return (float(df["Close"].iloc[-1]) - float(df["Close"].iloc[-21])) / float(df["Close"].iloc[-21])
+    except Exception as exc:
+        logger.warning("Could not compute SPY 20d return: %s", exc)
+    return None
+
+
+def _log_funnel(label: str, funnel: dict):
+    rej = funnel.get("rejections", {})
+    logger.info("=" * 60)
+    logger.info("[FUNNEL:%s] Universe:          %d", label, funnel.get("universe", 0))
+    logger.info("[FUNNEL:%s] Snapshot:          %d", label, funnel.get("snapshot", 0))
+    logger.info("[FUNNEL:%s] Pre-filter:        %d", label, funnel.get("pre_filter", 0))
+    logger.info("[FUNNEL:%s] OHLCV ok/fail:     %d / %d", label,
+                funnel.get("ohlcv_fetched", 0), funnel.get("ohlcv_failed", 0))
+    for reason, count in rej.items():
+        if count > 0:
+            logger.info("[FUNNEL:%s]   %-20s %d", label, reason + ":", count)
+    logger.info("[FUNNEL:%s] ====> CANDIDATES:  %d", label, funnel.get("candidates", 0))
+    logger.info("=" * 60)
+
+
+# ---------------------------------------------------------------------------
+# Main screener (regime-aware, module-driven)
 # ---------------------------------------------------------------------------
 
 async def run_screener(
@@ -183,157 +346,147 @@ async def run_screener(
     regime: str = "neutral",
 ) -> list[dict]:
     """
-    Full async screening pipeline.
-    Returns up to max_candidates dicts: {ticker, df, indicators}.
+    Regime-switching screening pipeline (v2.5).
+
+    Strategy modules matching the current regime are selected automatically.
+    Each module is applied independently; results are merged and deduplicated.
+    If no strategy modules are configured, falls back to the active FilterProfile.
+
+    Returns a list of candidate dicts:
+      {ticker, df, indicators, strategy_module}
     """
+    global _last_funnel
     provider = get_data_provider()
-    fp       = get_active_filter()
-    params   = _get_filter_params(fp)
     universe = settings.stock_universe
 
-    logger.info(
-        "Screener starting (provider=%s, universe=%s, regime=%s, filter=%s)…",
-        settings.data_provider, universe, regime,
-        fp.name if fp else "default",
-    )
-
-    # ── Step 1: Get symbol universe ───────────────────────────────────────────
+    # ── Step 1: Symbol universe ───────────────────────────────────────────────
     if progress_cb:
         progress_cb("snapshot", "Loading symbol universe…", 0, 0, 0, 1)
-
     symbols = provider.get_symbols(universe)
     logger.info("Universe: %d symbols", len(symbols))
 
-    # ── Step 2: Batch snapshot (latest close + volume) ────────────────────────
+    # ── Step 2: Market snapshot ───────────────────────────────────────────────
     if progress_cb:
-        progress_cb("snapshot", f"Fetching market snapshot for {len(symbols)} symbols…", 0, len(symbols), 0, 2)
-
+        progress_cb("snapshot", f"Fetching snapshot for {len(symbols)} symbols…", 0, len(symbols), 0, 2)
     all_tickers = await provider.get_snapshot(symbols)
-
     if not all_tickers:
-        logger.error("No market data returned — check data provider / market hours")
+        logger.error("No market data — check data provider / market hours")
         return []
 
-    # ── Step 3: Price / volume pre-filter ─────────────────────────────────────
-    pre_candidates = [t for t in all_tickers if pre_filter_snapshot(t, params)]
-    total = len(pre_candidates)
-    logger.info(
-        "Filter funnel — universe: %d → snapshot data: %d → price/vol pre-filter: %d",
-        len(symbols), len(all_tickers), total,
-    )
+    # ── Step 3: Select strategy modules ──────────────────────────────────────
+    modules = get_modules_for_regime(regime)
+    using_modules = bool(modules)
 
-    if progress_cb:
-        progress_cb("snapshot", f"Snapshot done: {total} candidates to screen", 0, total, 0, 5)
+    if not using_modules:
+        logger.info("No strategy modules for regime '%s' — falling back to FilterProfile", regime)
+        fp = get_active_filter()
+        modules_cfg = [(fp.name if fp else "default", _get_filter_params(fp))]
+    else:
+        logger.info(
+            "Regime '%s' → %d module(s): %s",
+            regime, len(modules), [m.name for m in modules]
+        )
+        modules_cfg = [(m.name, _get_filter_params(m)) for m in modules]
 
-    # ── Step 4-6: Per-ticker OHLCV + indicators + full filter ─────────────────
-    candidates: list[dict] = []
-    processed   = 0
-    ohlcv_ok    = 0
-    ohlcv_none  = 0
-    max_cap     = settings.max_candidates
+    # ── Step 4: SPY 20d return (needed for relative-strength filter) ──────────
+    needs_rs = any(cfg[1].get("relative_strength_vs_spy") for cfg in modules_cfg)
+    spy_20d_return: Optional[float] = None
+    if needs_rs:
+        spy_20d_return = await _get_spy_20d_return()
+        if spy_20d_return is not None:
+            logger.info("SPY 20d return: %.2f%%", spy_20d_return * 100)
 
-    # Granular per-reason rejection counters
-    rejection: dict[str, int] = {
-        "insufficient_bars": 0,
-        "nan_indicators":    0,
-        "price_range":       0,
-        "volume_min":        0,
-        "sma50":             0,
-        "sma20":             0,
-        "rsi_range":         0,
-        "rsi_bear":          0,
-        "volume_surge":      0,
-        "error":             0,
+    # ── Step 5: Run each module ───────────────────────────────────────────────
+    all_candidates: list[dict] = []
+    seen_tickers: set[str] = set()
+    combined_funnel: dict = {
+        "ran_at":      datetime.utcnow().isoformat(),
+        "regime":      regime,
+        "universe":    len(symbols),
+        "snapshot":    len(all_tickers),
+        "modules":     {},
     }
+    max_cap = settings.max_candidates
 
-    for item in pre_candidates:
-        if len(candidates) >= max_cap:
-            break
-
-        ticker = item["ticker"]
-        processed += 1
+    for module_idx, (module_name, params) in enumerate(modules_cfg):
+        # Per-module pre-filter (each module has its own price_min/vol thresholds)
+        pre = [t for t in all_tickers if pre_filter_snapshot(t, params)]
+        logger.info("[%s] Pre-filter: %d / %d symbols", module_name, len(pre), len(all_tickers))
 
         if progress_cb:
-            pct = 5 + int((processed / max(total, 1)) * 55)
-            progress_cb(
-                "screening",
-                f"Screening {ticker} ({processed}/{total})",
-                processed, total, len(candidates), pct,
-            )
+            progress_cb("snapshot", f"[{module_name}] Screening {len(pre)} candidates…",
+                        0, len(pre), 0, 5 + module_idx * 5)
 
-        try:
-            df = await provider.get_daily_bars(ticker, days=settings.lookback_days)
-            if df is None:
-                ohlcv_none += 1
-                rejection["insufficient_bars"] += 1
-                continue
+        offset = 10 + module_idx * 40
+        module_candidates, stats = await _run_single_module(
+            module_name=module_name,
+            params=params,
+            pre_candidates=pre,
+            provider=provider,
+            regime=regime,
+            spy_20d_return=spy_20d_return,
+            max_cap=max_cap - len(all_candidates),
+            progress_cb=progress_cb,
+            progress_offset=offset,
+        )
 
-            ohlcv_ok += 1
-            df = compute_indicators(df)
+        # Deduplicate (same ticker may appear in multiple modules → keep first/best)
+        new = [c for c in module_candidates if c["ticker"] not in seen_tickers]
+        seen_tickers.update(c["ticker"] for c in new)
+        all_candidates.extend(new)
 
-            reason = _filter_reason(df, params, regime=regime)
-            if reason is not None:
-                rejection[reason] = rejection.get(reason, 0) + 1
-                continue
+        combined_funnel["modules"][module_name] = {
+            "pre_filter":    len(pre),
+            "ohlcv_fetched": stats["ohlcv_ok"],
+            "ohlcv_failed":  stats["ohlcv_none"],
+            "rejections":    stats["rejections"],
+            "candidates":    len(new),
+        }
+        _log_funnel(module_name, {
+            "universe":    len(symbols),
+            "snapshot":    len(all_tickers),
+            "pre_filter":  len(pre),
+            "ohlcv_fetched": stats["ohlcv_ok"],
+            "ohlcv_failed":  stats["ohlcv_none"],
+            "rejections":    stats["rejections"],
+            "candidates":    len(new),
+        })
 
-            indicators = get_indicator_snapshot(df)
-            candidates.append({"ticker": ticker, "df": df, "indicators": indicators})
-            logger.info(
-                "Candidate #%d: %s (RSI=%.1f, Close=%.2f vs SMA20=%.2f SMA50=%.2f, Vol×%.1f)",
-                len(candidates), ticker,
-                indicators["rsi14"], indicators["close"],
-                indicators["sma20"], indicators["sma50"],
-                params["volume_multiplier"],
-            )
+        if len(all_candidates) >= max_cap:
+            break
 
-        except Exception as exc:
-            logger.warning("Error processing %s: %s", ticker, exc)
-            ohlcv_none += 1
-            rejection["error"] += 1
+    combined_funnel["candidates"] = len(all_candidates)
 
-    # ── Funnel summary ────────────────────────────────────────────────────────
-    funnel = {
-        "ran_at":           datetime.utcnow().isoformat(),
-        "regime":           regime,
-        "filter_profile":   fp.name if fp else "default",
-        "filter_params":    params,
-        "universe":         len(symbols),
-        "snapshot":         len(all_tickers),
-        "pre_filter":       total,
-        "ohlcv_fetched":    ohlcv_ok,
-        "ohlcv_failed":     ohlcv_none,
-        "rejections":       rejection,
-        "candidates":       len(candidates),
+    # ── Step 6: Adaptive suggestion ───────────────────────────────────────────
+    if len(all_candidates) == 0 and using_modules:
+        # Compute how many the Bear RS module would produce without RS filter
+        combined_funnel["adaptive_hint"] = _build_adaptive_hint(regime, all_tickers)
+
+    # Store for API
+    _last_funnel = combined_funnel
+    logger.info("Screener done: %d candidates across %d module(s)", len(all_candidates), len(modules_cfg))
+    return all_candidates
+
+
+def _build_adaptive_hint(regime: str, snapshot: list[dict]) -> dict:
+    """
+    When 0 candidates are found, suggest which relaxed module would produce results.
+    This is a lightweight count without OHLCV (snapshot only).
+    """
+    # Check how many pass the loosest possible pre-filter
+    loose_params = {
+        "price_min": 5.0, "price_max": 999.0, "avg_volume_min": 200_000,
+        "rsi_min": 20.0, "rsi_max": 80.0, "price_above_sma20": None,
+        "price_above_sma50": None, "close_above_sma200": None,
+        "rsi_bear_cap": None, "volume_multiplier": 0.5,
+        "relative_strength_vs_spy": False,
     }
-
-    # Pretty funnel log — one line per step
-    logger.info("=" * 60)
-    logger.info("[FUNNEL] Universe loaded:          %d", funnel["universe"])
-    logger.info("[FUNNEL] Snapshot data returned:   %d", funnel["snapshot"])
-    logger.info("[FUNNEL] After price/vol pre-filter:%d", funnel["pre_filter"])
-    logger.info("[FUNNEL] OHLCV fetched ok:          %d  (failed: %d)",
-                funnel["ohlcv_fetched"], funnel["ohlcv_failed"])
-    logger.info("[FUNNEL] --- Rejections after indicators ---")
-    logger.info("[FUNNEL]   insufficient_bars: %d", rejection["insufficient_bars"])
-    logger.info("[FUNNEL]   nan_indicators:    %d", rejection["nan_indicators"])
-    logger.info("[FUNNEL]   price_range:       %d", rejection["price_range"])
-    logger.info("[FUNNEL]   volume_min:        %d", rejection["volume_min"])
-    logger.info("[FUNNEL]   sma50:             %d  (price_above_sma50=%s)",
-                rejection["sma50"], params["price_above_sma50"])
-    logger.info("[FUNNEL]   sma20:             %d  (price_above_sma20=%s)",
-                rejection["sma20"], params["price_above_sma20"])
-    logger.info("[FUNNEL]   rsi_range:         %d  (rsi=[%.0f-%.0f])",
-                rejection["rsi_range"], params["rsi_min"], params["rsi_max"])
-    logger.info("[FUNNEL]   rsi_bear:          %d  (bear-market RSI>60 filter)",
-                rejection["rsi_bear"])
-    logger.info("[FUNNEL]   volume_surge:      %d  (vol < %.1f×20d-avg)",
-                rejection["volume_surge"], params["volume_multiplier"])
-    logger.info("[FUNNEL]   errors:            %d", rejection["error"])
-    logger.info("[FUNNEL] ====> FINAL CANDIDATES: %d", funnel["candidates"])
-    logger.info("=" * 60)
-
-    # Persist for API access
-    global _last_funnel
-    _last_funnel = funnel
-
-    return candidates
+    loose_count = sum(1 for t in snapshot if pre_filter_snapshot(t, loose_params))
+    return {
+        "regime": regime,
+        "loose_pre_filter_count": loose_count,
+        "suggestion": (
+            f"Mit dem 'Breit'-Preset wären ~{loose_count} Symbole in der Vorauswahl. "
+            f"Wechsle zu einem weniger restriktiven Modul für diesen {regime.upper()}-Markt."
+        ),
+    }

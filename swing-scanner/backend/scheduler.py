@@ -191,6 +191,7 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
                 crv_valid=analysis.get("crv_valid", True),
                 technical_setup_valid=analysis.get("technical_setup_valid", True),
                 invalidation_reason=analysis.get("invalidation_reason"),
+                strategy_module=candidate.get("strategy_module"),
             )
             saved_result = save_scan_result(result)
             saved_results.append((saved_result, indicators, candidate.get("df")))

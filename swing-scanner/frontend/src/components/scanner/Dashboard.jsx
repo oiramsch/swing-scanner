@@ -69,12 +69,14 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [activeFilter, setActiveFilter] = useState(null);
   const [budget, setBudget] = useState(null);
+  const [funnel, setFunnel] = useState(null);
   const pollRef = useRef(null);
 
   useEffect(() => {
     fetchCandidates(true);
     fetchActiveFilter();
     fetchBudget();
+    fetchFunnel();
     if (scanStatus?.running) startPolling();
     return () => stopPolling();
   }, []);
@@ -84,6 +86,13 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
       const res = await axios.get("/api/filters");
       const active = res.data.find(p => p.is_active) ?? null;
       setActiveFilter(active);
+    } catch {}
+  }
+
+  async function fetchFunnel() {
+    try {
+      const res = await axios.get("/api/scan/funnel");
+      setFunnel(res.data);
     } catch {}
   }
 
@@ -128,6 +137,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
       if (status && !status.running) {
         stopPolling();
         fetchCandidates();
+        fetchFunnel();
       }
     }, 3000);
   }
@@ -325,13 +335,57 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
       )}
 
       {!initialLoading && !error && candidates.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-24 text-gray-500">
+        <div className="flex flex-col items-center py-16 text-gray-500">
           <svg className="w-16 h-16 mb-4 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
               d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
-          <p className="text-lg font-medium">No candidates for today</p>
-          <p className="text-sm mt-1">Click "Scan starten" to run the daily scan.</p>
+          <p className="text-lg font-medium">Keine Kandidaten für heute</p>
+          <p className="text-sm mt-1">Klick auf "Scan starten" um den Tages-Scan zu starten.</p>
+
+          {/* Adaptive hint — shown after a scan ran and found 0 results */}
+          {funnel?.adaptive_hint && (
+            <div className="mt-6 max-w-lg w-full bg-orange-900/20 border border-orange-700/40 rounded-xl p-4 text-left">
+              <div className="flex items-start gap-2">
+                <span className="text-xl shrink-0">💡</span>
+                <div>
+                  <p className="text-sm font-semibold text-orange-300 mb-1">Adaptiver Hinweis</p>
+                  <p className="text-xs text-orange-200/80 leading-relaxed">
+                    {funnel.adaptive_hint.suggestion}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Funnel summary — helps diagnose which filter is blocking results */}
+          {funnel?.modules && Object.keys(funnel.modules).length > 0 && (
+            <div className="mt-4 max-w-lg w-full bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <p className="text-xs font-semibold text-gray-400 mb-3">Scan-Funnel (letzter Lauf)</p>
+              {Object.entries(funnel.modules).map(([name, stats]) => (
+                <div key={name} className="mb-3 last:mb-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium text-gray-300">📊 {name}</span>
+                    <span className="text-xs text-gray-500">
+                      {stats.pre_filter} → {stats.candidates} Kandidaten
+                    </span>
+                  </div>
+                  {/* Top rejection reasons */}
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(stats.rejections ?? {})
+                      .filter(([, count]) => count > 0)
+                      .sort(([, a], [, b]) => b - a)
+                      .slice(0, 4)
+                      .map(([reason, count]) => (
+                        <span key={reason} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400">
+                          {reason}: {count}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

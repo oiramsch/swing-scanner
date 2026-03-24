@@ -19,6 +19,7 @@ from backend.database import (
     PortfolioPosition,
     ScanResult,
     SignalAlert,
+    StrategyModule,
     WatchlistItem,
     activate_filter,
     delete_filter,
@@ -26,6 +27,7 @@ from backend.database import (
     update_watchlist_item,
     get_active_filter,
     get_all_filters,
+    get_all_modules,
     get_budget,
     get_closed_positions,
     get_funnel_history,
@@ -35,6 +37,7 @@ from backend.database import (
     get_latest_market_update,
     get_latest_regime,
     get_market_update_history,
+    get_modules_for_regime,
     get_open_positions,
     get_position,
     get_result_by_ticker,
@@ -45,10 +48,12 @@ from backend.database import (
     get_watchlist,
     init_db,
     save_filter,
+    save_module,
     save_watchlist_item,
     update_budget,
     update_filter,
     update_journal_entry,
+    update_module,
     update_position,
 )
 from backend.journal import create_journal_entry, get_journal_stats, update_lesson
@@ -355,6 +360,53 @@ async def delete_filter_endpoint(filter_id: int):
 async def activate_filter_endpoint(filter_id: int):
     activate_filter(filter_id)
     return {"status": "activated"}
+
+
+# ---------------------------------------------------------------------------
+# Strategy Modules (v2.5)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/strategy-modules")
+async def list_strategy_modules():
+    """Return all strategy modules with their current config."""
+    from backend.market_regime import get_current_regime
+    current_regime = get_current_regime()
+    modules = get_all_modules()
+    return {
+        "current_regime": current_regime,
+        "modules": [m.model_dump() for m in modules],
+        "active_for_regime": [
+            m.model_dump() for m in modules
+            if m.is_active and m.auto_activate and m.regime in (current_regime, "any")
+        ],
+    }
+
+
+@app.get("/api/strategy-modules/{module_id}")
+async def get_strategy_module(module_id: int):
+    from backend.database import get_module
+    m = get_module(module_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Module not found")
+    return m.model_dump()
+
+
+@app.put("/api/strategy-modules/{module_id}")
+async def update_strategy_module(module_id: int, data: dict):
+    m = update_module(module_id, data)
+    if not m:
+        raise HTTPException(status_code=404, detail="Module not found")
+    return m.model_dump()
+
+
+@app.post("/api/strategy-modules/{module_id}/toggle")
+async def toggle_strategy_module(module_id: int):
+    from backend.database import get_module
+    m = get_module(module_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Module not found")
+    updated = update_module(module_id, {"is_active": not m.is_active})
+    return {"id": module_id, "is_active": updated.is_active}
 
 
 # ---------------------------------------------------------------------------
