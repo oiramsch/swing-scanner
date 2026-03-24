@@ -92,9 +92,7 @@ docker compose up -d --remove-orphans
 info "Waiting for backend to become healthy…"
 RETRIES=12
 for i in $(seq 1 $RETRIES); do
-  STATUS=$(docker compose ps --format json backend 2>/dev/null \
-    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Health',''))" 2>/dev/null || echo "")
-  if [[ "$STATUS" == "healthy" ]]; then
+  if docker compose ps backend 2>/dev/null | grep -q "(healthy)"; then
     info "Backend is healthy."
     break
   fi
