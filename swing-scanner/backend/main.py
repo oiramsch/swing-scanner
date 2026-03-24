@@ -497,10 +497,38 @@ async def get_portfolio():
     summary = get_portfolio_summary()
     open_positions = get_open_positions()
 
+    # Fetch live prices for all open positions (yfinance, best-effort)
+    live_prices: dict = {}
+    if open_positions:
+        try:
+            from backend.providers import get_data_provider
+            import asyncio as _asyncio
+
+            provider = get_data_provider()
+
+            async def _fetch_price(ticker: str):
+                try:
+                    df = await provider.get_daily_bars(ticker, days=3)
+                    if df is not None and not df.empty:
+                        return ticker, float(df.iloc[-1]["Close"])
+                except Exception:
+                    pass
+                return ticker, None
+
+            tasks = [_fetch_price(p.ticker) for p in open_positions]
+            results = await _asyncio.gather(*tasks, return_exceptions=True)
+            for item in results:
+                if isinstance(item, tuple):
+                    t, price = item
+                    if price is not None:
+                        live_prices[t] = price
+        except Exception as exc:
+            logger.warning("Live price fetch failed: %s", exc)
+
     enriched = []
     for pos in open_positions:
         signals = get_signals_for_position(pos.id)
-        data = enrich_position(pos)
+        data = enrich_position(pos, current_price=live_prices.get(pos.ticker))
         data["signals"] = [s.model_dump() for s in signals]
         enriched.append(data)
 

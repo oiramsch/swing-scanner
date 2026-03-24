@@ -96,8 +96,8 @@ async def ensure_regime_current(max_age_hours: int = 12) -> str:
         mr = await update_market_regime()
         return mr.regime if mr else "neutral"
 
-    # Age = time since midnight of the regime's date
-    regime_datetime = datetime.combine(latest.date, time.min)
+    # Age = time since the regime was actually saved (not midnight of the date)
+    regime_datetime = latest.created_at if latest.created_at else datetime.combine(latest.date, time.min)
     age_hours = (datetime.utcnow() - regime_datetime).total_seconds() / 3600
 
     if age_hours > max_age_hours:
@@ -143,11 +143,12 @@ def get_regime_status() -> dict:
             "stale": True,
         }
 
-    regime_datetime = datetime.combine(latest.date, time.min)
+    # Use created_at (actual save time) for accurate age, not midnight of the date
+    regime_datetime = latest.created_at if latest.created_at else datetime.combine(latest.date, time.min)
     age_hours = round((datetime.utcnow() - regime_datetime).total_seconds() / 3600, 1)
 
     return {
         **latest.model_dump(),
         "age_hours": age_hours,
-        "stale": age_hours > 28,  # stale if older than ~1 trading day
+        "stale": age_hours > 28,  # stale if not updated in ~1 trading day
     }
