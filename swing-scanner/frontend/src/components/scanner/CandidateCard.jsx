@@ -2,6 +2,7 @@ import { useState } from "react";
 import axios from "axios";
 import DeepAnalysisModal from "./DeepAnalysisModal.jsx";
 import AddPositionModal from "../portfolio/AddPositionModal.jsx";
+import OrderForm from "../trading/OrderForm.jsx";
 
 const SETUP_COLORS = {
   breakout: "bg-green-500/20 text-green-400 border-green-500/30",
@@ -129,6 +130,7 @@ function ChartLightbox({ src, ticker, onClose }) {
 export default function CandidateCard({ candidate: c, budget = null }) {
   const [showDeep, setShowDeep] = useState(false);
   const [showPortfolio, setShowPortfolio] = useState(false);
+  const [showOrder, setShowOrder] = useState(false);
   const [showHeadlines, setShowHeadlines] = useState(false);
   const [showChart, setShowChart] = useState(false);    // 1.5 lightbox
   const [showDimmed, setShowDimmed] = useState(false);  // 1.3 override dim
@@ -361,7 +363,7 @@ export default function CandidateCard({ candidate: c, budget = null }) {
           )}
 
           {/* Action buttons */}
-          <div className="flex gap-1.5 mt-auto pt-1">
+          <div className="flex gap-1.5 mt-auto pt-1 flex-wrap">
             {c.has_deep_analysis && (
               <button
                 onClick={() => setShowDeep(true)}
@@ -370,9 +372,17 @@ export default function CandidateCard({ candidate: c, budget = null }) {
                 Deep Analysis
               </button>
             )}
+            {c.entry_zone && c.stop_loss && (
+              <button
+                onClick={() => setShowOrder(true)}
+                className="flex-1 text-xs py-1.5 bg-green-700/30 hover:bg-green-700/60 text-green-300 rounded border border-green-600/40 transition font-medium"
+              >
+                Kaufen
+              </button>
+            )}
             <button
               onClick={() => setShowPortfolio(true)}
-              className="flex-1 text-xs py-1.5 bg-green-600/20 hover:bg-green-600/40 text-green-400 rounded border border-green-500/30 transition"
+              className="flex-1 text-xs py-1.5 bg-gray-700/40 hover:bg-gray-700/70 text-gray-300 rounded border border-gray-600/40 transition"
             >
               + Portfolio
             </button>
@@ -396,6 +406,13 @@ export default function CandidateCard({ candidate: c, budget = null }) {
           budget={budget}
           onClose={() => setShowPortfolio(false)}
           onSaved={() => setShowPortfolio(false)}
+        />
+      )}
+      {showOrder && (
+        <OrderForm
+          candidate={c}
+          onClose={() => setShowOrder(false)}
+          onSuccess={() => setShowOrder(false)}
         />
       )}
     </>

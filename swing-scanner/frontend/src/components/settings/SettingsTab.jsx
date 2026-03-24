@@ -262,6 +262,112 @@ function PasswordSection({ currentUser, onLogout }) {
 }
 
 // ---------------------------------------------------------------------------
+// Strategy Modules
+// ---------------------------------------------------------------------------
+const REGIME_BADGE = {
+  bull:    "text-green-400 bg-green-900/20 border-green-800/50",
+  bear:    "text-orange-400 bg-orange-900/20 border-orange-800/50",
+  neutral: "text-yellow-400 bg-yellow-900/20 border-yellow-800/50",
+  any:     "text-gray-400 bg-gray-800/50 border-gray-700",
+};
+
+function ModulesSection() {
+  const [modules, setModules] = useState([]);
+  const [toggling, setToggling] = useState(null);
+
+  useEffect(() => { loadModules(); }, []);
+
+  async function loadModules() {
+    try {
+      const res = await axios.get("/api/strategy-modules");
+      setModules(res.data);
+    } catch {}
+  }
+
+  async function toggleModule(id) {
+    setToggling(id);
+    try {
+      await axios.post(`/api/strategy-modules/${id}/toggle`);
+      await loadModules();
+    } catch {}
+    setToggling(null);
+  }
+
+  return (
+    <Section title="Strategie-Module">
+      <div className="space-y-2">
+        {modules.map(m => (
+          <div key={m.id} className="flex items-center gap-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm text-white font-medium">{m.name}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${REGIME_BADGE[m.regime] ?? REGIME_BADGE.any}`}>
+                  {m.regime.toUpperCase()}
+                </span>
+                <span className="text-[10px] text-gray-600">{m.direction}</span>
+              </div>
+              {m.description && (
+                <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{m.description}</p>
+              )}
+            </div>
+            <button
+              onClick={() => toggleModule(m.id)}
+              disabled={toggling === m.id}
+              className={`shrink-0 px-3 py-1.5 text-xs rounded-lg border transition disabled:opacity-50 font-medium ${
+                m.is_active
+                  ? "bg-green-900/30 border-green-700/50 text-green-400 hover:bg-red-900/20 hover:border-red-700/40 hover:text-red-400"
+                  : "bg-gray-800 border-gray-700 text-gray-500 hover:bg-green-900/20 hover:border-green-700/40 hover:text-green-400"
+              }`}
+            >
+              {toggling === m.id ? "…" : m.is_active ? "✓ Aktiv" : "Inaktiv"}
+            </button>
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] text-gray-600">
+        Aktive Module werden beim nächsten Scan für das passende Markt-Regime verwendet.
+      </p>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scanner Config (read-only)
+// ---------------------------------------------------------------------------
+function ScannerSection() {
+  const [cfg, setCfg] = useState(null);
+
+  useEffect(() => {
+    axios.get("/api/settings/scanner").then(r => setCfg(r.data)).catch(() => {});
+  }, []);
+
+  if (!cfg) return null;
+
+  return (
+    <Section title="Scanner-Konfiguration">
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        {[
+          ["Datenprovider",  cfg.data_provider],
+          ["Universum",      cfg.stock_universe],
+          ["Min. Preis",     `$${cfg.min_price}`],
+          ["Min. Volumen",   cfg.min_volume?.toLocaleString()],
+          ["Max. Kandidaten", cfg.max_candidates],
+          ["Scan-Zeit (UTC)", cfg.scan_time_utc],
+        ].map(([label, value]) => (
+          <div key={label} className="bg-gray-800/50 rounded p-2">
+            <div className="text-gray-500 text-[10px]">{label}</div>
+            <div className="text-gray-200 font-medium mt-0.5">{value}</div>
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] text-gray-600">
+        Konfiguration über <code className="text-gray-500">.env</code> ändern + Container neu starten.
+      </p>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 export default function SettingsTab({ currentUser, onLogout }) {
@@ -281,6 +387,8 @@ export default function SettingsTab({ currentUser, onLogout }) {
       </div>
 
       <BrokerSection currentUser={currentUser} />
+      <ModulesSection />
+      <ScannerSection />
       <PasswordSection currentUser={currentUser} onLogout={onLogout} />
     </div>
   );

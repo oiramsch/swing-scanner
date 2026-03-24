@@ -1068,3 +1068,119 @@ async def edit_watchlist_item(item_id: int, data: dict):
 async def remove_watchlist_item(item_id: int):
     delete_watchlist_item(item_id)
     return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# Scanner Settings (Phase 2b)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/settings/scanner")
+async def get_scanner_settings(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Return current scanner configuration (read from config/env)."""
+    return {
+        "data_provider":   settings.data_provider,
+        "stock_universe":  settings.stock_universe,
+        "min_price":       settings.min_price,
+        "min_volume":      settings.min_volume,
+        "max_candidates":  settings.max_candidates,
+        "scan_time_utc":   settings.scan_time_utc,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Trading — Orders (Phase 3)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/orders/account")
+async def get_trading_account(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Return Alpaca account info (buying power, portfolio value, etc.)."""
+    from backend.trading import get_account_info
+    try:
+        creds = get_broker_credentials(current_user.tenant_id)
+        return get_account_info(creds)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/orders")
+async def list_open_orders(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Return all open orders from Alpaca."""
+    from backend.trading import get_open_orders
+    try:
+        creds = get_broker_credentials(current_user.tenant_id)
+        return get_open_orders(creds)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/orders/bracket")
+async def place_bracket_order(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Place a bracket order (limit entry + take-profit + stop-loss).
+    Body: { ticker, qty, limit_price, take_profit, stop_loss }
+    """
+    from backend.trading import place_bracket_order as _place
+    try:
+        creds = get_broker_credentials(current_user.tenant_id)
+        order = _place(
+            creds,
+            ticker=data["ticker"],
+            qty=float(data["qty"]),
+            limit_price=float(data["limit_price"]),
+            take_profit_price=float(data["take_profit"]),
+            stop_loss_price=float(data["stop_loss"]),
+        )
+        return order
+    except KeyError as e:
+        raise HTTPException(status_code=422, detail=f"Missing field: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/api/orders/{order_id}")
+async def cancel_order(
+    order_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Cancel an open order by ID."""
+    from backend.trading import cancel_order as _cancel
+    try:
+        creds = get_broker_credentials(current_user.tenant_id)
+        _cancel(creds, order_id)
+        return {"status": "cancelled", "order_id": order_id}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/quotes")
+async def get_live_quotes(
+    symbols: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Fetch latest prices for comma-separated symbols via yfinance.
+    Returns { AAPL: 182.50, MSFT: null, ... }
+    """
+    import asyncio
+    import yfinance as yf
+
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not syms:
+        return {}
+
+    def _fetch() -> dict:
+        result: dict = {}
+        for sym in syms:
+            try:
+                info = yf.Ticker(sym).fast_info
+                price = getattr(info, "last_price", None)
+                result[sym] = round(float(price), 2) if price else None
+            except Exception:
+                result[sym] = None
+        return result
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _fetch)
