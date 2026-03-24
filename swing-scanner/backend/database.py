@@ -31,6 +31,7 @@ def init_db():
     _seed_default_filters()
     _migrate_filter_defaults()
     _seed_strategy_modules()
+    _seed_admin_user()
     logger.info("Database initialized.")
 
 
@@ -72,6 +73,19 @@ def _apply_migrations():
         ("scanresult", "candidate_status", "TEXT DEFAULT 'active'"),
         # v2.6 — CRV-adjusted composite score for ranking
         ("scanresult", "composite_score", "REAL"),
+        # Phase 2a — tenant isolation (DEFAULT 1 = personal/single-tenant)
+        ("scanresult",        "tenant_id", "INTEGER DEFAULT 1"),
+        ("performanceresult", "tenant_id", "INTEGER DEFAULT 1"),
+        ("filterprofile",     "tenant_id", "INTEGER DEFAULT 1"),
+        ("strategymodule",    "tenant_id", "INTEGER DEFAULT 1"),
+        ("portfoliobudget",   "tenant_id", "INTEGER DEFAULT 1"),
+        ("portfolioposition", "tenant_id", "INTEGER DEFAULT 1"),
+        ("signalalert",       "tenant_id", "INTEGER DEFAULT 1"),
+        ("journalentry",      "tenant_id", "INTEGER DEFAULT 1"),
+        ("watchlistitem",     "tenant_id", "INTEGER DEFAULT 1"),
+        ("predictionarchive", "tenant_id", "INTEGER DEFAULT 1"),
+        ("scanfunnel",        "tenant_id", "INTEGER DEFAULT 1"),
+        ("marketupdate",      "tenant_id", "INTEGER DEFAULT 1"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -636,6 +650,42 @@ class MarketUpdate(SQLModel, table=True):
     notification_sent: bool = False
     notification_level: Optional[str] = None  # info|warning|critical
     generated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a — Auth & Broker models
+# ---------------------------------------------------------------------------
+
+class User(SQLModel, table=True):
+    """Single-user initially; multi-tenant ready (tenant_id field)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: int = Field(default=1, index=True)
+    email: str = Field(unique=True, index=True)
+    password_hash: str
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class BrokerConnection(SQLModel, table=True):
+    """
+    Stores broker API credentials encrypted at rest (Fernet/AES).
+    Replaces .env alpaca_api_key / alpaca_secret_key for Phase 2a+.
+    Falls back to .env values if no DB record exists (backward compat).
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: int = Field(default=1, index=True)
+    broker_type: str = "alpaca"          # alpaca | ibkr | trade_republic
+    label: str = "default"               # human-readable name
+    # Encrypted with Fernet(sha256(SECRET_KEY))
+    api_key_enc: Optional[str] = None
+    api_secret_enc: Optional[str] = None
+    # Config
+    is_paper: bool = True
+    base_url: str = "https://paper-api.alpaca.markets"
+    supports_short_selling: bool = False
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------
@@ -1259,3 +1309,153 @@ def get_funnel_history(days: int = 30) -> list[ScanFunnel]:
             .order_by(ScanFunnel.ran_at.desc())
         )
         return list(session.exec(stmt).all())
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a — User CRUD
+# ---------------------------------------------------------------------------
+
+def _seed_admin_user():
+    """
+    Ensure at least one admin user exists in the DB.
+    Creates the user from .env ADMIN_EMAIL / ADMIN_PASSWORD on first run.
+    Skips silently if ADMIN_PASSWORD is not set (NAS-behind-VPN case where
+    .env plain-text auth is used as bootstrap, not DB).
+    """
+    from backend.config import settings
+    if not settings.admin_password:
+        return  # no bootstrap — operator must create user manually or via .env
+
+    with Session(get_engine()) as session:
+        existing = session.exec(
+            select(User).where(User.email == settings.admin_email)
+        ).first()
+        if existing:
+            return  # already seeded
+
+        from backend.auth import hash_password, is_bcrypt_hash
+        pwd = settings.admin_password
+        hashed = pwd if is_bcrypt_hash(pwd) else hash_password(pwd)
+        user = User(email=settings.admin_email, password_hash=hashed, tenant_id=1)
+        session.add(user)
+        session.commit()
+        logger.info("Admin user seeded: %s", settings.admin_email)
+
+
+def get_user_by_email(email: str) -> Optional[User]:
+    with Session(get_engine()) as session:
+        return session.exec(select(User).where(User.email == email)).first()
+
+
+def create_user(email: str, password: str, tenant_id: int = 1) -> User:
+    from backend.auth import hash_password
+    with Session(get_engine()) as session:
+        user = User(email=email, password_hash=hash_password(password), tenant_id=tenant_id)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
+def update_user_password(user_id: int, new_password: str) -> Optional[User]:
+    from backend.auth import hash_password
+    with Session(get_engine()) as session:
+        user = session.get(User, user_id)
+        if not user:
+            return None
+        user.password_hash = hash_password(new_password)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a — BrokerConnection CRUD
+# ---------------------------------------------------------------------------
+
+def get_broker_connection(tenant_id: int = 1) -> Optional[BrokerConnection]:
+    """Return the active broker connection for a tenant (first active one)."""
+    with Session(get_engine()) as session:
+        return session.exec(
+            select(BrokerConnection)
+            .where(BrokerConnection.tenant_id == tenant_id)
+            .where(BrokerConnection.is_active == True)  # noqa: E712
+        ).first()
+
+
+def upsert_broker_connection(tenant_id: int, data: dict) -> BrokerConnection:
+    """Create or update the broker connection for a tenant."""
+    from backend.crypto import encrypt
+    from backend.config import settings as cfg
+
+    with Session(get_engine()) as session:
+        existing = session.exec(
+            select(BrokerConnection).where(BrokerConnection.tenant_id == tenant_id)
+        ).first()
+
+        if existing is None:
+            existing = BrokerConnection(tenant_id=tenant_id)
+            session.add(existing)
+
+        # Only encrypt and store if non-empty values provided
+        if data.get("api_key"):
+            existing.api_key_enc = encrypt(data["api_key"])
+        if data.get("api_secret"):
+            existing.api_secret_enc = encrypt(data["api_secret"])
+
+        if "is_paper" in data:
+            existing.is_paper = bool(data["is_paper"])
+        if "broker_type" in data:
+            existing.broker_type = data["broker_type"]
+        if "label" in data:
+            existing.label = data["label"]
+        if "supports_short_selling" in data:
+            existing.supports_short_selling = bool(data["supports_short_selling"])
+        if "base_url" in data:
+            existing.base_url = data["base_url"]
+        else:
+            existing.base_url = (
+                "https://paper-api.alpaca.markets"
+                if existing.is_paper
+                else "https://api.alpaca.markets"
+            )
+
+        existing.updated_at = datetime.utcnow()
+        existing.is_active = True
+        session.commit()
+        session.refresh(existing)
+        return existing
+
+
+def get_broker_credentials(tenant_id: int = 1) -> dict:
+    """
+    Return decrypted broker credentials for a tenant.
+    Falls back to .env values if no DB record exists (backward compat).
+    """
+    from backend.crypto import decrypt_or_none
+    from backend.config import settings as cfg
+
+    conn = get_broker_connection(tenant_id)
+    if conn:
+        api_key = decrypt_or_none(conn.api_key_enc) or cfg.alpaca_api_key
+        api_secret = decrypt_or_none(conn.api_secret_enc) or cfg.alpaca_secret_key
+        return {
+            "api_key": api_key,
+            "api_secret": api_secret,
+            "is_paper": conn.is_paper,
+            "base_url": conn.base_url,
+            "broker_type": conn.broker_type,
+            "supports_short_selling": conn.supports_short_selling,
+            "source": "db",
+        }
+
+    # Fallback: .env (Phase 1 compat)
+    return {
+        "api_key": cfg.alpaca_api_key,
+        "api_secret": cfg.alpaca_secret_key,
+        "is_paper": cfg.alpaca_paper,
+        "base_url": cfg.alpaca_base_url,
+        "broker_type": "alpaca",
+        "supports_short_selling": False,
+        "source": "env",
+    }

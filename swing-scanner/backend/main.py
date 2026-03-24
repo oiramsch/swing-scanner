@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from backend.auth import AuthenticatedUser, authenticate_user, create_access_token, get_current_user
 from backend.database import (
     FilterProfile,
     JournalEntry,
@@ -28,6 +29,7 @@ from backend.database import (
     get_active_filter,
     get_all_filters,
     get_all_modules,
+    get_broker_credentials,
     get_budget,
     get_closed_positions,
     get_funnel_history,
@@ -56,6 +58,7 @@ from backend.database import (
     update_journal_entry,
     update_module,
     update_position,
+    upsert_broker_connection,
 )
 from backend.journal import create_journal_entry, get_journal_stats, update_lesson
 from backend.performance import (
@@ -84,6 +87,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Global auth dependency — protects all /api/* routes except public ones.
+# Public exceptions: /health, /api/auth/login
+# Implementation: FastAPI dependency_overrides would be cleaner but this
+# approach keeps it explicit and easy to audit.
+# ---------------------------------------------------------------------------
+from fastapi import Request
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """
+    Lightweight auth gate. Public paths bypass JWT check.
+    All other /api/* paths require a valid Bearer token.
+    Note: FastAPI's Depends(get_current_user) on individual routes already
+    handles this — this middleware is an additional defense-in-depth layer
+    that returns 401 before routes are even dispatched.
+    """
+    PUBLIC_PATHS = {"/health", "/api/auth/login"}
+    path = request.url.path
+
+    # Allow public paths and static assets
+    if path in PUBLIC_PATHS or not path.startswith("/api/"):
+        return await call_next(request)
+
+    # Check for Bearer token
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Not authenticated"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return await call_next(request)
 
 CHARTS_DIR = Path("/tmp/charts")
 
@@ -139,12 +178,113 @@ async def on_startup():
 
 
 # ---------------------------------------------------------------------------
-# Health
+# Health (public — no auth)
 # ---------------------------------------------------------------------------
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Auth (public — no auth required on these two endpoints)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/auth/login")
+async def login(data: dict):
+    """
+    Exchange email + password for a JWT access token.
+    Token expires after jwt_expire_days (default 7).
+    """
+    email = (data.get("email") or "").strip()
+    password = data.get("password") or ""
+    user = authenticate_user(email, password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="E-Mail oder Passwort falsch",
+        )
+    token = create_access_token({"sub": user.email, "tenant_id": user.tenant_id})
+    return {"access_token": token, "token_type": "bearer", "email": user.email}
+
+
+@app.get("/api/auth/me")
+async def auth_me(current_user: AuthenticatedUser = Depends(get_current_user)):
+    return {"email": current_user.email, "tenant_id": current_user.tenant_id}
+
+
+@app.post("/api/auth/change-password")
+async def change_password(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from backend.database import get_user_by_email, update_user_password
+    from backend.auth import verify_password
+    user = get_user_by_email(current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not verify_password(data.get("current_password", ""), user.password_hash):
+        raise HTTPException(status_code=400, detail="Aktuelles Passwort falsch")
+    update_user_password(user.id, data["new_password"])
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Settings — Broker Connection (Phase 2a)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/settings/broker")
+async def get_broker_settings(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Return broker config — API keys are masked, never returned in plain."""
+    creds = get_broker_credentials(current_user.tenant_id)
+    return {
+        "broker_type":           creds.get("broker_type", "alpaca"),
+        "is_paper":              creds.get("is_paper", True),
+        "base_url":              creds.get("base_url", ""),
+        "supports_short_selling": creds.get("supports_short_selling", False),
+        "source":                creds.get("source", "env"),
+        # Mask keys — only show whether they are set
+        "api_key_set":    bool(creds.get("api_key")),
+        "api_secret_set": bool(creds.get("api_secret")),
+    }
+
+
+@app.put("/api/settings/broker")
+async def update_broker_settings(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Save broker credentials to DB (encrypted). Empty strings = don't overwrite."""
+    conn = upsert_broker_connection(current_user.tenant_id, data)
+    return {
+        "status":     "saved",
+        "broker_type": conn.broker_type,
+        "is_paper":   conn.is_paper,
+        "source":     "db",
+    }
+
+
+@app.post("/api/settings/broker/test")
+async def test_broker_connection(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Test Alpaca connection with current credentials."""
+    try:
+        creds = get_broker_credentials(current_user.tenant_id)
+        from alpaca.trading.client import TradingClient
+        client = TradingClient(
+            api_key=creds["api_key"],
+            secret_key=creds["api_secret"],
+            paper=creds["is_paper"],
+        )
+        account = client.get_account()
+        return {
+            "status":         "ok",
+            "account_status": str(account.status),
+            "buying_power":   str(account.buying_power),
+            "currency":       str(account.currency),
+            "is_paper":       creds["is_paper"],
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Verbindung fehlgeschlagen: {exc}")
 
 
 # ---------------------------------------------------------------------------

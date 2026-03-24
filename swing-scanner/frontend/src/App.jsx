@@ -6,6 +6,14 @@ import JournalTab from "./components/journal/JournalTab.jsx";
 import WatchlistTab from "./components/watchlist/WatchlistTab.jsx";
 import HistoryTab from "./components/history/HistoryTab.jsx";
 import PerformanceTab from "./components/performance/PerformanceTab.jsx";
+import LoginPage from "./components/auth/LoginPage.jsx";
+import SettingsTab from "./components/settings/SettingsTab.jsx";
+
+// Restore token from localStorage on startup
+const storedToken = localStorage.getItem("auth_token");
+if (storedToken) {
+  axios.defaults.headers.common["Authorization"] = `Bearer ${storedToken}`;
+}
 
 const TABS = [
   { id: "scanner", label: "Scanner" },
@@ -14,6 +22,7 @@ const TABS = [
   { id: "watchlist", label: "Watchlist" },
   { id: "history", label: "History" },
   { id: "performance", label: "Performance" },
+  { id: "settings", label: "Einstellungen" },
 ];
 
 const REGIME_COLORS = {
@@ -25,6 +34,8 @@ const REGIME_COLORS = {
 const REGIME_ICONS = { bull: "📈", bear: "📉", neutral: "➡️", unknown: "❓" };
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const [activeTab, setActiveTab] = useState("scanner");
   const [regime, setRegime] = useState(null);
   const [regimeRefreshing, setRegimeRefreshing] = useState(false);
@@ -32,9 +43,37 @@ export default function App() {
   const pollRef = useRef(null);
 
   useEffect(() => {
+    // Validate stored token on startup
+    if (localStorage.getItem("auth_token")) {
+      axios.get("/api/auth/me")
+        .then(res => setCurrentUser(res.data))
+        .catch(() => {
+          localStorage.removeItem("auth_token");
+          delete axios.defaults.headers.common["Authorization"];
+        })
+        .finally(() => setCheckingAuth(false));
+    } else {
+      setCheckingAuth(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
     fetchRegime();
     fetchScanStatus();
-  }, []);
+  }, [currentUser]);
+
+  function handleLogin(data) {
+    setCurrentUser(data);
+  }
+
+  function handleLogout() {
+    localStorage.removeItem("auth_token");
+    delete axios.defaults.headers.common["Authorization"];
+    setCurrentUser(null);
+    setRegime(null);
+    setScanStatus(null);
+  }
 
   async function fetchRegime() {
     try {
@@ -81,6 +120,18 @@ export default function App() {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+  }
+
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <LoginPage onLogin={handleLogin} />;
   }
 
   return (
@@ -158,6 +209,7 @@ export default function App() {
         {activeTab === "watchlist" && <WatchlistTab />}
         {activeTab === "history" && <HistoryTab />}
         {activeTab === "performance" && <PerformanceTab />}
+        {activeTab === "settings" && <SettingsTab currentUser={currentUser} onLogout={handleLogout} />}
       </main>
     </div>
   );

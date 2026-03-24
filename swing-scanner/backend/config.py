@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     scan_time_utc: str = "22:15"
 
+    # ── Auth (Phase 2a) ────────────────────────────────────────────────────────
+    # Generate a strong key: python -c "import secrets; print(secrets.token_hex(32))"
+    secret_key: str = "change-me-generate-with-secrets-token-hex-32"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_days: int = 7
+    # Single-user bootstrap — set in .env, never commit credentials
+    admin_email: str = "admin@localhost"
+    admin_password: str = ""  # bcrypt hash or plain (hashed on first use)
+
     # ── Notifications ─────────────────────────────────────────────────────────
     ntfy_topic: str = ""
     resend_api_key: str = ""
