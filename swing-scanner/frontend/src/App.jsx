@@ -88,12 +88,12 @@ export default function App() {
     setRegimeRefreshing(true);
     try {
       await axios.post("/api/market-regime/update");
-      // Poll until updated (max ~30s)
+      // Poll until freshly updated (age_hours < 1) or max 30s
       for (let i = 0; i < 10; i++) {
         await new Promise(r => setTimeout(r, 3000));
         const res = await axios.get("/api/market-regime");
         setRegime(res.data);
-        if (!res.data.stale) break;
+        if (res.data.age_hours != null && res.data.age_hours < 1) break;
       }
     } catch {}
     setRegimeRefreshing(false);

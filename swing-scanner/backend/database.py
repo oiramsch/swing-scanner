@@ -1093,7 +1093,7 @@ def save_market_regime(regime: MarketRegime) -> MarketRegime:
 
 def get_latest_regime() -> Optional[MarketRegime]:
     with Session(get_engine()) as session:
-        stmt = select(MarketRegime).order_by(MarketRegime.date.desc())
+        stmt = select(MarketRegime).order_by(MarketRegime.date.desc(), MarketRegime.id.desc())
         return session.exec(stmt).first()
 
 

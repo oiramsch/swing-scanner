@@ -413,17 +413,9 @@ function ScannerSection() {
 export default function SettingsTab({ currentUser, onLogout }) {
   return (
     <div className="max-w-2xl mx-auto space-y-4">
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <h1 className="text-lg font-semibold text-white">Einstellungen</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Angemeldet als {currentUser?.email}</p>
-        </div>
-        <button
-          onClick={onLogout}
-          className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-lg border border-gray-700 transition"
-        >
-          Abmelden
-        </button>
+      <div className="mb-2">
+        <h1 className="text-lg font-semibold text-white">Einstellungen</h1>
+        <p className="text-xs text-gray-500 mt-0.5">Angemeldet als {currentUser?.email}</p>
       </div>
 
       <ErrorBoundary><BrokerSection currentUser={currentUser} /></ErrorBoundary>
