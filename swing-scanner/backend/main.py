@@ -28,8 +28,10 @@ from backend.database import (
     get_all_filters,
     get_budget,
     get_closed_positions,
+    get_funnel_history,
     get_journal_entries,
     get_journal_entry,
+    get_latest_funnel,
     get_latest_market_update,
     get_latest_regime,
     get_market_update_history,
@@ -286,6 +288,31 @@ async def scan_status():
         "progress": _scan_progress,
         "last_scan": _last_scan,
     }
+
+
+@app.get("/api/scan/funnel")
+async def get_scan_funnel():
+    """
+    Returns the filter funnel from the most recent scan.
+    Falls back to live in-memory funnel if DB is empty (scan still running).
+    """
+    from backend.screener import get_last_funnel
+    live = get_last_funnel()
+    if live:
+        return live
+
+    db_funnel = get_latest_funnel()
+    if db_funnel:
+        return db_funnel.model_dump()
+
+    return {"status": "no_funnel", "message": "No scan has run yet"}
+
+
+@app.get("/api/scan/funnel/history")
+async def get_funnel_history_endpoint(days: int = 30):
+    """Returns funnel breakdowns for the last N days of scans."""
+    funnels = get_funnel_history(days=days)
+    return [f.model_dump() for f in funnels]
 
 
 # ---------------------------------------------------------------------------

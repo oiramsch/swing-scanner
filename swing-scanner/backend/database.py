@@ -339,6 +339,36 @@ class MarketRegime(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ScanFunnel(SQLModel, table=True):
+    """Persists the filter funnel breakdown for every scan run."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    scan_date: date
+    ran_at: datetime = Field(default_factory=datetime.utcnow)
+    regime: str = "unknown"
+    filter_profile: Optional[str] = None
+    # Counts per pipeline step
+    universe_count:   int = 0
+    snapshot_count:   int = 0
+    pre_filter_count: int = 0
+    ohlcv_fetched:    int = 0
+    ohlcv_failed:     int = 0
+    # Rejection reasons (first-failure counts)
+    fail_insufficient_bars: int = 0
+    fail_nan_indicators:    int = 0
+    fail_price_range:       int = 0
+    fail_volume_min:        int = 0
+    fail_sma50:             int = 0
+    fail_sma20:             int = 0
+    fail_rsi_range:         int = 0
+    fail_rsi_bear:          int = 0
+    fail_volume_surge:      int = 0
+    fail_error:             int = 0
+    # Output
+    candidates_count: int = 0
+    # Full params snapshot for reproducibility
+    filter_params_json: Optional[str] = None
+
+
 class MarketUpdate(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     update_date: date
@@ -776,3 +806,32 @@ def update_market_update_notified(update_id: int):
             upd.notification_sent = True
             session.add(upd)
             session.commit()
+
+
+# ---------------------------------------------------------------------------
+# ScanFunnel CRUD
+# ---------------------------------------------------------------------------
+
+def save_scan_funnel(funnel: ScanFunnel) -> ScanFunnel:
+    with Session(get_engine()) as session:
+        session.add(funnel)
+        session.commit()
+        session.refresh(funnel)
+        return funnel
+
+
+def get_latest_funnel() -> Optional[ScanFunnel]:
+    with Session(get_engine()) as session:
+        stmt = select(ScanFunnel).order_by(ScanFunnel.ran_at.desc())
+        return session.exec(stmt).first()
+
+
+def get_funnel_history(days: int = 30) -> list[ScanFunnel]:
+    cutoff = date.today() - timedelta(days=days)
+    with Session(get_engine()) as session:
+        stmt = (
+            select(ScanFunnel)
+            .where(ScanFunnel.scan_date >= cutoff)
+            .order_by(ScanFunnel.ran_at.desc())
+        )
+        return list(session.exec(stmt).all())

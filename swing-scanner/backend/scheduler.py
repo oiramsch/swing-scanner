@@ -13,7 +13,15 @@ from arq.connections import RedisSettings
 from backend.analyzer import analyze_chart
 from backend.chart_fetcher import render_chart
 from backend.config import settings
-from backend.database import ScanResult, clear_results_for_date, init_db, save_scan_result, update_deep_analysis
+from backend.database import (
+    ScanFunnel,
+    ScanResult,
+    clear_results_for_date,
+    init_db,
+    save_scan_funnel,
+    save_scan_result,
+    update_deep_analysis,
+)
 from backend.deep_analyzer import deep_analyze
 from backend.market_regime import ensure_regime_current, get_current_regime, update_market_regime
 from backend.news_checker import run_full_news_check
@@ -62,6 +70,38 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
     except Exception as exc:
         logger.error("Screener failed: %s", exc)
         return {"status": "error", "error": str(exc)}
+
+    # Persist funnel to DB (for history + API)
+    try:
+        from backend.screener import get_last_funnel
+        import json as _json
+        f = get_last_funnel()
+        r = f.get("rejections", {})
+        funnel_row = ScanFunnel(
+            scan_date=scan_date,
+            regime=f.get("regime", regime),
+            filter_profile=f.get("filter_profile"),
+            universe_count=f.get("universe", 0),
+            snapshot_count=f.get("snapshot", 0),
+            pre_filter_count=f.get("pre_filter", 0),
+            ohlcv_fetched=f.get("ohlcv_fetched", 0),
+            ohlcv_failed=f.get("ohlcv_failed", 0),
+            fail_insufficient_bars=r.get("insufficient_bars", 0),
+            fail_nan_indicators=r.get("nan_indicators", 0),
+            fail_price_range=r.get("price_range", 0),
+            fail_volume_min=r.get("volume_min", 0),
+            fail_sma50=r.get("sma50", 0),
+            fail_sma20=r.get("sma20", 0),
+            fail_rsi_range=r.get("rsi_range", 0),
+            fail_rsi_bear=r.get("rsi_bear", 0),
+            fail_volume_surge=r.get("volume_surge", 0),
+            fail_error=r.get("error", 0),
+            candidates_count=f.get("candidates", 0),
+            filter_params_json=_json.dumps(f.get("filter_params", {})),
+        )
+        save_scan_funnel(funnel_row)
+    except Exception as exc:
+        logger.warning("Could not persist scan funnel: %s", exc)
 
     total_candidates = len(candidates)
     saved = 0

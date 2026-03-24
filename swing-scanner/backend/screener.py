@@ -19,7 +19,7 @@ through the DataProvider interface.
 """
 import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Callable, Optional
 
 import pandas as pd
@@ -30,6 +30,16 @@ from backend.database import FilterProfile, get_active_filter
 from backend.providers import get_data_provider
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level funnel state (populated after every run_screener() call)
+# ---------------------------------------------------------------------------
+_last_funnel: dict = {}
+
+
+def get_last_funnel() -> dict:
+    """Return a copy of the last scan funnel (populated by run_screener)."""
+    return _last_funnel.copy()
 
 # ── Re-exports for backwards compatibility ───────────────────────────────────
 # Other modules (watchlist, signal_checker, main) still import these by name.
@@ -100,36 +110,59 @@ def _get_filter_params(fp: Optional[FilterProfile]) -> dict:
     }
 
 
-def passes_filter(df: pd.DataFrame, params: dict, regime: str = "neutral") -> bool:
+def _filter_reason(df: pd.DataFrame, params: dict, regime: str = "neutral") -> Optional[str]:
+    """
+    Returns the rejection reason string if the ticker fails any filter,
+    or None if it passes all filters.
+
+    Reasons:
+      insufficient_bars — less than 51 OHLCV rows
+      nan_indicators    — SMA50 or RSI14 not yet computed (not enough history)
+      price_range       — price outside [price_min, price_max]
+      volume_min        — snapshot volume below avg_volume_min
+      sma50             — close <= SMA50 (when price_above_sma50=True)
+      sma20             — close <= SMA20 (when price_above_sma20=True)
+      rsi_range         — RSI outside [rsi_min, rsi_max]
+      rsi_bear          — RSI > 60 in bear regime (extra bear-market filter)
+      volume_surge      — current volume < volume_multiplier × 20d avg volume
+    """
     if df is None or len(df) < 51:
-        return False
+        return "insufficient_bars"
 
     latest = df.iloc[-1]
-    close  = latest["Close"]
-    volume = latest["Volume"]
+    close  = float(latest["Close"])
+    volume = float(latest["Volume"])
 
-    if pd.isna(latest.get("SMA_50")) or pd.isna(latest.get("RSI_14")):
-        return False
+    sma50_val = latest.get("SMA_50")
+    rsi_val   = latest.get("RSI_14")
+    if pd.isna(sma50_val) or pd.isna(rsi_val):
+        return "nan_indicators"
+
     if close < params["price_min"] or close > params["price_max"]:
-        return False
+        return "price_range"
     if volume < params["avg_volume_min"]:
-        return False
-    if params["price_above_sma50"] and close <= latest["SMA_50"]:
-        return False
-    if params["price_above_sma20"] and close <= latest["SMA_20"]:
-        return False
+        return "volume_min"
+    if params["price_above_sma50"] and close <= float(sma50_val):
+        return "sma50"
+    if params["price_above_sma20"] and close <= float(latest.get("SMA_20") or 0):
+        return "sma20"
 
-    rsi = latest["RSI_14"]
+    rsi = float(rsi_val)
     if not (params["rsi_min"] <= rsi <= params["rsi_max"]):
-        return False
+        return "rsi_range"
     if regime == "bear" and rsi > 60:
-        return False
+        return "rsi_bear"
 
-    avg_vol = df["Volume"].iloc[-20:-1].mean()
+    avg_vol = float(df["Volume"].iloc[-20:-1].mean())
     if volume < avg_vol * params["volume_multiplier"]:
-        return False
+        return "volume_surge"
 
-    return True
+    return None  # passes all filters
+
+
+def passes_filter(df: pd.DataFrame, params: dict, regime: str = "neutral") -> bool:
+    """Thin wrapper kept for backward compatibility."""
+    return _filter_reason(df, params, regime) is None
 
 
 def pre_filter_snapshot(item: dict, params: dict) -> bool:
@@ -193,18 +226,25 @@ async def run_screener(
         progress_cb("snapshot", f"Snapshot done: {total} candidates to screen", 0, total, 0, 5)
 
     # ── Step 4-6: Per-ticker OHLCV + indicators + full filter ─────────────────
-    candidates:   list[dict] = []
-    processed     = 0
-    ohlcv_ok      = 0
-    ohlcv_none    = 0
-    filtered_out  = 0
-    max_cap       = settings.max_candidates
+    candidates: list[dict] = []
+    processed   = 0
+    ohlcv_ok    = 0
+    ohlcv_none  = 0
+    max_cap     = settings.max_candidates
 
-    # Per-step funnel counters
-    fail_sma    = 0
-    fail_rsi    = 0
-    fail_volume = 0
-    fail_other  = 0
+    # Granular per-reason rejection counters
+    rejection: dict[str, int] = {
+        "insufficient_bars": 0,
+        "nan_indicators":    0,
+        "price_range":       0,
+        "volume_min":        0,
+        "sma50":             0,
+        "sma20":             0,
+        "rsi_range":         0,
+        "rsi_bear":          0,
+        "volume_surge":      0,
+        "error":             0,
+    }
 
     for item in pre_candidates:
         if len(candidates) >= max_cap:
@@ -225,48 +265,75 @@ async def run_screener(
             df = await provider.get_daily_bars(ticker, days=settings.lookback_days)
             if df is None:
                 ohlcv_none += 1
+                rejection["insufficient_bars"] += 1
                 continue
 
             ohlcv_ok += 1
             df = compute_indicators(df)
 
-            # Granular rejection tracking
-            if df is None or len(df) < 51:
-                fail_other += 1
-                continue
-            latest = df.iloc[-1]
-            if not passes_filter(df, params, regime=regime):
-                filtered_out += 1
-                # Determine why it was rejected (for diagnostics)
-                if params["price_above_sma50"] and latest["Close"] <= latest.get("SMA_50", 0):
-                    fail_sma += 1
-                elif params["price_above_sma20"] and latest["Close"] <= latest.get("SMA_20", 0):
-                    fail_sma += 1
-                elif not (params["rsi_min"] <= latest.get("RSI_14", 0) <= params["rsi_max"]):
-                    fail_rsi += 1
-                else:
-                    fail_volume += 1
+            reason = _filter_reason(df, params, regime=regime)
+            if reason is not None:
+                rejection[reason] = rejection.get(reason, 0) + 1
                 continue
 
             indicators = get_indicator_snapshot(df)
             candidates.append({"ticker": ticker, "df": df, "indicators": indicators})
             logger.info(
-                "Candidate #%d: %s (RSI=%.1f, Close=%.2f, VolMult=%.1f)",
+                "Candidate #%d: %s (RSI=%.1f, Close=%.2f vs SMA20=%.2f SMA50=%.2f, Vol×%.1f)",
                 len(candidates), ticker,
                 indicators["rsi14"], indicators["close"],
+                indicators["sma20"], indicators["sma50"],
                 params["volume_multiplier"],
             )
 
         except Exception as exc:
             logger.warning("Error processing %s: %s", ticker, exc)
             ohlcv_none += 1
+            rejection["error"] += 1
 
-    logger.info(
-        "Screener funnel — universe: %d → snapshot: %d → price/vol: %d → "
-        "OHLCV ok: %d → SMA fail: %d → RSI fail: %d → Vol fail: %d → "
-        "other fail: %d → no data: %d → CANDIDATES: %d",
-        len(symbols), len(all_tickers), total,
-        ohlcv_ok, fail_sma, fail_rsi, fail_volume,
-        fail_other, ohlcv_none, len(candidates),
-    )
+    # ── Funnel summary ────────────────────────────────────────────────────────
+    funnel = {
+        "ran_at":           datetime.utcnow().isoformat(),
+        "regime":           regime,
+        "filter_profile":   fp.name if fp else "default",
+        "filter_params":    params,
+        "universe":         len(symbols),
+        "snapshot":         len(all_tickers),
+        "pre_filter":       total,
+        "ohlcv_fetched":    ohlcv_ok,
+        "ohlcv_failed":     ohlcv_none,
+        "rejections":       rejection,
+        "candidates":       len(candidates),
+    }
+
+    # Pretty funnel log — one line per step
+    logger.info("=" * 60)
+    logger.info("[FUNNEL] Universe loaded:          %d", funnel["universe"])
+    logger.info("[FUNNEL] Snapshot data returned:   %d", funnel["snapshot"])
+    logger.info("[FUNNEL] After price/vol pre-filter:%d", funnel["pre_filter"])
+    logger.info("[FUNNEL] OHLCV fetched ok:          %d  (failed: %d)",
+                funnel["ohlcv_fetched"], funnel["ohlcv_failed"])
+    logger.info("[FUNNEL] --- Rejections after indicators ---")
+    logger.info("[FUNNEL]   insufficient_bars: %d", rejection["insufficient_bars"])
+    logger.info("[FUNNEL]   nan_indicators:    %d", rejection["nan_indicators"])
+    logger.info("[FUNNEL]   price_range:       %d", rejection["price_range"])
+    logger.info("[FUNNEL]   volume_min:        %d", rejection["volume_min"])
+    logger.info("[FUNNEL]   sma50:             %d  (price_above_sma50=%s)",
+                rejection["sma50"], params["price_above_sma50"])
+    logger.info("[FUNNEL]   sma20:             %d  (price_above_sma20=%s)",
+                rejection["sma20"], params["price_above_sma20"])
+    logger.info("[FUNNEL]   rsi_range:         %d  (rsi=[%.0f-%.0f])",
+                rejection["rsi_range"], params["rsi_min"], params["rsi_max"])
+    logger.info("[FUNNEL]   rsi_bear:          %d  (bear-market RSI>60 filter)",
+                rejection["rsi_bear"])
+    logger.info("[FUNNEL]   volume_surge:      %d  (vol < %.1f×20d-avg)",
+                rejection["volume_surge"], params["volume_multiplier"])
+    logger.info("[FUNNEL]   errors:            %d", rejection["error"])
+    logger.info("[FUNNEL] ====> FINAL CANDIDATES: %d", funnel["candidates"])
+    logger.info("=" * 60)
+
+    # Persist for API access
+    global _last_funnel
+    _last_funnel = funnel
+
     return candidates
