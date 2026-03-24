@@ -1,285 +1,44 @@
 """
-Alpaca-based screener (primary) with Polygon.io fallback.
+Stock screener — provider-agnostic.
 
-Primary:  alpaca-py StockHistoricalDataClient — no rate-limit sleep needed.
-Fallback: Polygon.io REST (used when ALPACA_API_KEY is empty).
-All I/O is async; sync Alpaca SDK calls run in a thread via asyncio.to_thread().
+Data access goes exclusively through the DataProvider interface.
+Switch the data source by setting DATA_PROVIDER in .env (yfinance | alpaca).
+
+Pipeline:
+  1. get_symbols()   → S&P 500 (or configured universe)
+  2. get_snapshot()  → latest close + volume for all symbols (one batch call)
+  3. pre_filter      → keep only symbols that pass price/volume threshold
+  4. get_daily_bars() → per-ticker OHLCV for pre-filtered candidates
+  5. compute_indicators → SMA20/50, EMA9, RSI14, ATR14, VolMA20
+  6. passes_filter   → full technical filter (RSI range, SMA position, volume surge)
+  7. return list[{ticker, df, indicators}]
+
+Live portfolio quotes (bid/ask for P&L) still use Alpaca directly via
+alpaca_provider.fetch_latest_quote() — that is intentionally NOT routed
+through the DataProvider interface.
 """
 import asyncio
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from typing import Callable, Optional
 
-import httpx
 import pandas as pd
 import ta as ta_lib
 
 from backend.config import settings
 from backend.database import FilterProfile, get_active_filter
+from backend.providers import get_data_provider
 
 logger = logging.getLogger(__name__)
 
-POLYGON_BASE = "https://api.polygon.io"
-
-# ---------------------------------------------------------------------------
-# Alpaca client singletons (lazy-initialised)
-# ---------------------------------------------------------------------------
-
-_alpaca_data_client = None
-_alpaca_trading_client = None
+# ── Re-exports for backwards compatibility ───────────────────────────────────
+# Other modules (watchlist, signal_checker, main) still import these by name.
+from backend.providers.alpaca_provider import fetch_latest_quote  # noqa: F401
 
 
-def _get_data_client():
-    global _alpaca_data_client
-    if _alpaca_data_client is None:
-        from alpaca.data.historical import StockHistoricalDataClient
-        _alpaca_data_client = StockHistoricalDataClient(
-            settings.alpaca_api_key, settings.alpaca_secret_key
-        )
-    return _alpaca_data_client
-
-
-def _get_trading_client():
-    global _alpaca_trading_client
-    if _alpaca_trading_client is None:
-        from alpaca.trading.client import TradingClient
-        _alpaca_trading_client = TradingClient(
-            settings.alpaca_api_key,
-            settings.alpaca_secret_key,
-            paper=settings.alpaca_paper,
-        )
-    return _alpaca_trading_client
-
-
-def _use_alpaca() -> bool:
-    return bool(settings.alpaca_api_key and settings.alpaca_secret_key)
-
-
-# ---------------------------------------------------------------------------
-# Alpaca — Grouped Daily Snapshot (replaces Polygon grouped-daily)
-# ---------------------------------------------------------------------------
-
-def _alpaca_grouped_daily_sync() -> list[dict]:
-    """
-    Fetch latest bar + volume for all tradable US equities via Alpaca.
-    Runs synchronously — call via asyncio.to_thread().
-    """
-    from alpaca.trading.requests import GetAssetsRequest
-    from alpaca.trading.enums import AssetClass, AssetStatus
-    from alpaca.data.requests import StockSnapshotRequest
-
-    trading = _get_trading_client()
-    assets = trading.get_all_assets(
-        GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE)
-    )
-    # Keep only simple tickers (no '/', no warrants/rights, max 5 chars)
-    symbols = [
-        a.symbol for a in assets
-        if a.tradable and "/" not in a.symbol and len(a.symbol) <= 5
-    ]
-    logger.info("Alpaca asset universe: %d tradable US equity symbols", len(symbols))
-
-    data = _get_data_client()
-    result: list[dict] = []
-    batch_size = 1000
-
-    for i in range(0, len(symbols), batch_size):
-        batch = symbols[i : i + batch_size]
-        try:
-            snapshots = data.get_stock_snapshot(
-                StockSnapshotRequest(symbol_or_symbols=batch, feed="iex")
-            )
-            for sym, snap in snapshots.items():
-                bar = getattr(snap, "daily_bar", None) or getattr(snap, "latest_bar", None)
-                if bar:
-                    result.append({
-                        "ticker": sym,
-                        "close": float(bar.close),
-                        "volume": int(bar.volume),
-                    })
-        except Exception as exc:
-            logger.warning(
-                "Alpaca snapshot batch %d–%d failed: %s", i, i + batch_size, exc
-            )
-
-    logger.info("Alpaca snapshot: %d tickers returned", len(result))
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Alpaca — Per-ticker OHLCV
-# ---------------------------------------------------------------------------
-
-def _alpaca_fetch_ohlcv_sync(ticker: str, days: int) -> Optional[pd.DataFrame]:
-    from alpaca.data.requests import StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame
-
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=days + 15)
-
-    try:
-        bars = _get_data_client().get_stock_bars(
-            StockBarsRequest(
-                symbol_or_symbols=ticker,
-                timeframe=TimeFrame.Day,
-                start=start,
-                end=end,
-                adjustment="all",
-                feed="iex",  # Free plan: IEX feed (SIP requires paid subscription)
-            )
-        )
-    except Exception as exc:
-        logger.warning("Alpaca OHLCV fetch failed for %s: %s", ticker, exc)
-        return None
-
-    df = bars.df
-    if df is None or df.empty:
-        return None
-
-    # alpaca-py returns MultiIndex (symbol, timestamp) when one symbol is requested
-    if isinstance(df.index, pd.MultiIndex):
-        if ticker not in df.index.get_level_values(0):
-            return None
-        df = df.loc[ticker].copy()
-
-    df.index = pd.to_datetime(df.index).date
-    df.index.name = "Date"
-    df = df.rename(columns={
-        "open": "Open", "high": "High", "low": "Low",
-        "close": "Close", "volume": "Volume",
-    })
-    df = df[["Open", "High", "Low", "Close", "Volume"]]
-
-    if len(df) < 30:
-        return None
-    return df.tail(days)
-
-
-# ---------------------------------------------------------------------------
-# Alpaca — Real-time quote snapshot (single ticker)
-# ---------------------------------------------------------------------------
-
-def _alpaca_latest_quote_sync(ticker: str) -> Optional[dict]:
-    """Returns {bid, ask, last} or None."""
-    from alpaca.data.requests import StockLatestQuoteRequest
-    try:
-        quotes = _get_data_client().get_stock_latest_quote(
-            StockLatestQuoteRequest(symbol_or_symbols=ticker)
-        )
-        q = quotes.get(ticker)
-        if q is None:
-            return None
-        return {"bid": float(q.bid_price), "ask": float(q.ask_price)}
-    except Exception as exc:
-        logger.warning("Alpaca latest quote failed for %s: %s", ticker, exc)
-        return None
-
-
-async def fetch_latest_quote(ticker: str) -> Optional[dict]:
-    """Public async wrapper for real-time quote."""
-    if _use_alpaca():
-        return await asyncio.to_thread(_alpaca_latest_quote_sync, ticker)
-    return None  # Polygon fallback not implemented for quotes
-
-
-# ---------------------------------------------------------------------------
-# Polygon fallback — Grouped Daily
-# ---------------------------------------------------------------------------
-
-def _polygon_headers() -> dict:
-    return {"Authorization": f"Bearer {settings.polygon_api_key}"}
-
-
-async def _polygon_fetch_grouped_daily() -> list[dict]:
-    async with httpx.AsyncClient(timeout=60) as client:
-        for days_back in range(1, 6):
-            target_date = date.today() - timedelta(days=days_back)
-            url = (
-                f"{POLYGON_BASE}/v2/aggs/grouped/locale/us/market/stocks"
-                f"/{target_date.isoformat()}"
-            )
-            try:
-                resp = await client.get(
-                    url, headers=_polygon_headers(), params={"adjusted": "true", "include_otc": "false"}
-                )
-                resp.raise_for_status()
-                results = resp.json().get("results", [])
-            except Exception as exc:
-                logger.warning("Polygon grouped daily failed for %s: %s", target_date, exc)
-                continue
-
-            if not results:
-                continue
-
-            logger.info("Polygon grouped daily (%s): %d tickers", target_date, len(results))
-            return [
-                {"ticker": r["T"], "close": r.get("c", 0), "volume": int(r.get("v", 0))}
-                for r in results
-            ]
-
-    logger.error("Polygon: no valid trading day found in the last 5 days")
-    return []
-
-
-# ---------------------------------------------------------------------------
-# Polygon fallback — Per-ticker OHLCV
-# ---------------------------------------------------------------------------
-
-async def _polygon_fetch_ohlcv(ticker: str, days: int) -> Optional[pd.DataFrame]:
-    end = date.today()
-    start = end - timedelta(days=days + 15)
-    url = (
-        f"{POLYGON_BASE}/v2/aggs/ticker/{ticker}/range/1/day"
-        f"/{start.isoformat()}/{end.isoformat()}"
-    )
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                url, headers=_polygon_headers(),
-                params={"adjusted": "true", "sort": "asc", "limit": 120},
-            )
-            resp.raise_for_status()
-            results = resp.json().get("results", [])
-    except Exception as exc:
-        logger.warning("Polygon OHLCV fetch failed for %s: %s", ticker, exc)
-        return None
-
-    if len(results) < 30:
-        return None
-
-    df = pd.DataFrame(results).rename(columns={
-        "o": "Open", "h": "High", "l": "Low",
-        "c": "Close", "v": "Volume", "t": "timestamp",
-    })
-    df["Date"] = pd.to_datetime(df["timestamp"], unit="ms").dt.date
-    df = df.set_index("Date")[["Open", "High", "Low", "Close", "Volume"]]
-    return df.tail(days)
-
-
-# ---------------------------------------------------------------------------
-# Public data-source routers
-# ---------------------------------------------------------------------------
-
-async def fetch_grouped_daily() -> list[dict]:
-    """
-    Fetch all US stock close+volume for the latest trading day.
-    Uses Alpaca if configured, otherwise falls back to Polygon.
-    """
-    if _use_alpaca():
-        return await asyncio.to_thread(_alpaca_grouped_daily_sync)
-    logger.info("Alpaca keys not set — falling back to Polygon grouped daily")
-    return await _polygon_fetch_grouped_daily()
-
-
-async def fetch_ohlcv(ticker: str, days: int = 60) -> Optional[pd.DataFrame]:
-    """
-    Fetch daily OHLCV for a single ticker.
-    Uses Alpaca if configured, otherwise falls back to Polygon.
-    """
-    if _use_alpaca():
-        return await asyncio.to_thread(_alpaca_fetch_ohlcv_sync, ticker, days)
-    await asyncio.sleep(settings.polygon_rate_limit_sleep)  # Polygon free tier
-    return await _polygon_fetch_ohlcv(ticker, days)
+async def fetch_ohlcv(ticker: str, days: int = 60):
+    """Compatibility shim — routes through the configured DataProvider."""
+    return await get_data_provider().get_daily_bars(ticker, days=days)
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +49,7 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["SMA_20"] = ta_lib.trend.sma_indicator(df["Close"], window=20)
     df["SMA_50"] = ta_lib.trend.sma_indicator(df["Close"], window=50)
-    df["EMA_9"] = ta_lib.trend.ema_indicator(df["Close"], window=9)
+    df["EMA_9"]  = ta_lib.trend.ema_indicator(df["Close"], window=9)
     df["RSI_14"] = ta_lib.momentum.rsi(df["Close"], window=14)
     df["ATRr_14"] = ta_lib.volatility.average_true_range(
         df["High"], df["Low"], df["Close"], window=14
@@ -302,13 +61,13 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 def get_indicator_snapshot(df: pd.DataFrame) -> dict:
     latest = df.iloc[-1]
     return {
-        "close": round(float(latest["Close"]), 2),
-        "volume": int(latest["Volume"]),
-        "sma20": round(float(latest.get("SMA_20") or 0), 2),
-        "sma50": round(float(latest.get("SMA_50") or 0), 2),
-        "ema9": round(float(latest.get("EMA_9") or 0), 2),
-        "rsi14": round(float(latest.get("RSI_14") or 0), 2),
-        "atr14": round(float(latest.get("ATRr_14") or 0), 2),
+        "close":    round(float(latest["Close"]), 2),
+        "volume":   int(latest["Volume"]),
+        "sma20":    round(float(latest.get("SMA_20") or 0), 2),
+        "sma50":    round(float(latest.get("SMA_50") or 0), 2),
+        "ema9":     round(float(latest.get("EMA_9")  or 0), 2),
+        "rsi14":    round(float(latest.get("RSI_14") or 0), 2),
+        "atr14":    round(float(latest.get("ATRr_14") or 0), 2),
         "vol_ma20": round(float(latest.get("Vol_MA20") or 0), 2),
     }
 
@@ -320,21 +79,21 @@ def get_indicator_snapshot(df: pd.DataFrame) -> dict:
 def _get_filter_params(fp: Optional[FilterProfile]) -> dict:
     if fp is None:
         return {
-            "price_min": settings.min_price,
-            "price_max": 9999.0,
-            "avg_volume_min": settings.min_volume,
-            "rsi_min": settings.min_rsi,
-            "rsi_max": settings.max_rsi,
+            "price_min":         settings.min_price,
+            "price_max":         9_999.0,
+            "avg_volume_min":    settings.min_volume,
+            "rsi_min":           settings.min_rsi,
+            "rsi_max":           settings.max_rsi,
             "price_above_sma50": True,
             "price_above_sma20": False,
             "volume_multiplier": settings.volume_multiplier,
         }
     return {
-        "price_min": fp.price_min,
-        "price_max": fp.price_max,
-        "avg_volume_min": fp.avg_volume_min,
-        "rsi_min": fp.rsi_min,
-        "rsi_max": fp.rsi_max,
+        "price_min":         fp.price_min,
+        "price_max":         fp.price_max,
+        "avg_volume_min":    fp.avg_volume_min,
+        "rsi_min":           fp.rsi_min,
+        "rsi_max":           fp.rsi_max,
         "price_above_sma50": fp.price_above_sma50,
         "price_above_sma20": fp.price_above_sma20,
         "volume_multiplier": settings.volume_multiplier,
@@ -346,7 +105,7 @@ def passes_filter(df: pd.DataFrame, params: dict, regime: str = "neutral") -> bo
         return False
 
     latest = df.iloc[-1]
-    close = latest["Close"]
+    close  = latest["Close"]
     volume = latest["Volume"]
 
     if pd.isna(latest.get("SMA_50")) or pd.isna(latest.get("RSI_14")):
@@ -374,6 +133,7 @@ def passes_filter(df: pd.DataFrame, params: dict, regime: str = "neutral") -> bo
 
 
 def pre_filter_snapshot(item: dict, params: dict) -> bool:
+    """Fast pre-filter on snapshot data (no OHLCV fetch needed)."""
     return (
         item["close"] >= params["price_min"]
         and item["close"] <= params["price_max"]
@@ -393,37 +153,52 @@ async def run_screener(
     Full async screening pipeline.
     Returns up to max_candidates dicts: {ticker, df, indicators}.
     """
-    fp = get_active_filter()
-    params = _get_filter_params(fp)
-    source = "Alpaca" if _use_alpaca() else "Polygon"
+    provider = get_data_provider()
+    fp       = get_active_filter()
+    params   = _get_filter_params(fp)
+    universe = settings.stock_universe
 
     logger.info(
-        "Screener starting (source=%s, regime=%s, filter=%s)…",
-        source, regime, fp.name if fp else "default",
+        "Screener starting (provider=%s, universe=%s, regime=%s, filter=%s)…",
+        settings.data_provider, universe, regime,
+        fp.name if fp else "default",
     )
 
+    # ── Step 1: Get symbol universe ───────────────────────────────────────────
     if progress_cb:
-        progress_cb("snapshot", "Fetching market snapshot…", 0, 0, 0, 2)
+        progress_cb("snapshot", "Loading symbol universe…", 0, 0, 0, 1)
 
-    all_tickers = await fetch_grouped_daily()
+    symbols = provider.get_symbols(universe)
+    logger.info("Universe: %d symbols", len(symbols))
+
+    # ── Step 2: Batch snapshot (latest close + volume) ────────────────────────
+    if progress_cb:
+        progress_cb("snapshot", f"Fetching market snapshot for {len(symbols)} symbols…", 0, len(symbols), 0, 2)
+
+    all_tickers = await provider.get_snapshot(symbols)
 
     if not all_tickers:
-        logger.error("No market data — check API keys / market hours")
+        logger.error("No market data returned — check data provider / market hours")
         return []
 
+    # ── Step 3: Price / volume pre-filter ─────────────────────────────────────
     pre_candidates = [t for t in all_tickers if pre_filter_snapshot(t, params)]
     total = len(pre_candidates)
-    logger.info("Pre-filter: %d → %d tickers pass price/volume", len(all_tickers), total)
+    logger.info(
+        "Filter funnel — universe: %d → snapshot data: %d → price/vol pre-filter: %d",
+        len(symbols), len(all_tickers), total,
+    )
 
     if progress_cb:
         progress_cb("snapshot", f"Snapshot done: {total} candidates to screen", 0, total, 0, 5)
 
-    candidates: list[dict] = []
-    processed = 0
-    ohlcv_ok = 0
-    ohlcv_none = 0
-    filtered_out = 0
-    max_cap = settings.max_candidates
+    # ── Step 4-6: Per-ticker OHLCV + indicators + full filter ─────────────────
+    candidates:   list[dict] = []
+    processed     = 0
+    ohlcv_ok      = 0
+    ohlcv_none    = 0
+    filtered_out  = 0
+    max_cap       = settings.max_candidates
 
     for item in pre_candidates:
         if len(candidates) >= max_cap:
@@ -441,7 +216,7 @@ async def run_screener(
             )
 
         try:
-            df = await fetch_ohlcv(ticker, days=settings.lookback_days)
+            df = await provider.get_daily_bars(ticker, days=settings.lookback_days)
             if df is None:
                 ohlcv_none += 1
                 continue
@@ -457,13 +232,13 @@ async def run_screener(
             candidates.append({"ticker": ticker, "df": df, "indicators": indicators})
             logger.info(
                 "Candidate #%d: %s (RSI=%.1f, Close=%.2f)",
-                len(candidates), ticker, indicators["rsi14"], indicators["close"],
+                len(candidates), ticker,
+                indicators["rsi14"], indicators["close"],
             )
 
         except Exception as exc:
             logger.warning("Error processing %s: %s", ticker, exc)
             ohlcv_none += 1
-            continue
 
     logger.info(
         "Screener done: %d candidates from %d screened "

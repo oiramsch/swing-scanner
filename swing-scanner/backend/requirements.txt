@@ -16,3 +16,5 @@ httpx==0.28.1
 pillow==11.0.0
 requests==2.32.3
 resend==2.5.1
+yfinance>=0.2.50
+lxml>=5.0.0
