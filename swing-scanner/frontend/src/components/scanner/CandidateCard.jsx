@@ -3,6 +3,7 @@ import axios from "axios";
 import DeepAnalysisModal from "./DeepAnalysisModal.jsx";
 import AddPositionModal from "../portfolio/AddPositionModal.jsx";
 import OrderForm from "../trading/OrderForm.jsx";
+import PlanModal from "../trading/PlanModal.jsx";
 
 const SETUP_COLORS = {
   breakout: "bg-green-500/20 text-green-400 border-green-500/30",
@@ -131,6 +132,7 @@ export default function CandidateCard({ candidate: c, budget = null }) {
   const [showDeep, setShowDeep] = useState(false);
   const [showPortfolio, setShowPortfolio] = useState(false);
   const [showOrder, setShowOrder] = useState(false);
+  const [showPlan, setShowPlan] = useState(false);
   const [showHeadlines, setShowHeadlines] = useState(false);
   const [showChart, setShowChart] = useState(false);    // 1.5 lightbox
   const [showDimmed, setShowDimmed] = useState(false);  // 1.3 override dim
@@ -403,6 +405,13 @@ export default function CandidateCard({ candidate: c, budget = null }) {
             >
               {addedToWatchlist ? "✓" : "Watch"}
             </button>
+            <button
+              onClick={() => setShowPlan(true)}
+              className="text-xs py-1.5 px-2 bg-blue-800/40 hover:bg-blue-700/60 text-blue-300 rounded border border-blue-700/40 transition font-medium"
+              title="Trade Plan erstellen → Deal Cockpit"
+            >
+              Plan
+            </button>
           </div>
         </div>
       </div>
@@ -423,6 +432,13 @@ export default function CandidateCard({ candidate: c, budget = null }) {
           candidate={c}
           onClose={() => setShowOrder(false)}
           onSuccess={() => setShowOrder(false)}
+        />
+      )}
+      {showPlan && (
+        <PlanModal
+          candidate={c}
+          onClose={() => setShowPlan(false)}
+          onSaved={() => setShowPlan(false)}
         />
       )}
     </>

@@ -1575,6 +1575,79 @@ def update_trade_plan(plan_id: int, data: dict) -> Optional[TradePlan]:
         return plan
 
 
+def create_broker_connection(tenant_id: int, data: dict) -> BrokerConnection:
+    """Create a new broker connection."""
+    from backend.crypto import encrypt
+    conn = BrokerConnection(
+        tenant_id=tenant_id,
+        broker_type=data.get("broker_type", "alpaca"),
+        label=data.get("label", "Neuer Broker"),
+        is_paper=bool(data.get("is_paper", True)),
+        is_active=True,
+        manual_balance=data.get("manual_balance"),
+        manual_currency=data.get("manual_currency", "EUR"),
+    )
+    if data.get("api_key"):
+        conn.api_key_enc = encrypt(data["api_key"])
+    if data.get("api_secret"):
+        conn.api_secret_enc = encrypt(data["api_secret"])
+    conn.base_url = data.get("base_url", (
+        "https://paper-api.alpaca.markets" if conn.is_paper else "https://api.alpaca.markets"
+    ))
+    with Session(get_engine()) as session:
+        session.add(conn)
+        session.commit()
+        session.refresh(conn)
+        return conn
+
+
+def update_broker_connection(broker_id: int, tenant_id: int, data: dict) -> Optional[BrokerConnection]:
+    """Update an existing broker connection."""
+    from backend.crypto import encrypt
+    with Session(get_engine()) as session:
+        conn = session.exec(
+            select(BrokerConnection)
+            .where(BrokerConnection.id == broker_id)
+            .where(BrokerConnection.tenant_id == tenant_id)
+        ).first()
+        if not conn:
+            return None
+        for field in ("label", "broker_type", "manual_currency"):
+            if field in data:
+                setattr(conn, field, data[field])
+        if "is_paper" in data:
+            conn.is_paper = bool(data["is_paper"])
+        if "manual_balance" in data:
+            conn.manual_balance = data["manual_balance"]
+        if data.get("api_key"):
+            conn.api_key_enc = encrypt(data["api_key"])
+        if data.get("api_secret"):
+            conn.api_secret_enc = encrypt(data["api_secret"])
+        if "is_paper" in data:
+            conn.base_url = (
+                "https://paper-api.alpaca.markets" if conn.is_paper else "https://api.alpaca.markets"
+            )
+        conn.updated_at = datetime.utcnow()
+        session.add(conn)
+        session.commit()
+        session.refresh(conn)
+        return conn
+
+
+def delete_broker_connection(broker_id: int, tenant_id: int) -> bool:
+    with Session(get_engine()) as session:
+        conn = session.exec(
+            select(BrokerConnection)
+            .where(BrokerConnection.id == broker_id)
+            .where(BrokerConnection.tenant_id == tenant_id)
+        ).first()
+        if not conn:
+            return False
+        session.delete(conn)
+        session.commit()
+        return True
+
+
 def update_broker_manual_balance(broker_id: int, balance: float, currency: str = "EUR") -> Optional[BrokerConnection]:
     with Session(get_engine()) as session:
         conn = session.get(BrokerConnection, broker_id)

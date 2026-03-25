@@ -37,158 +37,255 @@ function Field({ label, children, hint }) {
 }
 
 // ---------------------------------------------------------------------------
-// Broker Connection
+// Broker Management
 // ---------------------------------------------------------------------------
-function BrokerSection({ currentUser }) {
-  const [broker, setBroker] = useState(null);
-  const [form, setForm] = useState({ api_key: "", api_secret: "", is_paper: true });
+const BROKER_ICONS  = { alpaca: "🦙", trade_republic: "🇩🇪", ibkr: "📊" };
+const BROKER_LABELS = { alpaca: "Alpaca", trade_republic: "Trade Republic", ibkr: "IBKR" };
+
+function AlpacaForm({ broker, onSaved }) {
+  const isNew = !broker;
+  const [form, setForm] = useState({ label: broker?.label ?? "Alpaca", api_key: "", api_secret: "", is_paper: broker?.is_paper ?? true });
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => { loadBroker(); }, []);
-
-  async function loadBroker() {
-    try {
-      const res = await axios.get("/api/settings/broker");
-      setBroker(res.data);
-      setForm(f => ({ ...f, is_paper: res.data.is_paper ?? true }));
-    } catch {}
-  }
-
-  async function saveBroker(e) {
+  async function save(e) {
     e.preventDefault();
-    setSaving(true);
-    setSaved(false);
+    setSaving(true); setSaved(false);
     try {
-      await axios.put("/api/settings/broker", {
-        ...form,
-        // Don't send empty strings — server interprets as "no change"
-        api_key:    form.api_key    || undefined,
-        api_secret: form.api_secret || undefined,
-      });
+      const payload = { broker_type: "alpaca", ...form, api_key: form.api_key || undefined, api_secret: form.api_secret || undefined };
+      if (isNew) await axios.post("/api/brokers", payload);
+      else       await axios.put(`/api/brokers/${broker.id}`, payload);
       setSaved(true);
       setForm(f => ({ ...f, api_key: "", api_secret: "" }));
-      loadBroker();
-    } catch (err) {
-      alert(err.response?.data?.detail || "Fehler beim Speichern");
-    } finally {
-      setSaving(false);
-    }
+      onSaved();
+    } catch (err) { alert(err.response?.data?.detail || "Fehler"); }
+    finally { setSaving(false); }
   }
 
-  async function testConnection() {
-    setTesting(true);
-    setTestResult(null);
+  async function test() {
+    setTesting(true); setTestResult(null);
     try {
-      const res = await axios.post("/api/settings/broker/test");
+      const res = await axios.post(`/api/brokers/${broker.id}/test`);
       setTestResult({ ok: true, ...res.data });
-    } catch (err) {
-      setTestResult({ ok: false, error: err.response?.data?.detail || "Fehler" });
-    } finally {
-      setTesting(false);
-    }
+    } catch (err) { setTestResult({ ok: false, error: err.response?.data?.detail || "Fehler" }); }
+    finally { setTesting(false); }
   }
 
   return (
-    <Section title="Broker-Verbindung (Alpaca)">
-      {broker && (
-        <div className="flex items-center gap-2 text-xs flex-wrap">
-          <span className={`px-2 py-0.5 rounded-full border text-[11px] font-medium ${
-            broker.is_paper
-              ? "text-yellow-400 border-yellow-800/50 bg-yellow-900/20"
-              : "text-green-400 border-green-800/50 bg-green-900/20"
-          }`}>
-            {broker.is_paper ? "PAPER TRADING" : "LIVE TRADING"}
-          </span>
-          <span className="text-gray-500">
-            API Key: {broker.api_key_set ? "✓ gesetzt" : "⚠ nicht gesetzt"}
-          </span>
-          <span className="text-gray-500">
-            Secret: {broker.api_secret_set ? "✓ gesetzt" : "⚠ nicht gesetzt"}
-          </span>
-          <span className="text-gray-600 text-[11px]">
-            Quelle: {broker.source === "db" ? "Datenbank" : ".env-Datei"}
-          </span>
+    <form onSubmit={save} className="space-y-3 mt-3">
+      <Field label="Label">
+        <input value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500" />
+      </Field>
+      <Field label="API Key" hint="Leer lassen um bestehenden Key zu behalten">
+        <input type="password" value={form.api_key} onChange={e => setForm(f => ({ ...f, api_key: e.target.value }))}
+          placeholder="PKXXXXX… (leer = unverändert)"
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500" />
+      </Field>
+      <Field label="API Secret" hint="Leer lassen um bestehenden Secret zu behalten">
+        <input type="password" value={form.api_secret} onChange={e => setForm(f => ({ ...f, api_secret: e.target.value }))}
+          placeholder="XXXXXXX… (leer = unverändert)"
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500" />
+      </Field>
+      <Field label="Modus">
+        <div className="flex gap-3">
+          {[{ value: true, label: "Paper Trading", color: "text-yellow-400" }, { value: false, label: "Live Trading", color: "text-red-400" }].map(opt => (
+            <label key={String(opt.value)} className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name={`alpaca_paper_${broker?.id}`} checked={form.is_paper === opt.value}
+                onChange={() => setForm(f => ({ ...f, is_paper: opt.value }))} className="accent-indigo-500" />
+              <span className={`text-sm ${opt.color}`}>{opt.label}</span>
+            </label>
+          ))}
+        </div>
+      </Field>
+      {!isNew && (broker?.api_key_set || broker?.source) && (
+        <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
+          <span>Key: {broker.api_key_set ? "✓ gesetzt" : "⚠ nicht gesetzt"}</span>
+          <span>Secret: {broker.api_secret_set ? "✓ gesetzt" : "⚠ nicht gesetzt"}</span>
+          {broker.source && <span className="text-gray-600">Quelle: {broker.source === "db" ? "DB" : ".env"}</span>}
         </div>
       )}
-
-      <form onSubmit={saveBroker} className="space-y-3">
-        <Field label="API Key" hint="Leer lassen um bestehenden Key zu behalten">
-          <input
-            type="password"
-            value={form.api_key}
-            onChange={e => setForm(f => ({ ...f, api_key: e.target.value }))}
-            placeholder="PKXXXXX… (leer = unverändert)"
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
-          />
-        </Field>
-
-        <Field label="API Secret" hint="Leer lassen um bestehenden Secret zu behalten">
-          <input
-            type="password"
-            value={form.api_secret}
-            onChange={e => setForm(f => ({ ...f, api_secret: e.target.value }))}
-            placeholder="XXXXXXX… (leer = unverändert)"
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
-          />
-        </Field>
-
-        <Field label="Modus">
-          <div className="flex gap-3">
-            {[
-              { value: true,  label: "Paper Trading",  color: "text-yellow-400" },
-              { value: false, label: "Live Trading",   color: "text-red-400" },
-            ].map(opt => (
-              <label key={String(opt.value)} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="is_paper"
-                  checked={form.is_paper === opt.value}
-                  onChange={() => setForm(f => ({ ...f, is_paper: opt.value }))}
-                  className="accent-indigo-500"
-                />
-                <span className={`text-sm ${opt.color}`}>{opt.label}</span>
-              </label>
-            ))}
-          </div>
-        </Field>
-
-        <div className="flex gap-2 pt-1">
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition disabled:opacity-50"
-          >
-            {saving ? "Speichern…" : saved ? "✓ Gespeichert" : "Speichern"}
-          </button>
-          <button
-            type="button"
-            onClick={testConnection}
-            disabled={testing}
-            className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-700 transition disabled:opacity-50"
-          >
+      <div className="flex gap-2">
+        <button type="submit" disabled={saving}
+          className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition disabled:opacity-50">
+          {saving ? "Speichern…" : saved ? "✓ Gespeichert" : "Speichern"}
+        </button>
+        {!isNew && (
+          <button type="button" onClick={test} disabled={testing}
+            className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg border border-gray-700 transition disabled:opacity-50">
             {testing ? "Teste…" : "Verbindung testen"}
           </button>
-        </div>
-      </form>
-
+        )}
+      </div>
       {testResult && (
-        <div className={`text-sm p-3 rounded-lg border ${
-          testResult.ok
-            ? "bg-green-900/20 border-green-800/40 text-green-300"
-            : "bg-red-900/20 border-red-800/40 text-red-300"
-        }`}>
-          {testResult.ok ? (
-            <>
-              ✓ Verbindung OK · Status: {testResult.account_status} ·
-              Kaufkraft: ${parseFloat(testResult.buying_power).toFixed(2)} {testResult.currency}
-              {testResult.is_paper && <span className="ml-2 text-yellow-400 text-xs">(Paper)</span>}
-            </>
-          ) : (
-            <>✕ {testResult.error}</>
+        <div className={`text-sm p-3 rounded-lg border ${testResult.ok ? "bg-green-900/20 border-green-800/40 text-green-300" : "bg-red-900/20 border-red-800/40 text-red-300"}`}>
+          {testResult.ok
+            ? <>✓ Verbindung OK · {testResult.account_status} · ${parseFloat(testResult.buying_power).toFixed(2)} {testResult.currency}{testResult.is_paper && <span className="ml-2 text-yellow-400 text-xs">(Paper)</span>}</>
+            : <>✕ {testResult.error}</>}
+        </div>
+      )}
+    </form>
+  );
+}
+
+function TRForm({ broker, onSaved }) {
+  const isNew = !broker;
+  const [form, setForm] = useState({
+    label: broker?.label ?? "Trade Republic",
+    manual_balance: broker?.balance?.buying_power ?? "",
+    manual_currency: broker?.balance?.currency ?? "EUR",
+  });
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function save(e) {
+    e.preventDefault();
+    setSaving(true); setSaved(false);
+    try {
+      const payload = {
+        broker_type: "trade_republic",
+        label: form.label,
+        is_paper: false,
+        manual_balance: form.manual_balance !== "" ? parseFloat(form.manual_balance) : null,
+        manual_currency: form.manual_currency,
+      };
+      if (isNew) await axios.post("/api/brokers", payload);
+      else       await axios.put(`/api/brokers/${broker.id}`, payload);
+      setSaved(true);
+      onSaved();
+    } catch (err) { alert(err.response?.data?.detail || "Fehler"); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <form onSubmit={save} className="space-y-3 mt-3">
+      <Field label="Label">
+        <input value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500" />
+      </Field>
+      <div className="flex gap-3">
+        <Field label="Konto-Balance">
+          <input type="number" step="0.01" value={form.manual_balance}
+            onChange={e => setForm(f => ({ ...f, manual_balance: e.target.value }))}
+            placeholder="z.B. 1000.00"
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500" />
+        </Field>
+        <Field label="Währung">
+          <select value={form.manual_currency} onChange={e => setForm(f => ({ ...f, manual_currency: e.target.value }))}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500">
+            <option value="EUR">EUR €</option>
+            <option value="USD">USD $</option>
+          </select>
+        </Field>
+      </div>
+      <p className="text-[11px] text-gray-600">Balance wird manuell gepflegt und im Deal Cockpit als Kaufkraft angezeigt.</p>
+      <button type="submit" disabled={saving}
+        className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition disabled:opacity-50">
+        {saving ? "Speichern…" : saved ? "✓ Gespeichert" : "Speichern"}
+      </button>
+    </form>
+  );
+}
+
+function BrokerCard({ broker, onSaved, onDelete }) {
+  const [expanded, setExpanded] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const sym = broker.balance?.currency === "EUR" ? "€" : "$";
+  const val = broker.balance?.buying_power;
+
+  async function handleDelete() {
+    if (!confirm(`Broker "${broker.label}" wirklich löschen?`)) return;
+    setDeleting(true);
+    try {
+      await axios.delete(`/api/brokers/${broker.id}`);
+      onDelete();
+    } catch (err) { alert(err.response?.data?.detail || "Fehler"); }
+    finally { setDeleting(false); }
+  }
+
+  return (
+    <div className="border border-gray-700/50 rounded-lg overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-3 bg-gray-800/40 cursor-pointer" onClick={() => setExpanded(e => !e)}>
+        <span className="text-lg">{BROKER_ICONS[broker.broker_type] ?? "💼"}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-white text-sm font-medium">{broker.label}</span>
+            {broker.is_paper && <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900/30 border border-yellow-800/50 text-yellow-400">PAPER</span>}
+            <span className="text-[10px] text-gray-600">{BROKER_LABELS[broker.broker_type] ?? broker.broker_type}</span>
+          </div>
+          {val != null && <div className="text-xs text-gray-500 mt-0.5">Kaufkraft: {sym}{parseFloat(val).toLocaleString("de", { maximumFractionDigits: 0 })}</div>}
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={e => { e.stopPropagation(); handleDelete(); }} disabled={deleting}
+            className="text-[11px] text-gray-600 hover:text-red-400 transition px-2 py-1 disabled:opacity-50">
+            {deleting ? "…" : "Löschen"}
+          </button>
+          <span className="text-gray-600 text-xs">{expanded ? "▲" : "▼"}</span>
+        </div>
+      </div>
+      {expanded && (
+        <div className="px-4 pb-4 bg-gray-800/20">
+          {broker.broker_type === "alpaca"          && <AlpacaForm broker={broker} onSaved={onSaved} />}
+          {broker.broker_type === "trade_republic"  && <TRForm     broker={broker} onSaved={onSaved} />}
+          {!["alpaca", "trade_republic"].includes(broker.broker_type) && (
+            <p className="text-xs text-gray-500 mt-3">Kein Editor für diesen Broker-Typ.</p>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BrokerManagementSection() {
+  const [brokers, setBrokers] = useState([]);
+  const [adding, setAdding] = useState(null); // "alpaca" | "trade_republic" | null
+
+  useEffect(() => { loadBrokers(); }, []);
+
+  async function loadBrokers() {
+    try {
+      const res = await axios.get("/api/brokers");
+      setBrokers(res.data || []);
+    } catch {}
+  }
+
+  return (
+    <Section title="Broker-Verwaltung">
+      <div className="space-y-2">
+        {brokers.length === 0 && (
+          <p className="text-xs text-gray-500">Keine Broker konfiguriert.</p>
+        )}
+        {brokers.map(b => (
+          <BrokerCard key={b.id} broker={b} onSaved={loadBrokers} onDelete={loadBrokers} />
+        ))}
+      </div>
+
+      {/* Add new broker */}
+      {adding ? (
+        <div className="border border-indigo-700/40 rounded-lg p-4 bg-indigo-900/10 mt-2">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-sm font-medium text-indigo-300">
+              {BROKER_ICONS[adding]} Neuer {BROKER_LABELS[adding]} Broker
+            </span>
+            <button onClick={() => setAdding(null)} className="text-gray-500 hover:text-gray-300 text-sm">✕</button>
+          </div>
+          {adding === "alpaca"         && <AlpacaForm onSaved={() => { setAdding(null); loadBrokers(); }} />}
+          {adding === "trade_republic" && <TRForm     onSaved={() => { setAdding(null); loadBrokers(); }} />}
+        </div>
+      ) : (
+        <div className="flex gap-2 mt-2 flex-wrap">
+          <span className="text-xs text-gray-600 self-center">+ Broker hinzufügen:</span>
+          {[
+            { type: "alpaca",         label: "🦙 Alpaca" },
+            { type: "trade_republic", label: "🇩🇪 Trade Republic" },
+          ].map(opt => (
+            <button key={opt.type} onClick={() => setAdding(opt.type)}
+              className="text-xs px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 text-gray-300 transition">
+              {opt.label}
+            </button>
+          ))}
         </div>
       )}
     </Section>
@@ -418,7 +515,7 @@ export default function SettingsTab({ currentUser, onLogout }) {
         <p className="text-xs text-gray-500 mt-0.5">Angemeldet als {currentUser?.email}</p>
       </div>
 
-      <ErrorBoundary><BrokerSection currentUser={currentUser} /></ErrorBoundary>
+      <ErrorBoundary><BrokerManagementSection /></ErrorBoundary>
       <ErrorBoundary><ModulesSection /></ErrorBoundary>
       <ErrorBoundary><ScannerSection /></ErrorBoundary>
       <ErrorBoundary><PasswordSection currentUser={currentUser} onLogout={onLogout} /></ErrorBoundary>

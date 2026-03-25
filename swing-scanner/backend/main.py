@@ -70,6 +70,9 @@ from backend.database import (
     update_trade_plan,
     get_all_broker_connections,
     update_broker_manual_balance,
+    create_broker_connection,
+    update_broker_connection,
+    delete_broker_connection,
 )
 from backend.journal import create_journal_entry, get_journal_stats, update_lesson
 from backend.performance import (
@@ -1634,6 +1637,75 @@ async def update_manual_balance(
     if not conn:
         raise HTTPException(status_code=404, detail="Broker nicht gefunden")
     return conn.model_dump()
+
+
+@app.post("/api/brokers")
+async def create_broker(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Create a new broker connection."""
+    if not data.get("broker_type"):
+        raise HTTPException(status_code=400, detail="broker_type erforderlich")
+    conn = create_broker_connection(current_user.tenant_id, data)
+    return conn.model_dump()
+
+
+@app.put("/api/brokers/{broker_id}")
+async def update_broker(
+    broker_id: int,
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Update an existing broker connection."""
+    conn = update_broker_connection(broker_id, current_user.tenant_id, data)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Broker nicht gefunden")
+    return conn.model_dump()
+
+
+@app.delete("/api/brokers/{broker_id}")
+async def delete_broker(
+    broker_id: int,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Delete a broker connection."""
+    ok = delete_broker_connection(broker_id, current_user.tenant_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Broker nicht gefunden")
+    return {"status": "deleted"}
+
+
+@app.post("/api/brokers/{broker_id}/test")
+async def test_broker_connection_by_id(
+    broker_id: int,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Test connection for a specific broker by ID."""
+    from backend.database import get_all_broker_connections
+    from backend.crypto import decrypt_or_none
+    conns = get_all_broker_connections(current_user.tenant_id)
+    conn = next((c for c in conns if c.id == broker_id), None)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Broker nicht gefunden")
+    if conn.broker_type != "alpaca":
+        raise HTTPException(status_code=400, detail="Verbindungstest nur für Alpaca verfügbar")
+    api_key = decrypt_or_none(conn.api_key_enc)
+    api_secret = decrypt_or_none(conn.api_secret_enc)
+    if not api_key or not api_secret:
+        raise HTTPException(status_code=400, detail="API Key / Secret nicht gesetzt")
+    try:
+        from alpaca.trading.client import TradingClient
+        client = TradingClient(api_key=api_key, secret_key=api_secret, paper=conn.is_paper)
+        account = client.get_account()
+        return {
+            "status": "ok",
+            "account_status": str(account.status),
+            "buying_power": str(account.buying_power),
+            "is_paper": conn.is_paper,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/orders/sell")
