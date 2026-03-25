@@ -1482,13 +1482,22 @@ def upsert_broker_connection(tenant_id: int, data: dict) -> BrokerConnection:
 
 def get_broker_credentials(tenant_id: int = 1) -> dict:
     """
-    Return decrypted broker credentials for a tenant.
+    Return decrypted Alpaca credentials for a tenant.
+    Specifically looks for an alpaca broker (not the first active broker).
     Falls back to .env values if no DB record exists (backward compat).
     """
     from backend.crypto import decrypt_or_none
     from backend.config import settings as cfg
 
-    conn = get_broker_connection(tenant_id)
+    # Look specifically for an alpaca broker
+    with Session(get_engine()) as session:
+        conn = session.exec(
+            select(BrokerConnection)
+            .where(BrokerConnection.tenant_id == tenant_id)
+            .where(BrokerConnection.broker_type == "alpaca")
+            .where(BrokerConnection.is_active == True)  # noqa: E712
+        ).first()
+
     if conn:
         api_key = decrypt_or_none(conn.api_key_enc) or cfg.alpaca_api_key
         api_secret = decrypt_or_none(conn.api_secret_enc) or cfg.alpaca_secret_key

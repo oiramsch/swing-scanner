@@ -1519,6 +1519,7 @@ async def execute_trade_plan(
 async def get_trade_plan_checklist(
     plan_id: int,
     broker_id: int,
+    qty: Optional[int] = None,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Return EUR-converted execution checklist for a manual broker."""
@@ -1536,15 +1537,18 @@ async def get_trade_plan_checklist(
 
     connector = get_connector(conn.model_dump())
 
-    # Calculate qty from risk
-    try:
-        balance = connector.get_balance()
-        buying_power = balance.get("buying_power", 0)
-        risk_amount = buying_power * (plan.risk_pct / 100)
-        risk_per_share = plan.entry_high - plan.stop_loss
-        qty = max(1, int(risk_amount / risk_per_share)) if risk_per_share > 0 else 1
-    except Exception:
-        qty = 1
+    # Use qty override if provided, else calculate from risk
+    if qty and qty > 0:
+        resolved_qty = qty
+    else:
+        try:
+            balance = connector.get_balance()
+            buying_power = balance.get("buying_power", 0)
+            risk_amount = buying_power * (plan.risk_pct / 100)
+            risk_per_share = plan.entry_high - plan.stop_loss
+            resolved_qty = max(1, int(risk_amount / risk_per_share)) if risk_per_share > 0 else 1
+        except Exception:
+            resolved_qty = 1
 
     plan_dict = {
         "ticker": plan.ticker,
@@ -1553,7 +1557,7 @@ async def get_trade_plan_checklist(
         "entry_high": plan.entry_high,
         "stop_loss": plan.stop_loss,
         "target": plan.target,
-        "qty": qty,
+        "qty": resolved_qty,
     }
 
     if hasattr(connector, "get_checklist_data"):

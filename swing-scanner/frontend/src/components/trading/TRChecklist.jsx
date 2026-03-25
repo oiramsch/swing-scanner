@@ -1,16 +1,18 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 
-export default function TRChecklist({ plan, brokerId, brokerLabel, onClose }) {
+export default function TRChecklist({ plan, brokerId, brokerLabel, qtyOverride, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [checked, setChecked] = useState({});
 
   useEffect(() => {
-    axios.get(`/api/trade-plans/${plan.id}/checklist/${brokerId}`)
+    const url = `/api/trade-plans/${plan.id}/checklist/${brokerId}`
+      + (qtyOverride ? `?qty=${qtyOverride}` : "");
+    axios.get(url)
       .then(r => { setData(r.data); setLoading(false); })
       .catch(() => setLoading(false));
-  }, [plan.id, brokerId]);
+  }, [plan.id, brokerId, qtyOverride]);
 
   function toggle(i) {
     setChecked(prev => ({ ...prev, [i]: !prev[i] }));

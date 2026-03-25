@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import OrderForm from "./OrderForm.jsx";
-import TRChecklist from "./TRChecklist.jsx";
+import JustageModal from "./JustageModal.jsx";
 
 function parseEntryZone(low, high) {
   if (!low || !high) return null;
@@ -127,17 +126,31 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel }) {
                 </button>
               ) : isTR ? (
                 <button
-                  onClick={() => onTRPlan(plan, broker)}
-                  className="text-xs px-3 py-1.5 rounded-lg border border-indigo-700/50 bg-indigo-900/20 hover:bg-indigo-900/40 text-indigo-300 font-semibold transition"
+                  onClick={() => !belowZone && onTRPlan(plan, broker)}
+                  title={belowZone ? "Preis unter Support — Setup ungültig" : undefined}
+                  className={`text-xs px-3 py-1.5 rounded-lg border font-semibold transition ${
+                    belowZone
+                      ? "bg-orange-900/30 border-orange-700/50 text-orange-400 cursor-not-allowed"
+                      : inZone
+                      ? "bg-green-700 hover:bg-green-600 border-green-600 text-white"
+                      : "border-indigo-700/50 bg-indigo-900/20 hover:bg-indigo-900/40 text-indigo-300"
+                  }`}
                 >
-                  {broker.label} Plan ↗
+                  {belowZone ? "⚠️ Below Zone" : `${broker.label} Plan ↗`}
                 </button>
               ) : (
                 <button
-                  onClick={() => onTRPlan(plan, broker)}
-                  className="text-xs px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 text-gray-400 transition"
+                  onClick={() => !belowZone && onTRPlan(plan, broker)}
+                  title={belowZone ? "Preis unter Support — Setup ungültig" : undefined}
+                  className={`text-xs px-3 py-1.5 rounded-lg border transition ${
+                    belowZone
+                      ? "bg-orange-900/30 border-orange-700/50 text-orange-400 cursor-not-allowed"
+                      : inZone
+                      ? "bg-green-700 hover:bg-green-600 border-green-600 text-white"
+                      : "border-gray-700 bg-gray-800 hover:bg-gray-700 text-gray-400"
+                  }`}
                 >
-                  {broker.label} ↗
+                  {belowZone ? "⚠️ Below Zone" : `${broker.label} ↗`}
                 </button>
               )}
             </div>
@@ -165,8 +178,7 @@ export default function DealCockpit() {
   const [quotes,    setQuotes]    = useState({});
   const [loading,   setLoading]   = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
-  const [alpacaTarget, setAlpacaTarget]  = useState(null); // { plan, broker }
-  const [trTarget,     setTRTarget]      = useState(null); // { plan, broker }
+  const [justageTarget, setJustageTarget] = useState(null); // { plan, broker }
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -218,17 +230,8 @@ export default function DealCockpit() {
     } catch {}
   }
 
-  function handleAlpacaBuy(plan, broker) {
-    // Convert TradePlan to candidate-like object for OrderForm
-    const candidate = {
-      ticker: plan.ticker,
-      entry_zone: `${plan.entry_low}-${plan.entry_high}`,
-      stop_loss: plan.stop_loss,
-      target: plan.target,
-      strategy_module: plan.strategy_module,
-      has_earnings_upcoming: false,
-    };
-    setAlpacaTarget({ plan, broker, candidate });
+  function openJustage(plan, broker) {
+    setJustageTarget({ plan, broker });
   }
 
   const activePlans = plans.filter(p => ["pending", "active", "partial"].includes(p.status));
@@ -285,33 +288,22 @@ export default function DealCockpit() {
               plan={plan}
               brokers={brokers}
               quotes={quotes}
-              onAlpacaBuy={handleAlpacaBuy}
-              onTRPlan={(p, b) => setTRTarget({ plan: p, broker: b })}
+              onAlpacaBuy={openJustage}
+              onTRPlan={openJustage}
               onCancel={cancelPlan}
             />
           ))
         )}
       </div>
 
-      {/* Alpaca OrderForm Modal */}
-      {alpacaTarget && (
-        <OrderForm
-          candidate={alpacaTarget.candidate}
-          onClose={() => setAlpacaTarget(null)}
-          onSuccess={() => {
-            setAlpacaTarget(null);
-            loadPlans();
-          }}
-        />
-      )}
-
-      {/* TR Checklist Modal */}
-      {trTarget && (
-        <TRChecklist
-          plan={trTarget.plan}
-          brokerId={trTarget.broker.id}
-          brokerLabel={trTarget.broker.label}
-          onClose={() => setTRTarget(null)}
+      {/* Finale Justage Modal — einheitlich für Alpaca + TR */}
+      {justageTarget && (
+        <JustageModal
+          plan={justageTarget.plan}
+          broker={justageTarget.broker}
+          livePrice={quotes[justageTarget.plan.ticker]}
+          onClose={() => setJustageTarget(null)}
+          onSuccess={() => { setJustageTarget(null); loadPlans(); }}
         />
       )}
     </div>
