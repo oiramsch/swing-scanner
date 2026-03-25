@@ -34,12 +34,13 @@ function PriceIndicator({ livePrice, entryZone }) {
   const zone = parseEntryZone(entryZone);
   if (!livePrice || !zone) return <span className="text-gray-600 text-xs">—</span>;
 
-  const pct = ((livePrice - zone.trigger) / zone.trigger) * 100;
+  const pctAbove = ((livePrice - zone.trigger) / zone.trigger) * 100;
 
   let color, label;
-  if (livePrice <= zone.trigger)  { color = "text-green-400"; label = "In Zone ✓"; }
-  else if (pct <= 2)              { color = "text-yellow-400"; label = `+${pct.toFixed(1)}%`; }
-  else                            { color = "text-red-400";   label = `+${pct.toFixed(1)}%`; }
+  if (livePrice < zone.low)        { color = "text-orange-400"; label = "Below Zone ⚠️"; }
+  else if (livePrice <= zone.trigger) { color = "text-green-400";  label = "In Zone ✓"; }
+  else if (pctAbove <= 2)          { color = "text-yellow-400"; label = `+${pctAbove.toFixed(1)}%`; }
+  else                             { color = "text-red-400";    label = `+${pctAbove.toFixed(1)}%`; }
 
   return (
     <div className="text-right">
@@ -230,10 +231,11 @@ export default function TradingCockpit() {
             {actionable.map(c => {
               const livePrice = quotes[c.ticker];
               const zone = parseEntryZone(c.entry_zone);
-              const inZone = livePrice && zone && livePrice <= zone.trigger;
+              const inZone    = livePrice && zone && livePrice >= zone.low && livePrice <= zone.trigger;
+              const belowZone = livePrice && zone && livePrice < zone.low;
 
               return (
-                <div key={c.id} className={`flex items-center gap-3 px-4 py-3 transition ${inZone ? "bg-green-900/10" : ""}`}>
+                <div key={c.id} className={`flex items-center gap-3 px-4 py-3 transition ${inZone ? "bg-green-900/10" : belowZone ? "bg-orange-900/10" : ""}`}>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-white font-semibold">{c.ticker}</span>
@@ -259,14 +261,17 @@ export default function TradingCockpit() {
 
                   <div className="flex gap-1.5 shrink-0">
                     <button
-                      onClick={() => setOrderTarget(c)}
+                      onClick={() => !belowZone && setOrderTarget(c)}
+                      title={belowZone ? "Preis unter Support — Setup ungültig" : undefined}
                       className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
                         inZone
                           ? "bg-green-700 hover:bg-green-600 border-green-600 text-white"
+                          : belowZone
+                          ? "bg-orange-900/30 border-orange-700/50 text-orange-400 cursor-not-allowed"
                           : "bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-300"
                       }`}
                     >
-                      Kaufen
+                      {belowZone ? "⚠️ Below Zone" : "Kaufen"}
                     </button>
                     {planDone[c.ticker] ? (
                       <span className="px-2.5 py-1.5 text-xs rounded-lg bg-indigo-900/20 border border-indigo-700/30 text-indigo-400">

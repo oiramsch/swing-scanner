@@ -31,6 +31,79 @@ const TABS = [
   { id: "settings", label: "Einstellungen" },
 ];
 
+// ---------------------------------------------------------------------------
+// US Market Clock (DST-aware)
+// ---------------------------------------------------------------------------
+function getMarketInfo() {
+  const now = new Date();
+  const yr = now.getUTCFullYear();
+
+  // US DST: 2nd Sunday of March (2 AM ET = 7 AM UTC) → 1st Sunday of November (2 AM ET = 6 AM UTC)
+  const march1Day = new Date(Date.UTC(yr, 2, 1)).getUTCDay();
+  const dstStartDay = 1 + ((7 - march1Day) % 7) + 7; // 2nd Sunday of March
+  const dstStartUTC = new Date(Date.UTC(yr, 2, dstStartDay, 7, 0, 0));
+
+  const nov1Day = new Date(Date.UTC(yr, 10, 1)).getUTCDay();
+  const dstEndDay = 1 + ((7 - nov1Day) % 7);          // 1st Sunday of November
+  const dstEndUTC = new Date(Date.UTC(yr, 10, dstEndDay, 6, 0, 0));
+
+  const isEDT = now >= dstStartUTC && now < dstEndUTC;
+  const utcOffset = isEDT ? 4 : 5; // hours to add to ET to get UTC
+
+  // Current time in ET
+  const etNow = new Date(now.getTime() - utcOffset * 3600000);
+  const etDay  = etNow.getUTCDay();
+  const etMins = etNow.getUTCHours() * 60 + etNow.getUTCMinutes();
+
+  const OPEN  = 9 * 60 + 30;  // 09:30 ET
+  const CLOSE = 16 * 60;       // 16:00 ET
+
+  // Open/close as UTC Date objects (for today's ET date)
+  const [ey, em, ed] = [etNow.getUTCFullYear(), etNow.getUTCMonth(), etNow.getUTCDate()];
+  const openUTC  = new Date(Date.UTC(ey, em, ed, 9  + utcOffset, 30, 0));
+  const closeUTC = new Date(Date.UTC(ey, em, ed, 16 + utcOffset, 0,  0));
+
+  const fmt = d => d.toLocaleTimeString("de", { hour: "2-digit", minute: "2-digit" });
+
+  const isWeekday = etDay >= 1 && etDay <= 5;
+  const isOpen    = isWeekday && etMins >= OPEN && etMins < CLOSE;
+
+  let nextLabel = null, minsUntil = null;
+  if (isWeekday) {
+    if (etMins < OPEN)        { nextLabel = "Öffnet";     minsUntil = Math.round((openUTC  - now) / 60000); }
+    else if (etMins < CLOSE)  { nextLabel = "Schließt";   minsUntil = Math.round((closeUTC - now) / 60000); }
+  }
+
+  return { isOpen, isWeekday, openTime: fmt(openUTC), closeTime: fmt(closeUTC), nextLabel, minsUntil };
+}
+
+function MarketClock() {
+  const [info, setInfo] = useState(() => getMarketInfo());
+  useEffect(() => {
+    const t = setInterval(() => setInfo(getMarketInfo()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  const { isOpen, isWeekday, openTime, closeTime, nextLabel, minsUntil } = info;
+  const hrs  = minsUntil != null ? Math.floor(minsUntil / 60) : null;
+  const mins = minsUntil != null ? minsUntil % 60 : null;
+  const countdown = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+
+  return (
+    <div className="flex items-center gap-1.5 text-[10px] shrink-0">
+      <span className={`w-1.5 h-1.5 rounded-full ${isOpen ? "bg-green-400 animate-pulse" : "bg-gray-600"}`} />
+      <span className={isOpen ? "text-green-400 font-semibold" : "text-gray-500"}>
+        {isOpen ? "Markt offen" : isWeekday ? "Markt geschlossen" : "Kein Handel"}
+      </span>
+      <span className="text-gray-700">·</span>
+      <span className="text-gray-600">{openTime}–{closeTime}</span>
+      {nextLabel && minsUntil > 0 && (
+        <span className="text-gray-600">· {nextLabel} in {countdown}</span>
+      )}
+    </div>
+  );
+}
+
 const REGIME_COLORS = {
   bull:    "bg-green-900/60 text-green-300 border-green-700",
   bear:    "bg-red-900/60 text-red-300 border-red-700",
@@ -198,6 +271,7 @@ export default function App() {
               </button>
             ))}
           </nav>
+          <MarketClock />
           <button
             onClick={handleLogout}
             className="shrink-0 text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-500 hover:text-gray-300 rounded border border-gray-700 transition"

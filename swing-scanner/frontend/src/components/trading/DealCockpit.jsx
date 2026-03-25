@@ -10,11 +10,14 @@ function parseEntryZone(low, high) {
 
 function ZoneBar({ livePrice, entryLow, entryHigh }) {
   if (!livePrice || !entryLow || !entryHigh) return null;
-  const pct = ((livePrice - entryHigh) / entryHigh) * 100;
+  const low = parseFloat(entryLow);
+  const high = parseFloat(entryHigh);
+  const pctAbove = ((livePrice - high) / high) * 100;
   let color, label;
-  if (livePrice <= entryHigh)  { color = "text-green-400"; label = "In Kaufzone ✓"; }
-  else if (pct <= 2)           { color = "text-yellow-400"; label = `+${pct.toFixed(1)}% über Zone`; }
-  else                         { color = "text-red-400";    label = `+${pct.toFixed(1)}% über Zone`; }
+  if (livePrice < low)        { color = "text-orange-400"; label = "Below Zone ⚠️"; }
+  else if (livePrice <= high) { color = "text-green-400";  label = "In Kaufzone ✓"; }
+  else if (pctAbove <= 2)     { color = "text-yellow-400"; label = `+${pctAbove.toFixed(1)}% über Zone`; }
+  else                        { color = "text-red-400";    label = `+${pctAbove.toFixed(1)}% über Zone`; }
   return (
     <div className="text-right shrink-0">
       <div className={`text-sm font-bold ${color}`}>${livePrice.toFixed(2)}</div>
@@ -47,13 +50,14 @@ function BrokerBadge({ broker }) {
 function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel }) {
   const livePrice = quotes[plan.ticker];
   const zone = parseEntryZone(plan.entry_low, plan.entry_high);
-  const inZone = livePrice && zone && livePrice <= zone.trigger;
+  const inZone    = livePrice && zone && livePrice >= zone.low && livePrice <= zone.trigger;
+  const belowZone = livePrice && zone && livePrice < zone.low;
   const execState = JSON.parse(plan.execution_state_json || "{}");
   const assignedIds = JSON.parse(plan.broker_ids_json || "[]");
   const assignedBrokers = brokers.filter(b => b.id == null || assignedIds.includes(b.id));
 
   return (
-    <div className={`p-4 border-b border-gray-800 last:border-0 transition ${inZone ? "bg-green-900/10" : ""}`}>
+    <div className={`p-4 border-b border-gray-800 last:border-0 transition ${inZone ? "bg-green-900/10" : belowZone ? "bg-orange-900/10" : ""}`}>
       {/* Row header */}
       <div className="flex items-start gap-3 flex-wrap">
         <div className="flex-1 min-w-0">
@@ -109,14 +113,17 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel }) {
                 </span>
               ) : isAlpaca ? (
                 <button
-                  onClick={() => onAlpacaBuy(plan, broker)}
+                  onClick={() => !belowZone && onAlpacaBuy(plan, broker)}
+                  title={belowZone ? "Preis unter Support — Setup ungültig" : undefined}
                   className={`text-xs px-3 py-1.5 rounded-lg border font-semibold transition ${
                     inZone
                       ? "bg-green-700 hover:bg-green-600 border-green-600 text-white"
+                      : belowZone
+                      ? "bg-orange-900/30 border-orange-700/50 text-orange-400 cursor-not-allowed"
                       : "bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-300"
                   }`}
                 >
-                  {broker.label} kaufen
+                  {belowZone ? "⚠️ Below Zone" : `${broker.label} kaufen`}
                 </button>
               ) : isTR ? (
                 <button
