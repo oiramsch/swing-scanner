@@ -9,6 +9,8 @@ import PerformanceTab from "./components/performance/PerformanceTab.jsx";
 import LoginPage from "./components/auth/LoginPage.jsx";
 import SettingsTab from "./components/settings/SettingsTab.jsx";
 import TradingCockpit from "./components/trading/TradingCockpit.jsx";
+import DealCockpit from "./components/trading/DealCockpit.jsx";
+import ResearchTab from "./components/research/ResearchTab.jsx";
 
 // Restore token from localStorage on startup
 const storedToken = localStorage.getItem("auth_token");
@@ -23,6 +25,8 @@ const TABS = [
   { id: "watchlist", label: "Watchlist" },
   { id: "history", label: "History" },
   { id: "performance", label: "Performance" },
+  { id: "research", label: "Research" },
+  { id: "deals", label: "Deals" },
   { id: "cockpit", label: "Cockpit" },
   { id: "settings", label: "Einstellungen" },
 ];
@@ -218,6 +222,8 @@ export default function App() {
         {activeTab === "watchlist" && <WatchlistTab />}
         {activeTab === "history" && <HistoryTab />}
         {activeTab === "performance" && <PerformanceTab />}
+        {activeTab === "research" && <ResearchTab />}
+        {activeTab === "deals" && <DealCockpit />}
         {activeTab === "cockpit" && <TradingCockpit />}
         {activeTab === "settings" && <SettingsTab currentUser={currentUser} onLogout={handleLogout} />}
       </main>

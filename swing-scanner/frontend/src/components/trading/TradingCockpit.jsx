@@ -2,6 +2,25 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import OrderForm from "./OrderForm.jsx";
 
+async function createPlanFromCandidate(candidate, brokerIds = []) {
+  const nums = String(candidate.entry_zone || "").match(/[\d.]+/g)?.map(Number) ?? [];
+  const entryHigh = nums.length > 0 ? Math.max(...nums) : null;
+  const entryLow  = nums.length > 1 ? Math.min(...nums) : entryHigh;
+  if (!entryHigh) throw new Error("Keine Entry-Zone");
+  await axios.post("/api/trade-plans", {
+    ticker:          candidate.ticker,
+    entry_low:       entryLow,
+    entry_high:      entryHigh,
+    stop_loss:       parseFloat(candidate.stop_loss),
+    target:          candidate.target ? parseFloat(candidate.target) : null,
+    strategy_module: candidate.strategy_module,
+    setup_type:      candidate.setup_type,
+    scan_result_id:  candidate.id,
+    broker_ids:      brokerIds,
+    risk_pct:        1.0,
+  });
+}
+
 function parseEntryZone(entryZone) {
   if (!entryZone) return null;
   const nums = String(entryZone).match(/[\d.]+/g)?.map(Number) ?? [];
@@ -72,7 +91,9 @@ export default function TradingCockpit() {
   const [candidates, setCandidates] = useState([]);
   const [quotes,     setQuotes]     = useState({});
   const [orders,     setOrders]     = useState([]);
-  const [orderTarget, setOrderTarget] = useState(null);   // candidate to buy
+  const [orderTarget, setOrderTarget] = useState(null);
+  const [planCreating, setPlanCreating] = useState(null); // ticker being planned
+  const [planDone,    setPlanDone]    = useState({});      // { ticker: true }
   const [loading,    setLoading]    = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
   const pollRef = useRef(null);
@@ -236,16 +257,38 @@ export default function TradingCockpit() {
 
                   <PriceIndicator livePrice={livePrice} entryZone={c.entry_zone} />
 
-                  <button
-                    onClick={() => setOrderTarget(c)}
-                    className={`shrink-0 px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
-                      inZone
-                        ? "bg-green-700 hover:bg-green-600 border-green-600 text-white"
-                        : "bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-300"
-                    }`}
-                  >
-                    Kaufen
-                  </button>
+                  <div className="flex gap-1.5 shrink-0">
+                    <button
+                      onClick={() => setOrderTarget(c)}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
+                        inZone
+                          ? "bg-green-700 hover:bg-green-600 border-green-600 text-white"
+                          : "bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-300"
+                      }`}
+                    >
+                      Kaufen
+                    </button>
+                    {planDone[c.ticker] ? (
+                      <span className="px-2.5 py-1.5 text-xs rounded-lg bg-indigo-900/20 border border-indigo-700/30 text-indigo-400">
+                        ✓ Plan
+                      </span>
+                    ) : (
+                      <button
+                        disabled={planCreating === c.ticker}
+                        onClick={async () => {
+                          setPlanCreating(c.ticker);
+                          try {
+                            await createPlanFromCandidate(c);
+                            setPlanDone(prev => ({ ...prev, [c.ticker]: true }));
+                          } catch {}
+                          setPlanCreating(null);
+                        }}
+                        className="px-2.5 py-1.5 text-xs rounded-lg border border-indigo-700/40 bg-indigo-900/10 hover:bg-indigo-900/30 text-indigo-400 transition disabled:opacity-50"
+                      >
+                        {planCreating === c.ticker ? "…" : "+ Plan"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}

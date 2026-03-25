@@ -86,6 +86,9 @@ def _apply_migrations():
         ("predictionarchive", "tenant_id", "INTEGER DEFAULT 1"),
         ("scanfunnel",        "tenant_id", "INTEGER DEFAULT 1"),
         ("marketupdate",      "tenant_id", "INTEGER DEFAULT 1"),
+        # v2.5 — BrokerConnection manual balance (for TR and other manual brokers)
+        ("brokerconnection", "manual_balance",  "REAL"),
+        ("brokerconnection", "manual_currency", "TEXT DEFAULT 'EUR'"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -684,8 +687,58 @@ class BrokerConnection(SQLModel, table=True):
     base_url: str = "https://paper-api.alpaca.markets"
     supports_short_selling: bool = False
     is_active: bool = True
+    # For manual brokers (e.g. Trade Republic): user-entered account balance
+    manual_balance: Optional[float] = None
+    manual_currency: str = "EUR"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Multi-Broker OMS — Trade Plan
+# ---------------------------------------------------------------------------
+
+class TradePlan(SQLModel, table=True):
+    """
+    Broker-agnostic trade plan. Created from a scanner candidate or manually.
+    Execution is dispatched to one or more BrokerConnectors.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: int = Field(default=1, index=True)
+
+    # Source
+    scan_result_id: Optional[int] = None      # FK to ScanResult (if from scanner)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Instrument
+    ticker: str
+    isin: Optional[str] = None
+
+    # Trade parameters (always in USD)
+    entry_low: float                           # lower bound of entry zone
+    entry_high: float                          # upper bound / trigger price
+    stop_loss: float
+    target: Optional[float] = None
+
+    # Risk
+    risk_pct: float = 1.0                      # % of account to risk per broker
+
+    # Broker assignments — JSON list of BrokerConnection IDs
+    # e.g. "[1, 2]" means execute on broker 1 (Alpaca) and broker 2 (TR)
+    broker_ids_json: str = "[]"
+
+    # Execution state per broker — JSON dict {broker_id: status}
+    # e.g. '{"1": "executed", "2": "pending"}'
+    execution_state_json: str = "{}"
+
+    # Plan status
+    status: str = "pending"                    # pending | active | partial | done | cancelled
+
+    # Context from scanner
+    strategy_module: Optional[str] = None
+    setup_type: Optional[str] = None
+    notes: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1459,3 +1512,78 @@ def get_broker_credentials(tenant_id: int = 1) -> dict:
         "supports_short_selling": False,
         "source": "env",
     }
+
+
+# ---------------------------------------------------------------------------
+# TradePlan CRUD
+# ---------------------------------------------------------------------------
+
+def get_all_broker_connections(tenant_id: int = 1) -> list[BrokerConnection]:
+    with Session(get_engine()) as session:
+        return list(session.exec(
+            select(BrokerConnection)
+            .where(BrokerConnection.tenant_id == tenant_id)
+            .where(BrokerConnection.is_active == True)
+        ).all())
+
+
+def save_trade_plan(plan: TradePlan) -> TradePlan:
+    with Session(get_engine()) as session:
+        session.add(plan)
+        session.commit()
+        session.refresh(plan)
+        return plan
+
+
+def get_trade_plan(plan_id: int) -> Optional[TradePlan]:
+    with Session(get_engine()) as session:
+        return session.get(TradePlan, plan_id)
+
+
+def get_active_trade_plans(tenant_id: int = 1) -> list[TradePlan]:
+    with Session(get_engine()) as session:
+        return list(session.exec(
+            select(TradePlan)
+            .where(TradePlan.tenant_id == tenant_id)
+            .where(TradePlan.status.in_(["pending", "active", "partial"]))
+            .order_by(TradePlan.created_at.desc())
+        ).all())
+
+
+def get_all_trade_plans(tenant_id: int = 1, limit: int = 50) -> list[TradePlan]:
+    with Session(get_engine()) as session:
+        return list(session.exec(
+            select(TradePlan)
+            .where(TradePlan.tenant_id == tenant_id)
+            .order_by(TradePlan.created_at.desc())
+            .limit(limit)
+        ).all())
+
+
+def update_trade_plan(plan_id: int, data: dict) -> Optional[TradePlan]:
+    with Session(get_engine()) as session:
+        plan = session.get(TradePlan, plan_id)
+        if not plan:
+            return None
+        for k, v in data.items():
+            if hasattr(plan, k):
+                setattr(plan, k, v)
+        plan.updated_at = datetime.utcnow()
+        session.add(plan)
+        session.commit()
+        session.refresh(plan)
+        return plan
+
+
+def update_broker_manual_balance(broker_id: int, balance: float, currency: str = "EUR") -> Optional[BrokerConnection]:
+    with Session(get_engine()) as session:
+        conn = session.get(BrokerConnection, broker_id)
+        if not conn:
+            return None
+        conn.manual_balance = balance
+        conn.manual_currency = currency
+        conn.updated_at = datetime.utcnow()
+        session.add(conn)
+        session.commit()
+        session.refresh(conn)
+        return conn

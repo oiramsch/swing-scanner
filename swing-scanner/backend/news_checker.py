@@ -62,8 +62,9 @@ async def get_ticker_news(ticker: str) -> list[dict]:
 
 async def get_earnings_dates(ticker: str, headlines: list[dict]) -> dict:
     """
-    Determine if there were recent (last 3 days) or upcoming (next 5 days) earnings.
-    Uses headline keyword detection as primary method (no extra API call needed).
+    Determine if there were recent (last 3 days) or upcoming (next 7 days) earnings.
+    Primary: yfinance calendar for upcoming dates.
+    Fallback: headline keyword detection for recent earnings.
     """
     earnings_keywords = [
         "earnings", "quarterly results", "q1", "q2", "q3", "q4",
@@ -71,11 +72,13 @@ async def get_earnings_dates(ticker: str, headlines: list[dict]) -> dict:
     ]
     today = date.today()
     recent_cutoff = today - timedelta(days=3)
-    upcoming_cutoff = today + timedelta(days=5)
+    upcoming_cutoff = today + timedelta(days=7)
 
     has_recent = False
     has_upcoming = False
+    next_date = None
 
+    # Headline-based recent detection
     for h in headlines:
         title_lower = h.get("title", "").lower()
         pub_date_str = h.get("published_utc", "")[:10]
@@ -87,12 +90,34 @@ async def get_earnings_dates(ticker: str, headlines: list[dict]) -> dict:
             except Exception:
                 pass
 
-    # Also check Polygon earnings endpoint (vX/reference/financials is premium)
-    # We fall back to headline-based detection only
+    # yfinance calendar for upcoming earnings date
+    try:
+        import yfinance as yf
+        loop = asyncio.get_event_loop()
+        cal = await loop.run_in_executor(None, lambda: yf.Ticker(ticker).calendar)
+        if cal:
+            earnings_dates = cal.get("Earnings Date") or []
+            if not isinstance(earnings_dates, list):
+                earnings_dates = [earnings_dates]
+            for ed in earnings_dates:
+                try:
+                    ed_date = ed.date() if hasattr(ed, "date") else date.fromisoformat(str(ed)[:10])
+                    if ed_date < today:
+                        continue
+                    if next_date is None or ed_date < date.fromisoformat(next_date):
+                        next_date = ed_date.isoformat()
+                    if ed_date <= upcoming_cutoff:
+                        has_upcoming = True
+                        break
+                except Exception:
+                    continue
+    except Exception as exc:
+        logger.debug("yfinance calendar lookup failed for %s: %s", ticker, exc)
+
     return {
         "recent": has_recent,
         "upcoming": has_upcoming,
-        "next_date": None,
+        "next_date": next_date,
     }
 
 
@@ -100,9 +125,23 @@ async def get_earnings_dates(ticker: str, headlines: list[dict]) -> dict:
 # Corporate action detection via Claude Haiku
 # ---------------------------------------------------------------------------
 
-def detect_corporate_action(headlines: list[str]) -> dict:
+def _filter_attributed_headlines(ticker: str, headlines: list[str]) -> list[str]:
+    """
+    Keep only headlines where the ticker symbol appears explicitly as a word.
+    This prevents sector/market news (e.g. 'Meta lawsuits', 'BP charges') from
+    being used to invalidate an unrelated stock.
+    Falls back to all headlines if none match, so Haiku can still see context —
+    but the prompt then instructs strict attribution.
+    """
+    pattern = re.compile(r'\b' + re.escape(ticker.upper()) + r'\b')
+    attributed = [h for h in headlines if pattern.search(h.upper())]
+    return attributed if attributed else headlines
+
+
+def detect_corporate_action(ticker: str, headlines: list[str]) -> dict:
     """
     Send headlines to Claude Haiku to detect corporate actions.
+    ticker is passed explicitly so the prompt can enforce strict attribution.
     Very cheap: ~$0.0001 per call.
     """
     if not headlines or not settings.anthropic_api_key:
@@ -115,15 +154,21 @@ def detect_corporate_action(headlines: list[str]) -> dict:
         }
 
     headlines_text = "\n".join(f"- {h}" for h in headlines[:5])
-    prompt = f"""Analyze these news headlines for a stock.
-Detect if any headline mentions:
+    prompt = f"""You are analyzing news headlines to detect corporate actions for the stock ticker {ticker}.
+
+CRITICAL ATTRIBUTION RULE: You may ONLY flag a corporate action if the headline explicitly names {ticker} as the subject company.
+- If a headline is about a different company (e.g. Meta, BP, Apple) → has_corporate_action MUST be false.
+- If a headline is general market news, sector news, or an index summary → has_corporate_action MUST be false.
+- Do NOT infer or assume that industry news affects {ticker} unless {ticker} is explicitly named.
+
+Detect corporate actions ONLY for {ticker}:
 - Earnings report / quarterly results
 - Stock buyback / tender offer / share repurchase
 - Merger, acquisition, or takeover
 - Stock split or reverse split
 - Dividend announcement
 - FDA approval/rejection (for biotech)
-- Major legal action or SEC investigation
+- Major legal action or SEC investigation directly naming {ticker}
 
 Headlines:
 {headlines_text}
@@ -132,9 +177,9 @@ Respond ONLY with JSON:
 {{
   "has_corporate_action": false,
   "action_type": "buyback|merger|earnings|split|dividend|fda|legal|none",
-  "action_description": "One sentence summary or null",
+  "action_description": "One sentence summary mentioning {ticker} explicitly, or null",
   "invalidates_technicals": false,
-  "warning_message": "Brief trader warning or null"
+  "warning_message": "Brief trader warning for {ticker} only, or null"
 }}"""
 
     try:
@@ -286,10 +331,14 @@ async def run_full_news_check(ticker: str, df: Optional[pd.DataFrame]) -> dict:
     # 2. Earnings check from headlines
     earnings = await get_earnings_dates(ticker, news_items)
 
-    # 3. Corporate action via Haiku (sync call, cheap)
-    corp = detect_corporate_action(headlines)
+    # 3. Pre-filter: only headlines that explicitly name this ticker
+    attributed_headlines = _filter_attributed_headlines(ticker, headlines)
+    logger.debug("%s: %d headlines total, %d attributed", ticker, len(headlines), len(attributed_headlines))
 
-    # 4. Gap detection from OHLCV
+    # 4. Corporate action via Haiku — uses attributed headlines + strict prompt
+    corp = detect_corporate_action(ticker, attributed_headlines)
+
+    # 5. Gap detection from OHLCV
     gap = detect_gap(df)
 
     # Determine overall sentiment

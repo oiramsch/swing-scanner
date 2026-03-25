@@ -43,11 +43,19 @@ export default function OrderForm({ candidate: c, onClose, onSuccess }) {
   const [submitting,  setSubmitting]  = useState(false);
   const [result,      setResult]      = useState(null);
   const [error,       setError]       = useState(null);
+  const [earningsInfo, setEarningsInfo] = useState(null);
   const pollRef = useRef(null);
 
   useEffect(() => {
     axios.get("/api/orders/account").then(r => setAccount(r.data)).catch(() => {});
     fetchPrice();
+    // Upcoming earnings date
+    axios.get(`/api/research/${c.ticker}`)
+      .then(r => setEarningsInfo({ next: r.data.next_earnings, days: r.data.earnings_in_days }))
+      .catch(() => {
+        // Fallback: use flag from scan result if research call fails
+        if (c.has_earnings_upcoming) setEarningsInfo({ next: null, days: null });
+      });
     // Refresh price every 5s while modal is open
     pollRef.current = setInterval(fetchPrice, 5000);
     return () => clearInterval(pollRef.current);
@@ -148,6 +156,24 @@ export default function OrderForm({ candidate: c, onClose, onSuccess }) {
         {account && (
           <div className="text-xs text-gray-400">
             Kaufkraft: <strong className="text-white">${account.buying_power.toLocaleString("en", { maximumFractionDigits: 0 })}</strong>
+          </div>
+        )}
+
+        {/* Earnings Warning */}
+        {earningsInfo && earningsInfo.days !== null && earningsInfo.days <= 7 && (
+          <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-orange-900/20 border border-orange-700/50 text-orange-300 text-xs">
+            <span className="text-base leading-none mt-0.5">⚠️</span>
+            <div>
+              <span className="font-semibold">Earnings in {earningsInfo.days === 0 ? "heute" : `${earningsInfo.days} Tag${earningsInfo.days === 1 ? "" : "en"}`}</span>
+              {earningsInfo.next && <span className="text-orange-400/70 ml-1">({earningsInfo.next})</span>}
+              <span className="block text-orange-400/60 mt-0.5">Erhöhtes Gap-Risiko — Position erst nach Earnings sinnvoll.</span>
+            </div>
+          </div>
+        )}
+        {earningsInfo && earningsInfo.days === null && (c.has_earnings_upcoming) && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-900/20 border border-orange-700/50 text-orange-300 text-xs">
+            <span>⚠️</span>
+            <span>Earnings in Kürze erwartet — Risiko prüfen.</span>
           </div>
         )}
 

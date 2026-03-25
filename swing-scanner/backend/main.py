@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.auth import AuthenticatedUser, authenticate_user, create_access_token, get_current_user
+from backend.config import settings
 from backend.database import (
     FilterProfile,
     JournalEntry,
@@ -59,6 +60,16 @@ from backend.database import (
     update_module,
     update_position,
     upsert_broker_connection,
+)
+from backend.database import (
+    TradePlan,
+    get_active_trade_plans,
+    get_all_trade_plans,
+    get_trade_plan,
+    save_trade_plan,
+    update_trade_plan,
+    get_all_broker_connections,
+    update_broker_manual_balance,
 )
 from backend.journal import create_journal_entry, get_journal_stats, update_lesson
 from backend.performance import (
@@ -1213,6 +1224,416 @@ async def get_alpaca_positions(current_user: AuthenticatedUser = Depends(get_cur
         return _get_positions(creds)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Research Endpoint (yfinance — BigData.com als Drop-in geplant)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/research/{ticker}")
+async def research_ticker(
+    ticker: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Return fundamentals, performance, earnings date and news for a ticker.
+    Data source: yfinance (free). BigData.com integration planned as Phase 2.
+    """
+    import asyncio
+    import yfinance as yf
+    import pandas as pd
+
+    sym = ticker.upper().strip()
+
+    def _fetch():
+        t = yf.Ticker(sym)
+        info = {}
+        hist = None
+        cal = {}
+        news = []
+        try:
+            info = t.info or {}
+        except Exception:
+            pass
+        try:
+            hist = t.history(period="1y")
+        except Exception:
+            pass
+        try:
+            cal = t.calendar or {}
+        except Exception:
+            pass
+        try:
+            news = t.news or []
+        except Exception:
+            pass
+        return info, hist, cal, news
+
+    loop = asyncio.get_event_loop()
+    try:
+        info, hist, cal, news = await loop.run_in_executor(None, _fetch)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Ticker nicht gefunden: {exc}")
+
+    if not info:
+        raise HTTPException(status_code=404, detail=f"Keine Daten für {sym}")
+
+    # --- Price performance ---
+    perf: dict = {}
+    if hist is not None and not hist.empty:
+        close = hist["Close"]
+        # Strip timezone for date comparison
+        idx = close.index
+        if idx.tz is not None:
+            idx = idx.tz_localize(None)
+        close.index = idx
+
+        current_price = float(close.iloc[-1])
+        now = pd.Timestamp.now()
+
+        def _pct(days_ago):
+            past = close[close.index <= now - pd.Timedelta(days=days_ago)]
+            if past.empty:
+                return None
+            old = float(past.iloc[-1])
+            return round((current_price - old) / old * 100, 2) if old else None
+
+        ytd_start = pd.Timestamp(now.year, 1, 1)
+        ytd_past = close[close.index <= ytd_start]
+        ytd_old = float(ytd_past.iloc[-1]) if not ytd_past.empty else None
+
+        perf = {
+            "current": round(current_price, 2),
+            "change_1m": _pct(30),
+            "change_3m": _pct(90),
+            "change_6m": _pct(180),
+            "change_ytd": round((current_price - ytd_old) / ytd_old * 100, 2) if ytd_old else None,
+            "change_1y": _pct(365),
+        }
+
+    # --- Next earnings date ---
+    next_earnings = None
+    earnings_in_days = None
+    try:
+        from datetime import date as _date
+        today = _date.today()
+        earnings_dates = cal.get("Earnings Date") or []
+        if not isinstance(earnings_dates, list):
+            earnings_dates = [earnings_dates]
+        for ed in earnings_dates:
+            ed_date = ed.date() if hasattr(ed, "date") else _date.fromisoformat(str(ed)[:10])
+            if ed_date >= today:
+                next_earnings = ed_date.isoformat()
+                earnings_in_days = (ed_date - today).days
+                break
+    except Exception:
+        pass
+
+    # --- News ---
+    news_items = []
+    for n in (news or [])[:8]:
+        title = (n.get("title") or "").strip()
+        if not title:
+            continue
+        pub_ts = n.get("providerPublishTime")
+        news_items.append({
+            "title": title,
+            "publisher": n.get("publisher", ""),
+            "link": n.get("link", ""),
+            "published_ts": pub_ts,
+        })
+
+    # --- Market cap formatting ---
+    def _fmt_cap(v):
+        if not v:
+            return None
+        if v >= 1e12:
+            return f"${v / 1e12:.2f}T"
+        if v >= 1e9:
+            return f"${v / 1e9:.1f}B"
+        return f"${v / 1e6:.0f}M"
+
+    return {
+        "ticker": sym,
+        "name": info.get("longName") or info.get("shortName"),
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+        "country": info.get("country"),
+        "exchange": info.get("exchange"),
+        "website": info.get("website"),
+        "employees": info.get("fullTimeEmployees"),
+        "description": (info.get("longBusinessSummary") or "")[:700],
+        "market_cap": _fmt_cap(info.get("marketCap")),
+        "pe_ratio": round(float(info["trailingPE"]), 1) if info.get("trailingPE") else None,
+        "forward_pe": round(float(info["forwardPE"]), 1) if info.get("forwardPE") else None,
+        "beta": round(float(info["beta"]), 2) if info.get("beta") else None,
+        "dividend_yield": round(float(info["dividendYield"]) * 100, 2) if info.get("dividendYield") else None,
+        "w52_high": info.get("fiftyTwoWeekHigh"),
+        "w52_low": info.get("fiftyTwoWeekLow"),
+        "avg_volume": info.get("averageVolume"),
+        "float_shares": info.get("floatShares"),
+        "short_float": round(float(info["shortPercentOfFloat"]) * 100, 1) if info.get("shortPercentOfFloat") else None,
+        "next_earnings": next_earnings,
+        "earnings_in_days": earnings_in_days,
+        "performance": perf,
+        "news": news_items,
+        "bigdata_available": False,  # Phase 2: BigData.com drop-in
+    }
+
+
+# ---------------------------------------------------------------------------
+# Multi-Broker OMS — Trade Plans
+# ---------------------------------------------------------------------------
+
+@app.get("/api/trade-plans")
+async def list_trade_plans(
+    active_only: bool = True,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    plans = get_active_trade_plans(current_user.tenant_id) if active_only \
+            else get_all_trade_plans(current_user.tenant_id)
+    return [p.model_dump() for p in plans]
+
+
+@app.post("/api/trade-plans")
+async def create_trade_plan(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    from datetime import datetime as _dt
+    plan = TradePlan(
+        tenant_id=current_user.tenant_id,
+        ticker=data["ticker"].upper(),
+        isin=data.get("isin"),
+        entry_low=float(data["entry_low"]),
+        entry_high=float(data["entry_high"]),
+        stop_loss=float(data["stop_loss"]),
+        target=float(data["target"]) if data.get("target") else None,
+        risk_pct=float(data.get("risk_pct", 1.0)),
+        broker_ids_json=json.dumps(data.get("broker_ids", [])),
+        status="pending",
+        strategy_module=data.get("strategy_module"),
+        setup_type=data.get("setup_type"),
+        notes=data.get("notes"),
+        scan_result_id=data.get("scan_result_id"),
+        created_at=_dt.utcnow(),
+        updated_at=_dt.utcnow(),
+    )
+    saved = save_trade_plan(plan)
+    return saved.model_dump()
+
+
+@app.get("/api/trade-plans/{plan_id}")
+async def get_trade_plan_endpoint(
+    plan_id: int,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    plan = get_trade_plan(plan_id)
+    if not plan or plan.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Trade Plan nicht gefunden")
+    return plan.model_dump()
+
+
+@app.put("/api/trade-plans/{plan_id}")
+async def update_trade_plan_endpoint(
+    plan_id: int,
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    plan = get_trade_plan(plan_id)
+    if not plan or plan.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Trade Plan nicht gefunden")
+    updated = update_trade_plan(plan_id, data)
+    return updated.model_dump()
+
+
+@app.delete("/api/trade-plans/{plan_id}")
+async def cancel_trade_plan(
+    plan_id: int,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    plan = get_trade_plan(plan_id)
+    if not plan or plan.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Trade Plan nicht gefunden")
+    update_trade_plan(plan_id, {"status": "cancelled"})
+    return {"status": "cancelled"}
+
+
+@app.post("/api/trade-plans/{plan_id}/execute/{broker_id}")
+async def execute_trade_plan(
+    plan_id: int,
+    broker_id: int,
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Execute a trade plan on a specific broker.
+    data must include: qty (int)
+    """
+    from backend.brokers import get_connector
+
+    plan = get_trade_plan(plan_id)
+    if not plan or plan.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Trade Plan nicht gefunden")
+
+    # Load broker connection
+    connections = get_all_broker_connections(current_user.tenant_id)
+    conn = next((c for c in connections if c.id == broker_id), None)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Broker nicht gefunden")
+
+    connector = get_connector(conn.model_dump())
+    if not connector.supports_auto_trade():
+        raise HTTPException(
+            status_code=400,
+            detail=f"{conn.label} unterstützt kein automatisches Trading. Bitte manuell ausführen."
+        )
+
+    plan_dict = {
+        "ticker": plan.ticker,
+        "isin": plan.isin,
+        "entry_high": plan.entry_high,
+        "stop_loss": plan.stop_loss,
+        "target": plan.target,
+        "qty": int(data.get("qty", 1)),
+    }
+
+    try:
+        result = connector.place_order(plan_dict)
+        # Update execution state
+        exec_state = json.loads(plan.execution_state_json or "{}")
+        exec_state[str(broker_id)] = "executed"
+        update_trade_plan(plan_id, {
+            "execution_state_json": json.dumps(exec_state),
+            "status": "active",
+        })
+        return {"order": result, "broker": conn.label}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/trade-plans/{plan_id}/checklist/{broker_id}")
+async def get_trade_plan_checklist(
+    plan_id: int,
+    broker_id: int,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Return EUR-converted execution checklist for a manual broker."""
+    from backend.brokers import get_connector
+    import asyncio
+
+    plan = get_trade_plan(plan_id)
+    if not plan or plan.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Trade Plan nicht gefunden")
+
+    connections = get_all_broker_connections(current_user.tenant_id)
+    conn = next((c for c in connections if c.id == broker_id), None)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Broker nicht gefunden")
+
+    connector = get_connector(conn.model_dump())
+
+    # Calculate qty from risk
+    try:
+        balance = connector.get_balance()
+        buying_power = balance.get("buying_power", 0)
+        risk_amount = buying_power * (plan.risk_pct / 100)
+        risk_per_share = plan.entry_high - plan.stop_loss
+        qty = max(1, int(risk_amount / risk_per_share)) if risk_per_share > 0 else 1
+    except Exception:
+        qty = 1
+
+    plan_dict = {
+        "ticker": plan.ticker,
+        "isin": plan.isin,
+        "entry_low": plan.entry_low,
+        "entry_high": plan.entry_high,
+        "stop_loss": plan.stop_loss,
+        "target": plan.target,
+        "qty": qty,
+    }
+
+    if hasattr(connector, "get_checklist_data"):
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, lambda: connector.get_checklist_data(plan_dict))
+        return result
+
+    return {"steps": connector.get_execution_checklist(plan_dict), "qty": qty}
+
+
+# ---------------------------------------------------------------------------
+# Broker Registry
+# ---------------------------------------------------------------------------
+
+@app.get("/api/brokers")
+async def list_brokers(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """List all configured brokers with current balances."""
+    import asyncio
+    from backend.brokers import get_connector
+
+    connections = get_all_broker_connections(current_user.tenant_id)
+    result = []
+
+    async def _get_balance(conn):
+        try:
+            connector = get_connector(conn.model_dump())
+            loop = asyncio.get_event_loop()
+            balance = await loop.run_in_executor(None, connector.get_balance)
+            return {**conn.model_dump(), "balance": balance, "error": None}
+        except Exception as exc:
+            return {**conn.model_dump(), "balance": None, "error": str(exc)}
+
+    results = await asyncio.gather(*[_get_balance(c) for c in connections], return_exceptions=True)
+    for r in results:
+        if isinstance(r, dict):
+            result.append(r)
+
+    # Always include Alpaca fallback from .env if no DB connections exist
+    if not result:
+        try:
+            from backend.database import get_broker_credentials
+            creds = get_broker_credentials(current_user.tenant_id)
+            from backend.brokers import AlpacaConnector
+            connector = AlpacaConnector(creds)
+            loop = asyncio.get_event_loop()
+            balance = await loop.run_in_executor(None, connector.get_balance)
+            result.append({
+                "id": None,
+                "broker_type": "alpaca",
+                "label": "Alpaca (env)",
+                "is_paper": creds.get("is_paper", True),
+                "balance": balance,
+                "error": None,
+            })
+        except Exception as exc:
+            result.append({
+                "id": None,
+                "broker_type": "alpaca",
+                "label": "Alpaca (env)",
+                "balance": None,
+                "error": str(exc),
+            })
+
+    return result
+
+
+@app.post("/api/brokers/{broker_id}/balance")
+async def update_manual_balance(
+    broker_id: int,
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Update manual account balance for TR and other manual brokers."""
+    conn = update_broker_manual_balance(
+        broker_id,
+        balance=float(data["balance"]),
+        currency=data.get("currency", "EUR"),
+    )
+    if not conn:
+        raise HTTPException(status_code=404, detail="Broker nicht gefunden")
+    return conn.model_dump()
 
 
 @app.post("/api/orders/sell")
