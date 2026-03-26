@@ -123,6 +123,14 @@ def _classify_candidate(analysis: dict, ticker: str, module: Optional[str]) -> s
         )
         return "filtered_avoid"
 
+    # Fix D: technicals invalidated by news/corporate-action → never show as active
+    if not analysis.get("technical_setup_valid", True):
+        logger.info(
+            "[Fix-D] %s → filtered_avoid (technicals_invalid) [module=%s]",
+            ticker, module,
+        )
+        return "filtered_avoid"
+
     return "active"
 
 

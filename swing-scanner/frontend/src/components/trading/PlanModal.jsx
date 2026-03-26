@@ -100,8 +100,17 @@ function PositionSizer({ entryHigh, stopLoss, target, riskPct, brokers, selected
   );
 }
 
+// Broker types that support short selling
+const SHORT_CAPABLE_TYPES = ["alpaca"];
+
 export default function PlanModal({ candidate, onClose, onSaved }) {
   const ez = parseEntryZone(candidate.entry_zone);
+
+  // Detect short setup from candidate
+  const entryNum  = parseFloat(ez.high || ez.low);
+  const targetNum = candidate.target ? parseFloat(candidate.target) : null;
+  const isShort = candidate.candidate_status === "direction_mismatch" ||
+    (!isNaN(entryNum) && targetNum !== null && targetNum < entryNum);
 
   const [entryLow,  setEntryLow]  = useState(ez.low);
   const [entryHigh, setEntryHigh] = useState(ez.high);
@@ -131,17 +140,27 @@ export default function PlanModal({ candidate, onClose, onSaved }) {
 
   const entryF = parseFloat(entryHigh);
   const stopF  = parseFloat(stopLoss);
-  const stopAboveEntry = !isNaN(entryF) && !isNaN(stopF) && stopF >= entryF;
+  // For long: stop must be below entry. For short: stop must be above entry.
+  const stopInvalid = isShort
+    ? (!isNaN(entryF) && !isNaN(stopF) && stopF <= entryF)
+    : (!isNaN(entryF) && !isNaN(stopF) && stopF >= entryF);
 
   const crv = useMemo(() => {
     const e = parseFloat(entryHigh);
     const s = parseFloat(stopLoss);
     const t = parseFloat(target);
-    if (!isNaN(e) && !isNaN(s) && !isNaN(t) && s < e && t > e) {
-      return ((t - e) / (e - s)).toFixed(1);
+    if (isShort) {
+      // Short CRV: reward = entry - target, risk = stop - entry
+      if (!isNaN(e) && !isNaN(s) && !isNaN(t) && s > e && t < e) {
+        return ((e - t) / (s - e)).toFixed(1);
+      }
+    } else {
+      if (!isNaN(e) && !isNaN(s) && !isNaN(t) && s < e && t > e) {
+        return ((t - e) / (e - s)).toFixed(1);
+      }
     }
     return null;
-  }, [entryHigh, stopLoss, target]);
+  }, [entryHigh, stopLoss, target, isShort]);
 
   async function handleSave() {
     setError(null);
@@ -152,8 +171,11 @@ export default function PlanModal({ candidate, onClose, onSaved }) {
       setError("Entry und Stop Loss müssen ausgefüllt sein.");
       return;
     }
-    if (sl >= eh) {
-      setError("Stop Loss muss unter dem Entry liegen.");
+    if (isShort ? sl <= eh : sl >= eh) {
+      setError(isShort
+        ? "Short-Setup: Stop Loss muss ÜBER dem Entry liegen."
+        : "Stop Loss muss unter dem Entry liegen."
+      );
       return;
     }
     setSaving(true);
@@ -212,6 +234,18 @@ export default function PlanModal({ candidate, onClose, onSaved }) {
         </div>
 
         <div className="overflow-y-auto p-4 space-y-4">
+          {/* Short-Setup Warning */}
+          {isShort && (
+            <div className="bg-orange-900/30 border border-orange-700/50 rounded-lg px-3 py-2 flex items-start gap-2">
+              <span className="text-orange-400 shrink-0">⚠</span>
+              <div className="text-xs text-orange-300">
+                <span className="font-semibold">Short-Setup</span> — Entry/Stop/Target sind für eine Short-Position.
+                Stop muss <em>über</em> dem Entry liegen, Target <em>unter</em> dem Entry.
+                Nur mit Brokern möglich, die Short-Selling unterstützen.
+              </div>
+            </div>
+          )}
+
           {/* Entry Zone */}
           <div>
             <div className="text-xs text-gray-400 mb-1.5 font-medium">Entry Zone</div>
@@ -243,11 +277,13 @@ export default function PlanModal({ candidate, onClose, onSaved }) {
                 type="number" step="0.01" value={stopLoss}
                 onChange={e => setStopLoss(e.target.value)}
                 className={`w-full bg-gray-800 border rounded px-2 py-1.5 text-sm text-white focus:outline-none transition ${
-                  stopAboveEntry ? "border-red-500/80 focus:border-red-400" : "border-gray-700 focus:border-indigo-500"
+                  stopInvalid ? "border-red-500/80 focus:border-red-400" : "border-gray-700 focus:border-indigo-500"
                 }`}
               />
-              {stopAboveEntry && (
-                <p className="text-[10px] text-red-400 mt-0.5">Stop ≥ Entry — ungültig</p>
+              {stopInvalid && (
+                <p className="text-[10px] text-red-400 mt-0.5">
+                  {isShort ? "Stop ≤ Entry — bei Short muss Stop über Entry liegen" : "Stop ≥ Entry — ungültig"}
+                </p>
               )}
             </div>
             <div>
@@ -289,21 +325,27 @@ export default function PlanModal({ candidate, onClose, onSaved }) {
             <div>
               <div className="text-xs text-gray-400 mb-1.5 font-medium">Broker</div>
               <div className="space-y-1.5">
-                {brokers.map(b => (
-                  <label key={b.id} className="flex items-center gap-2 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={selectedBrokers.includes(b.id)}
-                      onChange={() => toggleBroker(b.id)}
-                      className="accent-indigo-500"
-                    />
-                    <span className="text-sm text-gray-300 group-hover:text-white transition">
-                      {b.label}
-                    </span>
-                    <span className="text-[10px] text-gray-600 capitalize">{b.broker_type}</span>
-                    {b.is_paper && <span className="text-[10px] text-yellow-600 border border-yellow-800/40 px-1 rounded">Paper</span>}
-                  </label>
-                ))}
+                {brokers.map(b => {
+                  const canShort = SHORT_CAPABLE_TYPES.includes(b.broker_type);
+                  const disabledForShort = isShort && !canShort;
+                  return (
+                    <label key={b.id} className={`flex items-center gap-2 ${disabledForShort ? "opacity-40 cursor-not-allowed" : "cursor-pointer group"}`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedBrokers.includes(b.id)}
+                        onChange={() => !disabledForShort && toggleBroker(b.id)}
+                        disabled={disabledForShort}
+                        className="accent-indigo-500"
+                      />
+                      <span className={`text-sm transition ${disabledForShort ? "text-gray-600" : "text-gray-300 group-hover:text-white"}`}>
+                        {b.label}
+                      </span>
+                      <span className="text-[10px] text-gray-600 capitalize">{b.broker_type}</span>
+                      {b.is_paper && <span className="text-[10px] text-yellow-600 border border-yellow-800/40 px-1 rounded">Paper</span>}
+                      {disabledForShort && <span className="text-[10px] text-gray-600 border border-gray-700 px-1 rounded">Kein Short</span>}
+                    </label>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -335,7 +377,7 @@ export default function PlanModal({ candidate, onClose, onSaved }) {
           </button>
           <button
             onClick={handleSave}
-            disabled={saving || stopAboveEntry}
+            disabled={saving || stopInvalid}
             className="flex-1 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium transition disabled:opacity-50"
           >
             {saving ? "Speichern…" : "Plan erstellen →  Deal Cockpit"}

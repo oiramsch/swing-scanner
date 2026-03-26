@@ -148,6 +148,12 @@ export default function CandidateCard({ candidate: c }) {
   // Dim cards with invalidated technicals (unless user overrides)
   const isDimmed = isInvalidated && !showDimmed;
 
+  // Short-setup detection: direction_mismatch status OR target < entry
+  const entryNum = c.entry_zone ? parseFloat(String(c.entry_zone).match(/[\d.]+/)?.[0] || "0") : null;
+  const targetNum = c.target ? parseFloat(c.target) : null;
+  const isShort = c.candidate_status === "direction_mismatch" ||
+    (entryNum && targetNum && targetNum < entryNum);
+
   const nonTechFlags = flags.filter(f => f !== "technicals_invalid");
 
   async function addToWatchlist() {
@@ -270,9 +276,18 @@ export default function CandidateCard({ candidate: c }) {
               </div>
               {c.sector && <span className="text-gray-500 text-xs">{c.sector}</span>}
             </div>
-            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border capitalize ${colorClass}`}>
-              {c.setup_type}
-            </span>
+            {isShort ? (
+              <span
+                className="text-xs font-bold px-2 py-0.5 rounded-full border bg-red-500/20 text-red-400 border-red-500/50"
+                title="Short-Setup — nur mit Brokern möglich die Short-Selling unterstützen (z.B. Alpaca)"
+              >
+                SHORT ⬇
+              </span>
+            ) : (
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full border capitalize ${colorClass}`}>
+                {c.setup_type}
+              </span>
+            )}
           </div>
 
           {/* Strategy module tag */}
@@ -320,7 +335,7 @@ export default function CandidateCard({ candidate: c }) {
           <ConfidenceBar confidence={c.confidence} compositeScore={c.composite_score} />
 
           {/* 1.3 — Entry / Stop / Target with trigger price */}
-          <div className="grid grid-cols-3 gap-1 text-xs">
+          <div className={`grid grid-cols-3 gap-1 text-xs ${isShort ? "ring-1 ring-red-700/50 rounded-lg p-0.5" : ""}`}>
             <div className="bg-gray-800 rounded p-1.5">
               <div className="text-gray-500 text-[10px]">Entry</div>
               <div className="text-white font-medium leading-tight">
