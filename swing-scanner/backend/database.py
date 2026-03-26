@@ -784,6 +784,18 @@ def get_results_for_date(scan_date: date) -> list[ScanResult]:
         return list(session.exec(stmt).all())
 
 
+def get_latest_scan_date() -> Optional[date]:
+    """Return the most recent scan_date that has at least one active/watchlist_pending result."""
+    with Session(get_engine()) as session:
+        row = session.exec(
+            select(ScanResult.scan_date)
+            .where(ScanResult.candidate_status.in_(["active", "watchlist_pending"]))
+            .order_by(ScanResult.scan_date.desc())
+            .limit(1)
+        ).first()
+        return row if row else None
+
+
 def get_result_by_ticker(ticker: str, scan_date: date) -> Optional[ScanResult]:
     with Session(get_engine()) as session:
         stmt = (

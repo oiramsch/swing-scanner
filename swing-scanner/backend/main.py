@@ -46,6 +46,7 @@ from backend.database import (
     get_position,
     get_result_by_ticker,
     get_results_for_date,
+    get_latest_scan_date,
     get_scan_dates,
     get_signals_for_position,
     get_unnotified_signals,
@@ -344,6 +345,16 @@ async def list_candidates(
 
     results = get_results_for_date(scan_date)
 
+    # Fallback: if no results for requested date, use the latest available scan
+    stale = False
+    stale_date = None
+    if not results and not date_str:
+        latest = get_latest_scan_date()
+        if latest and latest != scan_date:
+            results = get_results_for_date(latest)
+            stale = True
+            stale_date = latest.isoformat()
+
     # Fix A/B/C: only show actionable candidates by default
     if not include_filtered:
         # Check if any configured broker supports short selling → show direction_mismatch
@@ -386,7 +397,12 @@ async def list_candidates(
     if sector:
         results = [r for r in results if r.sector == sector]
 
-    return [r.model_dump() for r in results]
+    return {
+        "candidates": [r.model_dump() for r in results],
+        "stale": stale,
+        "stale_date": stale_date,
+        "scan_date": scan_date.isoformat(),
+    }
 
 
 @app.get("/api/candidates/watchlist-pending")

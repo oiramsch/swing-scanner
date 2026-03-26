@@ -4,7 +4,7 @@ Daily pipeline: regime → screener → charting → analysis → deep analysis 
 portfolio signals → watchlist → performance → daily summary
 """
 import logging
-from datetime import date
+from datetime import date, datetime, timezone, timedelta
 from typing import Callable, Optional
 
 from arq import cron
@@ -44,6 +44,26 @@ from backend.signal_checker import run_portfolio_signal_check
 from backend.watchlist import check_watchlist_alerts
 
 logger = logging.getLogger(__name__)
+
+
+def next_trading_day(from_date: date) -> date:
+    """Return the next weekday (Mon–Fri) after from_date."""
+    d = from_date + timedelta(days=1)
+    while d.weekday() >= 5:  # 5=Sat, 6=Sun
+        d += timedelta(days=1)
+    return d
+
+
+def resolve_scan_date() -> date:
+    """
+    If the scan runs after 20:00 UTC (post-market), assign results to the
+    next trading day — so the user sees them as 'today's candidates' tomorrow.
+    Manual/daytime scans keep date.today().
+    """
+    now_utc = datetime.now(timezone.utc)
+    if now_utc.hour >= 20:
+        return next_trading_day(now_utc.date())
+    return now_utc.date()
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +200,8 @@ async def market_regime_update(ctx: dict):
 async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
     """22:15 UTC — Full scan pipeline."""
     logger.info("=== daily_scan started ===")
-    scan_date = date.today()
+    scan_date = resolve_scan_date()
+    logger.info("scan_date resolved to %s", scan_date)
     clear_results_for_date(scan_date)
     # Always ensure regime is fresh — never scan with stale/missing data
     regime = await ensure_regime_current(max_age_hours=12)

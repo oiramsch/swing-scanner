@@ -137,6 +137,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [lastFetched, setLastFetched] = useState(null);
+  const [staleInfo, setStaleInfo] = useState(null); // { stale_date: "YYYY-MM-DD" } | null
   const [filters, setFilters] = useState({ setup_type: "", min_confidence: "" });
   const [minCrv, setMinCrv] = useState("");
   const [sortBy, setSortBy] = useState("score");
@@ -195,7 +196,9 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
       if (filters.setup_type) params.setup_type = filters.setup_type;
       if (filters.min_confidence) params.min_confidence = filters.min_confidence;
       const res = await axios.get("/api/candidates", { params });
-      setCandidates(res.data);
+      const data = res.data;
+      setCandidates(data.candidates ?? data);
+      setStaleInfo(data.stale ? { stale_date: data.stale_date } : null);
       setLastFetched(new Date());
     } catch (err) {
       setError(err.message);
@@ -425,6 +428,23 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
           Last scan: <span className="text-gray-200">{scanStatus.last_scan.scan_date}</span>
           {" "}— {scanStatus.last_scan.saved ?? 0} results, {scanStatus.last_scan.candidates_screened ?? 0} screened
           {scanStatus.last_scan.regime && <span className="ml-2">· regime: {scanStatus.last_scan.regime}</span>}
+        </div>
+      )}
+
+      {/* Stale data warning */}
+      {staleInfo && (
+        <div className="mb-4 p-3 bg-yellow-900/30 border border-yellow-700/50 rounded-lg flex items-center gap-2">
+          <span className="text-yellow-400 text-sm">⚠</span>
+          <span className="text-yellow-300 text-sm">
+            Kein Scan für heute — zeige Kandidaten vom <strong>{staleInfo.stale_date}</strong>
+          </span>
+          <button
+            onClick={triggerScan}
+            disabled={isScanning}
+            className="ml-auto text-xs px-3 py-1 bg-yellow-700/40 hover:bg-yellow-700/60 text-yellow-200 rounded-lg disabled:opacity-50"
+          >
+            Jetzt scannen
+          </button>
         </div>
       )}
 
