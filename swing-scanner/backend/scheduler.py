@@ -442,7 +442,7 @@ async def performance_update(ctx: dict):
     """22:45 UTC — Update performance tracking."""
     logger.info("=== performance_update ===")
     try:
-        await update_performance_tracking()
+        update_performance_tracking()
     except Exception as exc:
         logger.error("Performance update failed: %s", exc)
 

@@ -6,9 +6,8 @@ import logging
 from datetime import date, timedelta
 from typing import Optional
 
-import httpx
+import yfinance as yf
 
-from backend.config import settings
 from backend.database import (
     PerformanceResult,
     ScanResult,
@@ -22,33 +21,20 @@ from backend.database import (
 
 logger = logging.getLogger(__name__)
 
-POLYGON_BASE = "https://api.polygon.io"
 
-
-def _headers() -> dict:
-    return {"Authorization": f"Bearer {settings.polygon_api_key}"}
-
-
-async def _fetch_price_on_date(ticker: str, target_date: date) -> Optional[float]:
-    """Fetch closing price for a ticker on a specific date."""
-    url = (
-        f"{POLYGON_BASE}/v2/aggs/ticker/{ticker}/range/1/day"
-        f"/{target_date.isoformat()}/{target_date.isoformat()}"
-    )
+def _fetch_price_on_date(ticker: str, target_date: date) -> Optional[float]:
+    """Fetch closing price for a ticker on a specific date via yfinance."""
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url, headers=_headers(), params={"adjusted": "true"})
-            resp.raise_for_status()
-            data = resp.json()
-        results = data.get("results", [])
-        if results:
-            return float(results[0].get("c", 0))
+        end_date = target_date + timedelta(days=4)  # buffer for weekends/holidays
+        hist = yf.Ticker(ticker).history(start=target_date.isoformat(), end=end_date.isoformat())
+        if not hist.empty:
+            return float(hist["Close"].iloc[0])
     except Exception as exc:
         logger.warning("Price fetch failed for %s on %s: %s", ticker, target_date, exc)
     return None
 
 
-async def update_performance_tracking():
+def update_performance_tracking():
     """
     For all scan results in the last 20 days:
     - Create PerformanceResult if not exists
@@ -91,7 +77,7 @@ async def update_performance_tracking():
                 continue
             current_val = getattr(existing, field)
             if current_val is None:
-                price = await _fetch_price_on_date(sr.ticker, target)
+                price = _fetch_price_on_date(sr.ticker, target)
                 if price:
                     update_data[field] = price
 
