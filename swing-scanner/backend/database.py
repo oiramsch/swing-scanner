@@ -96,6 +96,8 @@ def _apply_migrations():
         ("portfolioposition", "execution_fx_rate",  "REAL"),
         # v2.8 — Two-stage analysis: Vision-extracted facts stored for debugging
         ("scanresult", "extracted_facts_json", "TEXT"),
+        # v2.9 — Slippage Tracker: actual fill price vs. planned entry
+        ("tradeplan", "actual_entry_price", "REAL"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -760,6 +762,9 @@ class TradePlan(SQLModel, table=True):
     strategy_module: Optional[str] = None
     setup_type: Optional[str] = None
     notes: Optional[str] = None
+
+    # Slippage tracking — actual fill price recorded after execution
+    actual_entry_price: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------

@@ -513,7 +513,11 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
                     {c.strategy_module && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500">{c.strategy_module}</span>
                     )}
-                    <span className="text-xs text-gray-500 flex-1 truncate">{c.reasoning || "Kein Setup ableitbar"}</span>
+                    <span className="text-xs text-gray-500 flex-1 truncate">
+                      {c.strategy_module === "Mean Reversion" && !c.entry_zone
+                        ? "Überverkauft, aber kein Setup erkannt — wartet auf Erholungssignal"
+                        : c.reasoning || "Kein Setup ableitbar"}
+                    </span>
                     <span className="text-[10px] text-yellow-600 shrink-0">Beobachten</span>
                   </div>
                 ))}

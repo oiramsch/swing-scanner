@@ -564,6 +564,42 @@ async def get_funnel_history_endpoint(days: int = 30):
     return [f.model_dump() for f in funnels]
 
 
+@app.get("/api/scan/by-module")
+async def get_scan_by_module(
+    date_str: Optional[str] = None,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Candidate counts grouped by strategy_module and candidate_status for a given date.
+    Useful for per-module waterfall diagnostics.
+    """
+    from collections import defaultdict
+    scan_date = date.fromisoformat(date_str) if date_str else date.today()
+    results = get_results_for_date(scan_date)
+
+    if not results:
+        # Try latest date
+        latest = get_latest_scan_date()
+        if latest:
+            results = get_results_for_date(latest)
+            scan_date = latest
+
+    by_module: dict = defaultdict(lambda: {"active": 0, "watchlist_pending": 0, "filtered_avoid": 0, "direction_mismatch": 0, "user_ignored": 0, "other": 0, "total": 0})
+    for r in results:
+        mod = r.strategy_module or "Unknown"
+        status = r.candidate_status or "other"
+        if status in by_module[mod]:
+            by_module[mod][status] += 1
+        else:
+            by_module[mod]["other"] += 1
+        by_module[mod]["total"] += 1
+
+    return {
+        "scan_date": scan_date.isoformat(),
+        "modules": [{"name": k, **v} for k, v in by_module.items()],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Ghost Portfolio — Predictions (1.7)
 # ---------------------------------------------------------------------------
@@ -1844,6 +1880,40 @@ async def tr_plan_executed(
     })
 
     return {"position_id": position.get("id"), "broker": broker_id, "qty": qty}
+
+
+# ---------------------------------------------------------------------------
+# Slippage Tracker
+# ---------------------------------------------------------------------------
+
+@app.patch("/api/trade-plans/{plan_id}/actual-entry")
+async def set_actual_entry(
+    plan_id: int,
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Record the actual fill price after execution.
+    Body: { "actual_entry_price": 145.50 }
+    Returns slippage vs. planned entry_high.
+    """
+    price = data.get("actual_entry_price")
+    if price is None:
+        raise HTTPException(status_code=422, detail="actual_entry_price required")
+    plan = get_trade_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    update_trade_plan(plan_id, {"actual_entry_price": float(price)})
+
+    slippage = float(price) - plan.entry_high
+    slippage_pct = (slippage / plan.entry_high * 100) if plan.entry_high else 0
+    return {
+        "actual_entry_price": float(price),
+        "planned_entry_high": plan.entry_high,
+        "slippage": round(slippage, 4),
+        "slippage_pct": round(slippage_pct, 3),
+    }
 
 
 # ---------------------------------------------------------------------------

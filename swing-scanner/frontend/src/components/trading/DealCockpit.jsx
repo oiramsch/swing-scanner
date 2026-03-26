@@ -46,7 +46,57 @@ function BrokerBadge({ broker }) {
   );
 }
 
-function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel }) {
+function SlippageInput({ plan, onSaved }) {
+  const [val, setVal] = useState(plan.actual_entry_price != null ? String(plan.actual_entry_price) : "");
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState(null);
+
+  async function save() {
+    const price = parseFloat(val);
+    if (isNaN(price) || price <= 0) return;
+    setSaving(true);
+    try {
+      const res = await axios.patch(`/api/trade-plans/${plan.id}/actual-entry`, { actual_entry_price: price });
+      setResult(res.data);
+      onSaved?.();
+    } catch {}
+    setSaving(false);
+  }
+
+  const slippage = result?.slippage_pct ?? (
+    plan.actual_entry_price != null && plan.entry_high
+      ? ((plan.actual_entry_price - parseFloat(plan.entry_high)) / parseFloat(plan.entry_high) * 100)
+      : null
+  );
+
+  return (
+    <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
+      <span className="text-gray-600">Fill-Preis:</span>
+      <input
+        type="number"
+        step="0.01"
+        value={val}
+        onChange={e => setVal(e.target.value)}
+        placeholder="0.00"
+        className="w-24 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-gray-200 text-xs focus:outline-none focus:border-indigo-600"
+      />
+      <button
+        onClick={save}
+        disabled={saving}
+        className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 rounded transition disabled:opacity-50"
+      >
+        {saving ? "..." : "Speichern"}
+      </button>
+      {slippage != null && (
+        <span className={slippage > 0 ? "text-red-400" : slippage < 0 ? "text-green-400" : "text-gray-500"}>
+          Slippage: {slippage > 0 ? "+" : ""}{slippage.toFixed(2)}%
+        </span>
+      )}
+    </div>
+  );
+}
+
+function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRefresh }) {
   const livePrice = quotes[plan.ticker];
   const zone = parseEntryZone(plan.entry_low, plan.entry_high);
   const inZone    = livePrice && zone && livePrice >= zone.low && livePrice <= zone.trigger;
@@ -167,6 +217,11 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel }) {
 
       {plan.notes && (
         <div className="mt-2 text-xs text-gray-600 italic">{plan.notes}</div>
+      )}
+
+      {/* Slippage tracker (show for active/partial plans or if fill already recorded) */}
+      {(plan.status === "active" || plan.status === "partial" || plan.actual_entry_price != null) && (
+        <SlippageInput plan={plan} onSaved={onRefresh} />
       )}
     </div>
   );
@@ -291,6 +346,7 @@ export default function DealCockpit() {
               onAlpacaBuy={openJustage}
               onTRPlan={openJustage}
               onCancel={cancelPlan}
+              onRefresh={loadPlans}
             />
           ))
         )}

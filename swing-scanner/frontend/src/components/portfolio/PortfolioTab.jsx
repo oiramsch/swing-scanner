@@ -10,6 +10,49 @@ import AlpacaPositions from "./AlpacaPositions.jsx";
 const BROKER_ICONS  = { alpaca: "🦙", trade_republic: "🇩🇪", ibkr: "📊" };
 const BROKER_LABELS = { alpaca: "Alpaca", trade_republic: "Trade Republic", ibkr: "IBKR" };
 
+function ConsolidatedSummary({ brokers }) {
+  if (!brokers?.length) return null;
+
+  // Sum all broker balances, convert EUR→USD at ~1.09 for display
+  const EUR_TO_USD = 1.09;
+  let totalUSD = 0;
+  let hasData = false;
+  const lines = [];
+
+  for (const b of brokers) {
+    const bal = b.balance?.buying_power ?? b.manual_balance;
+    if (bal == null) continue;
+    const currency = b.balance?.currency ?? b.manual_currency ?? "USD";
+    const inUSD = currency === "EUR" ? bal * EUR_TO_USD : bal;
+    totalUSD += inUSD;
+    hasData = true;
+    lines.push({ label: b.label, amount: bal, currency, icon: BROKER_ICONS[b.broker_type] ?? "💼" });
+  }
+
+  if (!hasData || lines.length < 2) return null;
+
+  return (
+    <div className="bg-gray-900 border border-indigo-800/30 rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm font-semibold text-gray-200">Konsolidiert — alle Broker</span>
+        <span className="text-lg font-bold text-indigo-300">${totalUSD.toLocaleString("en", { maximumFractionDigits: 0 })}</span>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        {lines.map(l => (
+          <div key={l.label} className="flex items-center gap-1.5 text-xs text-gray-400">
+            <span>{l.icon}</span>
+            <span>{l.label}</span>
+            <span className="text-gray-300 font-medium">
+              {l.currency === "EUR" ? "€" : "$"}{Math.round(l.amount).toLocaleString("de")}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-gray-700 mt-2">EUR→USD @ ~1.09 (Schätzung für Gesamtansicht)</p>
+    </div>
+  );
+}
+
 function PortfolioByBroker({ positions, onUpdate }) {
   // Group positions by broker_id (null = unassigned / legacy)
   const groups = {};
@@ -70,6 +113,7 @@ function PortfolioByBroker({ positions, onUpdate }) {
 
 export default function PortfolioTab() {
   const [portfolio, setPortfolio] = useState(null);
+  const [brokers, setBrokers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -91,6 +135,7 @@ export default function PortfolioTab() {
   useEffect(() => {
     refresh();
     fetchMarketUpdate();
+    axios.get("/api/brokers").then(r => setBrokers(r.data || [])).catch(() => {});
     // Auto-refresh every 60 seconds for live P&L
     intervalRef.current = setInterval(() => refresh(), 60_000);
     return () => clearInterval(intervalRef.current);
@@ -221,6 +266,9 @@ export default function PortfolioTab() {
           )}
         </div>
       )}
+
+      {/* Consolidated broker summary */}
+      <ConsolidatedSummary brokers={brokers} />
 
       {/* AI Report */}
       {aiReport && <PortfolioAIReport report={aiReport} onClose={() => setAiReport(null)} />}

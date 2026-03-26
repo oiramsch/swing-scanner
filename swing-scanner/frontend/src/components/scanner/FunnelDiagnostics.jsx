@@ -70,11 +70,90 @@ function ParamBadge({ label, value }) {
   );
 }
 
+const MODULE_COLORS = {
+  "Bull Breakout":          { active: "bg-green-700", bar: "bg-green-900/60" },
+  "Bear Relative Strength": { active: "bg-orange-600", bar: "bg-orange-900/60" },
+  "Mean Reversion":         { active: "bg-purple-700", bar: "bg-purple-900/60" },
+};
+
+function ModuleBreakdown() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    axios.get("/api/scan/by-module")
+      .then(r => setData(r.data))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div className="h-20 animate-pulse bg-gray-800/50 rounded-lg" />;
+  if (!data?.modules?.length) return <p className="text-xs text-gray-600">Keine Modul-Daten verfügbar.</p>;
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[11px] text-gray-500">Scan vom {data.scan_date}</p>
+      {data.modules.map(m => {
+        const total = m.total || 1;
+        const colors = MODULE_COLORS[m.name] ?? { active: "bg-indigo-700", bar: "bg-indigo-900/60" };
+        return (
+          <div key={m.name}>
+            <div className="flex items-center justify-between text-xs mb-1">
+              <span className="text-gray-300 font-medium">{m.name}</span>
+              <span className="text-gray-500">{m.total} verarbeitet</span>
+            </div>
+            <div className="flex h-5 rounded overflow-hidden bg-gray-800 text-[10px]">
+              {m.active > 0 && (
+                <div className={`${colors.active} flex items-center justify-center text-white`} style={{ width: `${(m.active/total)*100}%` }} title={`Aktiv: ${m.active}`}>
+                  {m.active > 2 ? m.active : ""}
+                </div>
+              )}
+              {m.watchlist_pending > 0 && (
+                <div className="bg-yellow-700/70 flex items-center justify-center text-yellow-200" style={{ width: `${(m.watchlist_pending/total)*100}%` }} title={`Watchlist: ${m.watchlist_pending}`}>
+                  {m.watchlist_pending > 2 ? m.watchlist_pending : ""}
+                </div>
+              )}
+              {m.direction_mismatch > 0 && (
+                <div className="bg-red-800/60 flex items-center justify-center text-red-300" style={{ width: `${(m.direction_mismatch/total)*100}%` }} title={`Short: ${m.direction_mismatch}`}>
+                  {m.direction_mismatch > 2 ? m.direction_mismatch : ""}
+                </div>
+              )}
+              {m.filtered_avoid > 0 && (
+                <div className="bg-gray-700/60" style={{ width: `${(m.filtered_avoid/total)*100}%` }} title={`Avoided: ${m.filtered_avoid}`} />
+              )}
+            </div>
+            <div className="flex gap-3 mt-1 text-[10px] text-gray-600">
+              <span className="text-green-400">{m.active} aktiv</span>
+              {m.watchlist_pending > 0 && <span className="text-yellow-600">{m.watchlist_pending} watchlist</span>}
+              {m.direction_mismatch > 0 && <span className="text-red-500">{m.direction_mismatch} short</span>}
+              {m.filtered_avoid > 0 && <span>{m.filtered_avoid} avoided</span>}
+            </div>
+          </div>
+        );
+      })}
+      <div className="flex gap-3 text-[10px] flex-wrap pt-1 border-t border-gray-800">
+        {[
+          { color: "bg-indigo-700", label: "Aktiv" },
+          { color: "bg-yellow-700/70", label: "Watchlist" },
+          { color: "bg-red-800/60", label: "Short" },
+          { color: "bg-gray-700/60", label: "Avoided" },
+        ].map(({ color, label }) => (
+          <span key={label} className="flex items-center gap-1 text-gray-500">
+            <span className={`w-2.5 h-2.5 rounded-sm ${color}`} />
+            {label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function FunnelDiagnostics({ initialFunnel }) {
   const [funnel, setFunnel] = useState(initialFunnel ?? null);
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loading, setLoading] = useState(!initialFunnel);
+  const [view, setView] = useState("gesamt"); // "gesamt" | "module"
 
   useEffect(() => {
     if (!initialFunnel) loadFunnel();
@@ -159,6 +238,16 @@ export default function FunnelDiagnostics({ initialFunnel }) {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-gray-200">Filter-Funnel</span>
+          {/* Tab switcher */}
+          <div className="flex rounded-lg overflow-hidden border border-gray-700 text-[11px]">
+            {[["gesamt", "Gesamt"], ["module", "Pro Modul"]].map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setView(key)}
+                className={`px-2.5 py-1 transition ${view === key ? "bg-indigo-700 text-white" : "bg-gray-800 text-gray-500 hover:text-gray-300"}`}
+              >{label}</button>
+            ))}
+          </div>
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full border border-current ${
             regime === "bear" ? "text-red-400 border-red-800 bg-red-900/20" :
             regime === "bull" ? "text-green-400 border-green-800 bg-green-900/20" :
@@ -199,8 +288,11 @@ export default function FunnelDiagnostics({ initialFunnel }) {
         ))}
       </div>
 
+      {/* Per-Modul view */}
+      {view === "module" && <ModuleBreakdown />}
+
       {/* Waterfall — top-level steps */}
-      <div>
+      {view === "gesamt" && <div>
         <WaterfallRow label="Universe → Pre-Filter" remaining={preFilter} rejected={universe - preFilter} total={universe} />
         {steps
           .filter(s => s.rejected > 0)
@@ -214,8 +306,9 @@ export default function FunnelDiagnostics({ initialFunnel }) {
             />
           ))}
         <WaterfallRow label="Kandidaten (final)" remaining={candidates} rejected={0} total={universe} highlight />
-      </div>
+      </div>}
 
+      {view === "gesamt" && <>
       {/* Biggest blockers */}
       {(() => {
         const sorted = orderedRejections.filter(([, n]) => n > 0).sort(([, a], [, b]) => b - a);
@@ -252,7 +345,7 @@ export default function FunnelDiagnostics({ initialFunnel }) {
       )}
 
       {/* History */}
-      {showHistory && (
+      {showHistory && view === "gesamt" && (
         <div>
           <p className="text-[11px] text-gray-500 mb-2 font-semibold uppercase tracking-wide">Verlauf (letzte 14 Tage)</p>
           {history.length === 0 ? (
@@ -298,6 +391,7 @@ export default function FunnelDiagnostics({ initialFunnel }) {
           )}
         </div>
       )}
+      </>}
     </div>
   );
 }

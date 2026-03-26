@@ -466,11 +466,60 @@ const REGIME_BADGE = {
   any:     "text-gray-400 bg-gray-800/50 border-gray-700",
 };
 
+function ModuleEditor({ module: m, onSaved, onClose }) {
+  const [form, setForm] = useState({
+    price_min:        m.price_min ?? 10,
+    price_max:        m.price_max ?? 500,
+    avg_volume_min:   m.avg_volume_min ?? 500000,
+    rsi_min:          m.rsi_min ?? 35,
+    rsi_max:          m.rsi_max ?? 75,
+    confidence_min:   m.confidence_min ?? 6,
+    volume_multiplier: m.volume_multiplier ?? 1.0,
+  });
+  const [saving, setSaving] = useState(false);
+
+  async function save(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await axios.put(`/api/strategy-modules/${m.id}`, form);
+      onSaved();
+      onClose();
+    } catch (err) { alert(err.response?.data?.detail || "Fehler"); }
+    finally { setSaving(false); }
+  }
+
+  const inp = "w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-indigo-500";
+
+  return (
+    <form onSubmit={save} className="mt-3 p-3 bg-gray-800/60 rounded-lg border border-gray-700/50 space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Preis Min ($)"><input type="number" step="1" className={inp} value={form.price_min} onChange={e => setForm(f => ({ ...f, price_min: +e.target.value }))} /></Field>
+        <Field label="Preis Max ($)"><input type="number" step="1" className={inp} value={form.price_max} onChange={e => setForm(f => ({ ...f, price_max: +e.target.value }))} /></Field>
+        <Field label="Min. Volumen"><input type="number" step="50000" className={inp} value={form.avg_volume_min} onChange={e => setForm(f => ({ ...f, avg_volume_min: +e.target.value }))} /></Field>
+        <Field label="Vol. Multiplikator"><input type="number" step="0.1" min="0" className={inp} value={form.volume_multiplier} onChange={e => setForm(f => ({ ...f, volume_multiplier: +e.target.value }))} /></Field>
+        <Field label="RSI Min"><input type="number" step="1" min="0" max="100" className={inp} value={form.rsi_min} onChange={e => setForm(f => ({ ...f, rsi_min: +e.target.value }))} /></Field>
+        <Field label="RSI Max"><input type="number" step="1" min="0" max="100" className={inp} value={form.rsi_max} onChange={e => setForm(f => ({ ...f, rsi_max: +e.target.value }))} /></Field>
+        <Field label="Min. Confidence"><input type="number" step="1" min="1" max="10" className={inp} value={form.confidence_min} onChange={e => setForm(f => ({ ...f, confidence_min: +e.target.value }))} /></Field>
+      </div>
+      <div className="flex gap-2">
+        <button type="submit" disabled={saving} className="px-3 py-1.5 text-xs bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg disabled:opacity-50">
+          {saving ? "…" : "Speichern"}
+        </button>
+        <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg">
+          Abbrechen
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function ModulesSection() {
   const [modules,       setModules]       = useState([]);
   const [currentRegime, setCurrentRegime] = useState(null);
   const [activeIds,     setActiveIds]     = useState(new Set());
   const [toggling,      setToggling]      = useState(null);
+  const [editing,       setEditing]       = useState(null); // module id
 
   useEffect(() => { loadModules(); }, []);
 
@@ -509,42 +558,53 @@ function ModulesSection() {
         {modules.map(m => {
           const runningNow = activeIds.has(m.id);
           return (
-            <div key={m.id} className={`flex items-center gap-3 p-3 rounded-lg border ${
-              runningNow ? "bg-indigo-900/10 border-indigo-700/40" : "bg-gray-800/50 border-gray-700/50"
-            }`}>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm text-white font-medium">{m.name}</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${REGIME_BADGE[m.regime] ?? REGIME_BADGE.any}`}>
-                    {m.regime.toUpperCase()}
-                  </span>
-                  {runningNow && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-900/40 border border-indigo-600/50 text-indigo-300 font-semibold">
-                      ▶ Läuft jetzt
+            <div key={m.id} className={`rounded-lg border ${runningNow ? "bg-indigo-900/10 border-indigo-700/40" : "bg-gray-800/50 border-gray-700/50"}`}>
+              <div className="flex items-center gap-3 p-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm text-white font-medium">{m.name}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${REGIME_BADGE[m.regime] ?? REGIME_BADGE.any}`}>
+                      {m.regime.toUpperCase()}
                     </span>
-                  )}
+                    {runningNow && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-900/40 border border-indigo-600/50 text-indigo-300 font-semibold">
+                        ▶ Läuft jetzt
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-gray-600 mt-0.5">
+                    Preis ${m.price_min}–${m.price_max} · Vol {(m.avg_volume_min/1000).toFixed(0)}k · RSI {m.rsi_min}–{m.rsi_max} · Conf ≥{m.confidence_min}
+                  </p>
                 </div>
-                {m.description && (
-                  <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{m.description}</p>
-                )}
+                <div className="flex gap-1.5 shrink-0">
+                  <button
+                    onClick={() => setEditing(editing === m.id ? null : m.id)}
+                    className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-600 bg-gray-800 hover:bg-gray-700 text-gray-400 transition"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    onClick={() => toggleModule(m.id)}
+                    disabled={toggling === m.id}
+                    className={`shrink-0 px-3 py-1.5 text-xs rounded-lg border transition disabled:opacity-50 font-medium ${
+                      m.is_active
+                        ? "bg-green-900/30 border-green-700/50 text-green-400 hover:bg-red-900/20 hover:border-red-700/40 hover:text-red-400"
+                        : "bg-gray-800 border-gray-700 text-gray-500 hover:bg-green-900/20 hover:border-green-700/40 hover:text-green-400"
+                    }`}
+                  >
+                    {toggling === m.id ? "…" : m.is_active ? "✓ Aktiv" : "Deaktiviert"}
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={() => toggleModule(m.id)}
-                disabled={toggling === m.id}
-                className={`shrink-0 px-3 py-1.5 text-xs rounded-lg border transition disabled:opacity-50 font-medium ${
-                  m.is_active
-                    ? "bg-green-900/30 border-green-700/50 text-green-400 hover:bg-red-900/20 hover:border-red-700/40 hover:text-red-400"
-                    : "bg-gray-800 border-gray-700 text-gray-500 hover:bg-green-900/20 hover:border-green-700/40 hover:text-green-400"
-                }`}
-              >
-                {toggling === m.id ? "…" : m.is_active ? "✓ Aktiviert" : "Deaktiviert"}
-              </button>
+              {editing === m.id && (
+                <ModuleEditor module={m} onSaved={loadModules} onClose={() => setEditing(null)} />
+              )}
             </div>
           );
         })}
       </div>
       <p className="text-[11px] text-gray-600">
-        "Aktiviert" = verfügbar. "Läuft jetzt" = wird beim nächsten Scan tatsächlich verwendet (Regime passt).
+        "Aktiv" = verfügbar. "Läuft jetzt" = wird beim nächsten Scan verwendet (Regime passt). ✎ = Filter-Parameter bearbeiten.
       </p>
     </Section>
   );
