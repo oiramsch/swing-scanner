@@ -167,18 +167,27 @@ export default function PortfolioTab() {
       {/* Market Update Banner */}
       <MarketUpdateBanner update={marketUpdate} />
 
-      {/* Positions */}
-      {portfolio?.positions?.length === 0 && (
-        <div className="text-center py-16 text-gray-500">
-          <p className="text-lg">No open positions</p>
-          <p className="text-sm mt-1">Click "+ Position" to add a trade</p>
+      {/* Manual / Ghost Portfolio Positions */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
+            Ghost Portfolio
+          </h2>
+          {portfolio?.positions?.length > 0 && (
+            <span className="text-xs text-gray-600">{portfolio.positions.length} Positionen offen</span>
+          )}
         </div>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {portfolio?.positions?.map((pos) => (
-          <PositionCard key={pos.id} position={pos} onUpdate={fetchPortfolio} />
-        ))}
+        {portfolio?.positions?.length === 0 ? (
+          <div className="text-center py-10 text-gray-600 text-sm bg-gray-900/50 border border-gray-800 rounded-xl">
+            Keine offenen Positionen — über "+ Position" oder "Ausgeführt ✓" in TR hinzufügen
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {portfolio.positions.map((pos) => (
+              <PositionCard key={pos.id} position={pos} onUpdate={fetchPortfolio} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Alpaca Live Positions */}

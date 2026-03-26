@@ -421,6 +421,25 @@ async def get_candidate(ticker: str, date_str: Optional[str] = None):
     return data
 
 
+@app.patch("/api/candidates/{result_id}/ignore")
+async def toggle_candidate_ignore(
+    result_id: int,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Toggle candidate between active and user_ignored status."""
+    from backend.database import get_engine, ScanResult as _SR
+    from sqlmodel import Session as _Session
+    with _Session(get_engine()) as session:
+        result = session.get(_SR, result_id)
+        if not result or result.tenant_id != current_user.tenant_id:
+            raise HTTPException(status_code=404, detail="Candidate nicht gefunden")
+        new_status = "active" if result.candidate_status == "user_ignored" else "user_ignored"
+        result.candidate_status = new_status
+        session.add(result)
+        session.commit()
+    return {"candidate_status": new_status}
+
+
 # ---------------------------------------------------------------------------
 # Charts
 # ---------------------------------------------------------------------------
@@ -1404,14 +1423,28 @@ async def create_trade_plan(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     from datetime import datetime as _dt
+    el = float(data["entry_low"])
+    eh = float(data["entry_high"])
+    sl = float(data["stop_loss"])
+    tgt = float(data["target"]) if data.get("target") else None
+
+    if sl >= el:
+        raise HTTPException(status_code=400, detail="Stop Loss muss unter Entry Low liegen.")
+    if tgt is not None and tgt <= eh:
+        raise HTTPException(status_code=400, detail="Target muss über Entry High liegen.")
+    if tgt is not None and (eh - sl) > 0:
+        crv = (tgt - eh) / (eh - sl)
+        if crv <= 0:
+            raise HTTPException(status_code=400, detail="CRV muss positiv sein.")
+
     plan = TradePlan(
         tenant_id=current_user.tenant_id,
         ticker=data["ticker"].upper(),
         isin=data.get("isin"),
-        entry_low=float(data["entry_low"]),
-        entry_high=float(data["entry_high"]),
-        stop_loss=float(data["stop_loss"]),
-        target=float(data["target"]) if data.get("target") else None,
+        entry_low=el,
+        entry_high=eh,
+        stop_loss=sl,
+        target=tgt,
         risk_pct=float(data.get("risk_pct", 1.0)),
         broker_ids_json=json.dumps(data.get("broker_ids", [])),
         status="pending",
@@ -1566,6 +1599,51 @@ async def get_trade_plan_checklist(
         return result
 
     return {"steps": connector.get_execution_checklist(plan_dict), "qty": qty}
+
+
+@app.post("/api/trade-plans/{plan_id}/tr-executed/{broker_id}")
+async def tr_plan_executed(
+    plan_id: int,
+    broker_id: int,
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Mark a TR trade plan as executed and auto-create portfolio entry.
+    data: { qty: int }
+    """
+    from backend.portfolio import create_position
+    from datetime import datetime as _dt
+
+    plan = get_trade_plan(plan_id)
+    if not plan or plan.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Trade Plan nicht gefunden")
+
+    qty = int(data.get("qty", 1))
+
+    # Create portfolio entry from plan data
+    pos_data = {
+        "ticker": plan.ticker,
+        "entry_price": plan.entry_high,
+        "shares": qty,
+        "stop_loss": plan.stop_loss,
+        "target": plan.target,
+        "entry_date": _dt.utcnow().date().isoformat(),
+        "setup_type": plan.setup_type or "breakout",
+        "notes": f"TR-Ausführung via TradePlan #{plan_id}",
+        "scan_result_id": plan.scan_result_id,
+    }
+    position = create_position(pos_data)
+
+    # Update execution state
+    exec_state = json.loads(plan.execution_state_json or "{}")
+    exec_state[str(broker_id)] = "executed"
+    update_trade_plan(plan_id, {
+        "execution_state_json": json.dumps(exec_state),
+        "status": "active",
+    })
+
+    return {"position_id": position.get("id"), "broker": broker_id, "qty": qty}
 
 
 # ---------------------------------------------------------------------------

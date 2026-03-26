@@ -18,8 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 def add_to_watchlist(data: dict) -> WatchlistItem:
+    ticker = data["ticker"].upper()
+    existing = get_watchlist()
+    if any(w.ticker == ticker for w in existing):
+        raise ValueError(f"{ticker} ist bereits auf der Watchlist.")
     item = WatchlistItem(
-        ticker=data["ticker"].upper(),
+        ticker=ticker,
         added_date=date.today(),
         reason=data.get("reason", ""),
         alert_condition=data.get("alert_condition", ""),

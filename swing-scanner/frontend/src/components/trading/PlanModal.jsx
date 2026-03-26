@@ -112,12 +112,14 @@ export default function PlanModal({ candidate, onClose, onSaved }) {
       await axios.post("/api/trade-plans", {
         ticker: candidate.ticker,
         scan_result_id: candidate.id ?? null,
+        strategy_module: candidate.strategy_module ?? null,
+        setup_type: candidate.setup_type ?? null,
         entry_low: el,
         entry_high: eh,
         stop_loss: sl,
         target: parseFloat(target) || null,
         risk_pct: parseFloat(riskPct) || 1.0,
-        broker_ids_json: JSON.stringify(selectedBrokers),
+        broker_ids: selectedBrokers,
       });
       onSaved?.();
       onClose();
@@ -135,12 +137,29 @@ export default function PlanModal({ candidate, onClose, onSaved }) {
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-          <div>
-            <span className="text-white font-bold text-base">{candidate.ticker}</span>
-            <span className="text-gray-500 text-xs ml-2">Trade Plan erstellen</span>
+        <div className="flex items-start justify-between px-4 py-3 border-b border-gray-800">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-white font-bold text-base">{candidate.ticker}</span>
+              {candidate.setup_type && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-400 capitalize">
+                  {candidate.setup_type}
+                </span>
+              )}
+              {candidate.strategy_module && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-700/50 text-indigo-400">
+                  {candidate.strategy_module}
+                </span>
+              )}
+              {candidate.confidence != null && (
+                <span className="text-[10px] text-gray-500">Conf: {candidate.confidence}</span>
+              )}
+            </div>
+            {candidate.sector && (
+              <div className="text-[10px] text-gray-600">{candidate.sector}</div>
+            )}
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none ml-3 shrink-0">✕</button>
         </div>
 
         <div className="overflow-y-auto p-4 space-y-4">

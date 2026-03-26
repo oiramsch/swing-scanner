@@ -106,6 +106,7 @@ export default function JustageModal({ plan, broker, livePrice, onClose, onSucce
         brokerLabel={broker.label}
         qtyOverride={qty}
         onClose={onClose}
+        onExecuted={onSuccess}
       />
     );
   }

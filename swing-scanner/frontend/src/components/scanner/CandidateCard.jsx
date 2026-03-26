@@ -1,8 +1,6 @@
 import { useState } from "react";
 import axios from "axios";
 import DeepAnalysisModal from "./DeepAnalysisModal.jsx";
-import AddPositionModal from "../portfolio/AddPositionModal.jsx";
-import OrderForm from "../trading/OrderForm.jsx";
 import PlanModal from "../trading/PlanModal.jsx";
 
 const SETUP_COLORS = {
@@ -128,16 +126,15 @@ function ChartLightbox({ src, ticker, onClose }) {
   );
 }
 
-export default function CandidateCard({ candidate: c, budget = null }) {
+export default function CandidateCard({ candidate: c }) {
   const [showDeep, setShowDeep] = useState(false);
-  const [showPortfolio, setShowPortfolio] = useState(false);
-  const [showOrder, setShowOrder] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
   const [showHeadlines, setShowHeadlines] = useState(false);
-  const [showChart, setShowChart] = useState(false);    // 1.5 lightbox
-  const [showDimmed, setShowDimmed] = useState(false);  // 1.3 override dim
+  const [showChart, setShowChart] = useState(false);
+  const [showDimmed, setShowDimmed] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [addedToWatchlist, setAddedToWatchlist] = useState(false);
+  const [ignored, setIgnored] = useState(c.candidate_status === "user_ignored");
 
   const colorClass = SETUP_COLORS[c.setup_type] || SETUP_COLORS.none;
   const chartFile = c.chart_path ? c.chart_path.split("/").pop() : null;
@@ -153,15 +150,6 @@ export default function CandidateCard({ candidate: c, budget = null }) {
 
   const nonTechFlags = flags.filter(f => f !== "technicals_invalid");
 
-  const portfolioPrefill = {
-    ticker: c.ticker,
-    entry_price: parseEntryPrice(c.entry_zone),
-    stop_loss: c.stop_loss ? String(c.stop_loss) : "",
-    target: c.target ? String(c.target) : "",
-    setup_type: c.setup_type || "breakout",
-    sector: c.sector || "",
-  };
-
   async function addToWatchlist() {
     try {
       await axios.post("/api/watchlist", {
@@ -170,6 +158,16 @@ export default function CandidateCard({ candidate: c, budget = null }) {
         scan_result_id: c.id,
       });
       setAddedToWatchlist(true);
+    } catch (err) {
+      const msg = err.response?.data?.detail;
+      if (msg) setAddedToWatchlist(true); // already on watchlist counts as "added"
+    }
+  }
+
+  async function toggleIgnore() {
+    try {
+      const res = await axios.patch(`/api/candidates/${c.id}/ignore`);
+      setIgnored(res.data.candidate_status === "user_ignored");
     } catch {}
   }
 
@@ -374,43 +372,34 @@ export default function CandidateCard({ candidate: c, budget = null }) {
                 Deep Analysis
               </button>
             )}
-            {c.entry_zone && c.stop_loss && (() => {
-              const entry = parseFloat(String(c.entry_zone).match(/[\d.]+/g)?.slice(-1)[0]);
-              const stop  = parseFloat(c.stop_loss);
-              const validLong = !isNaN(entry) && !isNaN(stop) && stop < entry;
-              return validLong ? (
-                <button
-                  onClick={() => setShowOrder(true)}
-                  className="flex-1 text-xs py-1.5 bg-green-700/30 hover:bg-green-700/60 text-green-300 rounded border border-green-600/40 transition font-medium"
-                >
-                  Kaufen
-                </button>
-              ) : (
-                <span className="flex-1 text-xs py-1.5 text-center text-orange-500/70 border border-orange-800/30 rounded bg-orange-900/10"
-                  title="Stop ≥ Entry — Short-Setup, kein Long-Kauf möglich">
-                  ⚠ Short-Setup
-                </span>
-              );
-            })()}
             <button
-              onClick={() => setShowPortfolio(true)}
-              className="flex-1 text-xs py-1.5 bg-gray-700/40 hover:bg-gray-700/70 text-gray-300 rounded border border-gray-600/40 transition"
+              onClick={() => setShowPlan(true)}
+              className="flex-1 text-xs py-1.5 bg-blue-800/40 hover:bg-blue-700/60 text-blue-300 rounded border border-blue-700/40 transition font-medium"
+              title="Trade Plan erstellen → Deal Cockpit"
             >
-              + Portfolio
+              + Plan
             </button>
             <button
               onClick={addToWatchlist}
               disabled={addedToWatchlist}
-              className="text-xs py-1.5 px-2 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded transition disabled:opacity-50"
+              className={`text-xs py-1.5 px-2 rounded transition ${
+                addedToWatchlist
+                  ? "bg-green-900/30 border border-green-700/40 text-green-400 cursor-default"
+                  : "bg-gray-800 hover:bg-gray-700 text-gray-400"
+              }`}
             >
-              {addedToWatchlist ? "✓" : "Watch"}
+              {addedToWatchlist ? "✓ Watch" : "Watch"}
             </button>
             <button
-              onClick={() => setShowPlan(true)}
-              className="text-xs py-1.5 px-2 bg-blue-800/40 hover:bg-blue-700/60 text-blue-300 rounded border border-blue-700/40 transition font-medium"
-              title="Trade Plan erstellen → Deal Cockpit"
+              onClick={toggleIgnore}
+              className={`text-xs py-1.5 px-2 rounded border transition ${
+                ignored
+                  ? "bg-orange-900/30 border-orange-700/40 text-orange-400"
+                  : "bg-gray-800/40 border-gray-700/40 text-gray-600 hover:text-gray-400"
+              }`}
+              title={ignored ? "Wieder einblenden" : "Ignorieren"}
             >
-              Plan
+              {ignored ? "✕ Ignoriert" : "Ignorieren"}
             </button>
           </div>
         </div>
@@ -418,21 +407,6 @@ export default function CandidateCard({ candidate: c, budget = null }) {
 
       {showDeep && (
         <DeepAnalysisModal candidate={c} onClose={() => setShowDeep(false)} />
-      )}
-      {showPortfolio && (
-        <AddPositionModal
-          prefill={portfolioPrefill}
-          budget={budget}
-          onClose={() => setShowPortfolio(false)}
-          onSaved={() => setShowPortfolio(false)}
-        />
-      )}
-      {showOrder && (
-        <OrderForm
-          candidate={c}
-          onClose={() => setShowOrder(false)}
-          onSuccess={() => setShowOrder(false)}
-        />
       )}
       {showPlan && (
         <PlanModal

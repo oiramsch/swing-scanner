@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 
-export default function TRChecklist({ plan, brokerId, brokerLabel, qtyOverride, onClose }) {
+export default function TRChecklist({ plan, brokerId, brokerLabel, qtyOverride, onClose, onExecuted }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [checked, setChecked] = useState({});
+  const [executing, setExecuting] = useState(false);
+  const [executed, setExecuted] = useState(false);
 
   useEffect(() => {
     const url = `/api/trade-plans/${plan.id}/checklist/${brokerId}`
@@ -19,6 +21,21 @@ export default function TRChecklist({ plan, brokerId, brokerLabel, qtyOverride, 
   }
 
   const allChecked = data?.steps && data.steps.every((_, i) => checked[i]);
+
+  async function handleExecuted() {
+    setExecuting(true);
+    try {
+      await axios.post(`/api/trade-plans/${plan.id}/tr-executed/${brokerId}`, {
+        qty: qtyOverride ?? data?.qty ?? 1,
+      });
+      setExecuted(true);
+      onExecuted?.();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Fehler beim Speichern.");
+    } finally {
+      setExecuting(false);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={onClose}>
@@ -100,18 +117,41 @@ export default function TRChecklist({ plan, brokerId, brokerLabel, qtyOverride, 
               ))}
             </div>
 
-            {allChecked && (
+            {executed ? (
               <div className="px-3 py-2.5 rounded-lg bg-green-900/20 border border-green-700/40 text-green-400 text-xs text-center font-semibold">
-                ✓ Alle Schritte abgehakt — Trade ausgeführt!
+                ✓ Trade ausgeführt — Portfolio-Eintrag erstellt!
+              </div>
+            ) : allChecked && (
+              <div className="px-3 py-2.5 rounded-lg bg-green-900/20 border border-green-700/40 text-green-400 text-xs text-center font-semibold">
+                ✓ Alle Schritte abgehakt
               </div>
             )}
 
-            <button
-              onClick={onClose}
-              className="w-full py-2 text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition"
-            >
-              Schließen
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={onClose}
+                className="flex-1 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-lg transition"
+              >
+                Abbrechen
+              </button>
+              {!executed && (
+                <button
+                  onClick={handleExecuted}
+                  disabled={executing}
+                  className="flex-1 py-2 text-sm bg-green-700 hover:bg-green-600 text-white rounded-lg font-semibold transition disabled:opacity-50"
+                >
+                  {executing ? "Speichern…" : "Ausgeführt ✓"}
+                </button>
+              )}
+              {executed && (
+                <button
+                  onClick={onClose}
+                  className="flex-1 py-2 text-sm bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg transition"
+                >
+                  Schließen
+                </button>
+              )}
+            </div>
           </>
         )}
       </div>
