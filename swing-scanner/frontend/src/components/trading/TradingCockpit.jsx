@@ -122,9 +122,10 @@ export default function TradingCockpit() {
   async function loadCandidates() {
     try {
       const res = await axios.get("/api/candidates");
-      setCandidates(res.data || []);
+      const list = res.data?.candidates ?? res.data ?? [];
+      setCandidates(list);
       // Fetch initial quotes
-      const tickers = (res.data || []).map(c => c.ticker).join(",");
+      const tickers = list.map(c => c.ticker).join(",");
       if (tickers) {
         const qRes = await axios.get(`/api/quotes?symbols=${tickers}`);
         setQuotes(qRes.data);
