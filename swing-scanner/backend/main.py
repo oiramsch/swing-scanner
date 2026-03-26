@@ -1166,6 +1166,162 @@ async def get_scanner_settings(current_user: AuthenticatedUser = Depends(get_cur
 
 
 # ---------------------------------------------------------------------------
+# AI Health & API Key Management
+# ---------------------------------------------------------------------------
+
+@app.get("/api/health/ai")
+async def get_ai_health(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Return current Claude API health status (last stored error)."""
+    from backend.database import get_ai_status
+    status = get_ai_status()
+    # Add key-set indicator (never return the actual key)
+    status["key_set"] = bool(settings.anthropic_api_key)
+    return status
+
+
+@app.put("/api/settings/anthropic-key")
+async def update_anthropic_key(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Write ANTHROPIC_API_KEY to .env and reload the setting in-process.
+    Body: { "api_key": "sk-ant-..." }
+    """
+    from backend.database import clear_ai_error
+    import re as _re
+
+    api_key = (data.get("api_key") or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=422, detail="api_key darf nicht leer sein")
+    if not api_key.startswith("sk-ant-"):
+        raise HTTPException(status_code=422, detail="Ungültiges Key-Format (erwartet sk-ant-…)")
+
+    env_path = Path(__file__).parent.parent / ".env"
+    # Read existing .env (create empty if not found)
+    if env_path.exists():
+        content = env_path.read_text(encoding="utf-8")
+    else:
+        content = ""
+
+    pattern = _re.compile(r"^ANTHROPIC_API_KEY=.*$", _re.MULTILINE)
+    new_line = f"ANTHROPIC_API_KEY={api_key}"
+    if pattern.search(content):
+        content = pattern.sub(new_line, content)
+    else:
+        content = content.rstrip("\n") + "\n" + new_line + "\n"
+
+    env_path.write_text(content, encoding="utf-8")
+
+    # Update in-process so the scanner/analyzer picks it up immediately
+    settings.anthropic_api_key = api_key
+
+    # Clear any stored error since we have a new key
+    clear_ai_error()
+
+    logger.info("ANTHROPIC_API_KEY updated via Settings UI")
+    return {"status": "saved"}
+
+
+@app.get("/api/settings/ntfy")
+async def get_ntfy_settings(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Return current ntfy.sh configuration."""
+    from backend.database import get_ntfy_alerts
+    alerts = get_ntfy_alerts()
+    return {
+        "topic": settings.ntfy_topic,
+        "topic_set": bool(settings.ntfy_topic),
+        **alerts,
+    }
+
+
+@app.put("/api/settings/ntfy")
+async def update_ntfy_settings(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Save ntfy topic to .env and alert flags to DB."""
+    import re as _re
+    from backend.database import set_ntfy_alerts
+
+    topic = data.get("topic", "").strip()
+    if topic:
+        env_path = Path(__file__).parent.parent / ".env"
+        content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+        pattern = _re.compile(r"^NTFY_TOPIC=.*$", _re.MULTILINE)
+        new_line = f"NTFY_TOPIC={topic}"
+        if pattern.search(content):
+            content = pattern.sub(new_line, content)
+        else:
+            content = content.rstrip("\n") + "\n" + new_line + "\n"
+        env_path.write_text(content, encoding="utf-8")
+        settings.ntfy_topic = topic
+
+    set_ntfy_alerts({
+        "alerts_scan":        bool(data.get("alerts_scan", True)),
+        "alerts_entry_zone":  bool(data.get("alerts_entry_zone", True)),
+        "alerts_regime":      bool(data.get("alerts_regime", True)),
+    })
+    return {"status": "saved"}
+
+
+@app.post("/api/settings/ntfy/test")
+async def test_ntfy(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Send a test push notification via ntfy.sh."""
+    from backend.notifier import send_push
+    if not settings.ntfy_topic:
+        raise HTTPException(status_code=400, detail="Kein ntfy-Topic konfiguriert")
+    ok = send_push(
+        title="✅ Swing Scanner — Test",
+        message="Push-Notifications funktionieren!",
+        priority="default",
+        tags="white_check_mark",
+    )
+    if ok:
+        return {"status": "sent"}
+    raise HTTPException(status_code=500, detail="ntfy-Request fehlgeschlagen")
+
+
+@app.post("/api/settings/anthropic-key/test")
+async def test_anthropic_key(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Test a given (or current) ANTHROPIC_API_KEY with a minimal 1-token request.
+    Body: { "api_key": "sk-ant-..." }  — omit to test the currently configured key.
+    """
+    import anthropic as _anthropic
+
+    api_key = (data.get("api_key") or "").strip() or settings.anthropic_api_key
+    if not api_key:
+        return {"ok": False, "error": "Kein API-Key konfiguriert"}
+
+    try:
+        client = _anthropic.Anthropic(api_key=api_key)
+        client.messages.create(
+            model=settings.claude_model,
+            max_tokens=1,
+            messages=[{"role": "user", "content": "ping"}],
+        )
+        # Clear any stored error on successful test
+        from backend.database import clear_ai_error
+        clear_ai_error()
+        return {"ok": True}
+    except _anthropic.AuthenticationError as exc:
+        return {"ok": False, "error": f"Authentifizierung fehlgeschlagen: {exc}"}
+    except _anthropic.APIStatusError as exc:
+        msg = str(exc)
+        if "credit" in msg.lower() or "quota" in msg.lower() or "billing" in msg.lower():
+            from backend.database import set_ai_error
+            set_ai_error(str(exc))
+            return {"ok": False, "error": f"Budget erschöpft: {exc}"}
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # Trading — Orders (Phase 3)
 # ---------------------------------------------------------------------------
 

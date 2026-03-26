@@ -49,6 +49,26 @@ Respond ONLY with this exact JSON:
 }"""
 
 
+def _maybe_store_ai_error(exc) -> None:
+    """If the exception looks like a credit/auth issue, persist it for the UI warning."""
+    msg = str(exc).lower()
+    status = getattr(exc, "status_code", None)
+    is_credit_auth = (
+        status in (401, 402, 403)
+        or "credit" in msg
+        or "quota" in msg
+        or "billing" in msg
+        or "authentication" in msg
+        or "permission" in msg
+    )
+    if is_credit_auth:
+        try:
+            from backend.database import set_ai_error
+            set_ai_error(str(exc))
+        except Exception:
+            pass
+
+
 def _extract_json(text: str) -> Optional[dict]:
     text = text.strip()
     try:
@@ -117,7 +137,15 @@ def extract_facts(
         )
     except anthropic.APIError as exc:
         logger.error("Fact extraction API error for %s: %s", ticker, exc)
+        _maybe_store_ai_error(exc)
         return None
+
+    # Successful call — clear any stored error (e.g., after an outage resolves)
+    try:
+        from backend.database import clear_ai_error
+        clear_ai_error()
+    except Exception:
+        pass
 
     raw = response.content[0].text if response.content else ""
     facts = _extract_json(raw)

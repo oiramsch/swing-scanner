@@ -233,7 +233,16 @@ def _analyze_legacy(
         )
     except anthropic.APIError as exc:
         logger.error("Claude API error for %s: %s", ticker, exc)
+        from backend.fact_extractor import _maybe_store_ai_error
+        _maybe_store_ai_error(exc)
         return None
+
+    # Successful call — clear any stored error
+    try:
+        from backend.database import clear_ai_error
+        clear_ai_error()
+    except Exception:
+        pass
 
     raw_text = response.content[0].text if response.content else ""
     analysis = _extract_json(raw_text)

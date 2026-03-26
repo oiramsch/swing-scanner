@@ -66,14 +66,79 @@ def notify_watchlist_alert(ticker: str, condition: str, current_price: float):
     )
 
 
-def notify_scan_complete(candidates_found: int, top_tickers: list[str]):
-    tickers_str = ", ".join(top_tickers[:3]) if top_tickers else "none"
-    send_push(
-        title=f"📊 Scan Complete: {candidates_found} candidates",
-        message=f"Top setups: {tickers_str}",
-        priority="default",
-        tags="chart_with_upwards_trend",
+def notify_scan_complete(
+    candidates_found: int,
+    top_candidates: list,  # list of ScanResult objects
+    regime: str = "",
+):
+    """
+    Scan-complete push. Includes top candidates with CRV + regime.
+    top_candidates: list of ScanResult (sorted by composite_score desc).
+    """
+    from backend.database import get_ntfy_alerts
+    if not get_ntfy_alerts().get("alerts_scan", True):
+        return
+
+    if not top_candidates:
+        msg = "📭 Keine Kandidaten heute."
+    else:
+        lines = []
+        for r in top_candidates[:3]:
+            crv = f"CRV {r.crv_calculated:.1f}" if r.crv_calculated else ""
+            lines.append(f"{r.ticker} {crv}".strip())
+        msg = "Top: " + ", ".join(lines)
+
+    if regime:
+        msg += f"\nRegime: {regime.upper()}"
+
+    title = (
+        f"🔍 Scan: {candidates_found} Kandidaten"
+        if candidates_found > 0
+        else "📭 Scan: Keine Kandidaten"
     )
+    send_push(title=title, message=msg, priority="default", tags="chart_with_upwards_trend")
+
+
+def notify_regime_change(old_regime: str, new_regime: str, spy_close: float, sma50: float, sma200: float):
+    """Push when the market regime changes (e.g. bear → neutral)."""
+    from backend.database import get_ntfy_alerts
+    if not get_ntfy_alerts().get("alerts_regime", True):
+        return
+
+    icons = {"bull": "📈", "bear": "📉", "neutral": "➡️"}
+    icon = icons.get(new_regime, "❓")
+    send_push(
+        title=f"{icon} Regime-Wechsel: {old_regime.upper()} → {new_regime.upper()}",
+        message=f"SPY ${spy_close:.2f} · SMA50 ${sma50:.2f} · SMA200 ${sma200:.2f}",
+        priority="high",
+        tags="warning",
+    )
+
+
+def notify_entry_zone(
+    ticker: str,
+    price: float,
+    entry_low: float,
+    entry_high: float,
+    setup_type: str = "",
+    crv: Optional[float] = None,
+):
+    """Push when a pending TradePlan enters the entry zone."""
+    from backend.database import get_ntfy_alerts, set_ntfy_entry_sent, was_ntfy_entry_sent
+    if not get_ntfy_alerts().get("alerts_entry_zone", True):
+        return
+    if was_ntfy_entry_sent(ticker):
+        return
+
+    crv_str = f" · CRV {crv:.1f}" if crv else ""
+    setup_str = f" · {setup_type}" if setup_type else ""
+    send_push(
+        title=f"🚨 {ticker} in Kaufzone!",
+        message=f"Preis: ${price:.2f} (Zone ${entry_low:.2f}–${entry_high:.2f}){setup_str}{crv_str}",
+        priority="high",
+        tags="rotating_light",
+    )
+    set_ntfy_entry_sent(ticker)
 
 
 def notify_market_update_critical(ticker: str, alert_msg: str, market_change: float):

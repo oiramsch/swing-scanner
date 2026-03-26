@@ -391,9 +391,9 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
     except Exception as exc:
         logger.warning("Ghost Portfolio archiving failed: %s", exc)
 
-    # Notify
-    top_tickers = [r[0].ticker for r in saved_results[:3]]
-    notify_scan_complete(saved, top_tickers)
+    # Notify — pass full ScanResult objects sorted by composite_score for CRV info
+    top_by_score = sorted(saved_results, key=lambda x: x[0].composite_score or 0, reverse=True)
+    notify_scan_complete(saved, [r[0] for r in top_by_score[:3]], regime=regime)
 
     summary = {
         "status": "done",
@@ -662,6 +662,71 @@ async def daily_summary_notification(ctx: dict):
 
 
 # ---------------------------------------------------------------------------
+# Entry-Zone Check — hourly during US market hours (14–20 UTC)
+# ---------------------------------------------------------------------------
+
+async def entry_zone_check(ctx: dict):
+    """
+    Check all pending TradePlans against live prices.
+    Sends a push-alert (once per day per ticker) when price enters the entry zone.
+    Runs hourly 14:00–20:00 UTC (09:00–15:00 ET).
+    """
+    logger.info("=== entry_zone_check ===")
+    try:
+        from backend.database import get_active_trade_plans, get_ntfy_alerts
+        from backend.notifier import notify_entry_zone
+        from backend.providers import get_data_provider
+
+        if not get_ntfy_alerts().get("alerts_entry_zone", True):
+            logger.debug("entry_zone alerts disabled — skipping")
+            return
+
+        plans = get_active_trade_plans()
+        if not plans:
+            logger.debug("No active trade plans — skipping entry zone check")
+            return
+
+        tickers = list({p.ticker for p in plans})
+        provider = get_data_provider()
+
+        # Fetch last bar for each ticker
+        prices: dict[str, float] = {}
+        for ticker in tickers:
+            try:
+                df = await provider.get_daily_bars(ticker, days=3)
+                if df is not None and not df.empty:
+                    prices[ticker] = float(df.iloc[-1]["Close"])
+            except Exception as exc:
+                logger.warning("Price fetch failed for %s: %s", ticker, exc)
+
+        for plan in plans:
+            price = prices.get(plan.ticker)
+            if price is None:
+                continue
+            if plan.entry_low <= price <= plan.entry_high:
+                # Fetch CRV from scan result if available
+                crv = None
+                if plan.scan_result_id:
+                    from backend.database import get_result_by_ticker
+                    sr = get_result_by_ticker(plan.ticker)
+                    if sr:
+                        crv = sr.crv_calculated
+
+                notify_entry_zone(
+                    ticker=plan.ticker,
+                    price=price,
+                    entry_low=plan.entry_low,
+                    entry_high=plan.entry_high,
+                    setup_type=plan.setup_type or "",
+                    crv=crv,
+                )
+                logger.info("Entry-zone alert sent for %s @ $%.2f", plan.ticker, price)
+
+    except Exception as exc:
+        logger.error("entry_zone_check failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner (for manual trigger from FastAPI)
 # ---------------------------------------------------------------------------
 
@@ -696,6 +761,7 @@ class WorkerSettings:
         performance_update,
         market_update_auto,
         daily_summary_notification,
+        entry_zone_check,
     ]
     cron_jobs = [
         cron(market_regime_update, hour={22}, minute={0}, run_at_startup=False),
@@ -706,6 +772,8 @@ class WorkerSettings:
         cron(performance_update, hour={22}, minute={45}, run_at_startup=False),
         cron(market_update_auto, hour={22}, minute={50}, run_at_startup=False),
         cron(daily_summary_notification, hour={22}, minute={55}, run_at_startup=False),
+        # Entry-zone check: hourly 14–20 UTC (09:00–15:00 ET, while market is open)
+        cron(entry_zone_check, hour={14, 15, 16, 17, 18, 19, 20}, minute={0}, run_at_startup=False),
     ]
     on_startup = startup
     max_jobs = 1

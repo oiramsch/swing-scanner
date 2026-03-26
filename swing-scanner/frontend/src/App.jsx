@@ -119,6 +119,7 @@ export default function App() {
   const [regime, setRegime] = useState(null);
   const [regimeRefreshing, setRegimeRefreshing] = useState(false);
   const [scanStatus, setScanStatus] = useState(null);
+  const [aiHealth, setAiHealth] = useState(null);
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -140,6 +141,7 @@ export default function App() {
     if (!currentUser) return;
     fetchRegime();
     fetchScanStatus();
+    fetchAiHealth();
   }, [currentUser]);
 
   function handleLogin(data) {
@@ -186,6 +188,13 @@ export default function App() {
     }
   }
 
+  async function fetchAiHealth() {
+    try {
+      const res = await axios.get("/api/health/ai");
+      setAiHealth(res.data);
+    } catch {}
+  }
+
   function startPolling() {
     if (pollRef.current) return;
     pollRef.current = setInterval(async () => {
@@ -217,6 +226,19 @@ export default function App() {
     <div className="min-h-screen bg-gray-950 text-gray-100">
       {/* Global Header */}
       <header className="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+        {/* Claude API Error Banner */}
+        {aiHealth && !aiHealth.ok && (
+          <div className="px-4 py-1.5 text-xs bg-red-950/80 border-b border-red-800/60 flex items-center gap-2">
+            <span className="text-red-400 font-semibold">Claude API</span>
+            <span className="text-red-300/80 truncate flex-1">{aiHealth.error}</span>
+            <button
+              onClick={() => setActiveTab("settings")}
+              className="shrink-0 px-2 py-0.5 rounded bg-red-900/60 hover:bg-red-900 border border-red-700/50 text-red-300 transition text-[11px]"
+            >
+              Key einrichten →
+            </button>
+          </div>
+        )}
         {/* Market Regime Banner */}
         {regime && (
           <div className={`px-4 py-1 text-xs font-medium border-b flex items-center gap-2 flex-wrap ${REGIME_COLORS[regime.regime] ?? REGIME_COLORS.unknown}`}>

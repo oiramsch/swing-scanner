@@ -713,6 +713,12 @@ class BrokerConnection(SQLModel, table=True):
 # Multi-Broker OMS — Trade Plan
 # ---------------------------------------------------------------------------
 
+class AppSetting(SQLModel, table=True):
+    """Key-value store for persistent application settings (AI status, etc.)."""
+    key:   str = Field(primary_key=True)
+    value: str = ""
+
+
 class TradePlan(SQLModel, table=True):
     """
     Broker-agnostic trade plan. Created from a scanner candidate or manually.
@@ -1723,3 +1729,91 @@ def calculate_fee(fee_model: dict, order_value: float) -> float:
             fee = min(fee, float(cap))
         return round(fee, 4)
     return 0.0
+
+
+# ---------------------------------------------------------------------------
+# AppSetting CRUD — AI status + other key-value settings
+# ---------------------------------------------------------------------------
+
+_AI_ERROR_KEY = "last_ai_error"
+
+
+def get_ai_status() -> dict:
+    """Return current AI health status."""
+    with Session(get_engine()) as session:
+        row = session.get(AppSetting, _AI_ERROR_KEY)
+        if not row:
+            return {"ok": True, "error": None, "last_error_at": None}
+        try:
+            data = json.loads(row.value)
+            return {"ok": False, "error": data.get("error"), "last_error_at": data.get("at")}
+        except Exception:
+            return {"ok": False, "error": row.value, "last_error_at": None}
+
+
+def set_ai_error(message: str) -> None:
+    """Persist an AI API error (credit/auth) so the UI can warn the user."""
+    with Session(get_engine()) as session:
+        row = session.get(AppSetting, _AI_ERROR_KEY)
+        if row is None:
+            row = AppSetting(key=_AI_ERROR_KEY)
+        row.value = json.dumps({"error": message, "at": datetime.utcnow().isoformat()})
+        session.add(row)
+        session.commit()
+
+
+def clear_ai_error() -> None:
+    """Clear any stored AI error (e.g., after a successful call or key update)."""
+    with Session(get_engine()) as session:
+        row = session.get(AppSetting, _AI_ERROR_KEY)
+        if row:
+            session.delete(row)
+            session.commit()
+
+
+# ---------------------------------------------------------------------------
+# ntfy.sh Push-Alert Settings
+# ---------------------------------------------------------------------------
+
+_NTFY_ALERT_KEYS = ("ntfy_alerts_scan", "ntfy_alerts_entry_zone", "ntfy_alerts_regime")
+
+
+def get_ntfy_alerts() -> dict:
+    """Return current ntfy alert flags (all default to True if not set)."""
+    with Session(get_engine()) as session:
+        result = {}
+        for key in _NTFY_ALERT_KEYS:
+            row = session.get(AppSetting, key)
+            short = key.replace("ntfy_", "")  # e.g. "alerts_scan"
+            result[short] = (row.value.lower() == "true") if row else True
+        return result
+
+
+def set_ntfy_alerts(data: dict) -> None:
+    """Persist ntfy alert flags (alerts_scan, alerts_entry_zone, alerts_regime)."""
+    with Session(get_engine()) as session:
+        for key in _NTFY_ALERT_KEYS:
+            short = key.replace("ntfy_", "")
+            row = session.get(AppSetting, key)
+            if row is None:
+                row = AppSetting(key=key)
+            row.value = "true" if data.get(short, True) else "false"
+            session.add(row)
+        session.commit()
+
+
+def was_ntfy_entry_sent(ticker: str) -> bool:
+    """True if an entry-zone alert was already sent for this ticker today."""
+    key = f"ntfy_entry_{date.today().isoformat()}_{ticker}"
+    with Session(get_engine()) as session:
+        return session.get(AppSetting, key) is not None
+
+
+def set_ntfy_entry_sent(ticker: str) -> None:
+    """Mark that an entry-zone alert was sent for this ticker today."""
+    key = f"ntfy_entry_{date.today().isoformat()}_{ticker}"
+    with Session(get_engine()) as session:
+        row = session.get(AppSetting, key) or AppSetting(key=key)
+        row.value = "1"
+        session.add(row)
+        session.commit()

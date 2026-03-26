@@ -62,6 +62,10 @@ async def update_market_regime() -> Optional[MarketRegime]:
         regime = "neutral"
         note   = "SPY between SMA50 and SMA200"
 
+    # Detect regime change before saving
+    previous = get_latest_regime()
+    old_regime = previous.regime if previous else None
+
     mr = MarketRegime(
         date=date.today(),
         spy_close=spy_close,
@@ -75,6 +79,15 @@ async def update_market_regime() -> Optional[MarketRegime]:
         "Market regime updated: %s (SPY=%.2f SMA50=%.2f SMA200=%.2f)",
         regime, spy_close, sma50, sma200,
     )
+
+    if old_regime and old_regime != regime:
+        logger.info("Regime changed: %s → %s — sending push alert", old_regime, regime)
+        try:
+            from backend.notifier import notify_regime_change
+            notify_regime_change(old_regime, regime, spy_close, round(sma50, 2), round(sma200, 2))
+        except Exception as exc:
+            logger.warning("Regime-change notification failed: %s", exc)
+
     return saved
 
 

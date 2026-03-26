@@ -587,6 +587,240 @@ function ScannerSection() {
 }
 
 // ---------------------------------------------------------------------------
+// Push-Notifications (ntfy.sh)
+// ---------------------------------------------------------------------------
+function NtfySection() {
+  const [cfg,     setCfg]     = useState(null);
+  const [topic,   setTopic]   = useState("");
+  const [alerts,  setAlerts]  = useState({ alerts_scan: true, alerts_entry_zone: true, alerts_regime: true });
+  const [saving,  setSaving]  = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [result,  setResult]  = useState(null);
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    try {
+      const res = await axios.get("/api/settings/ntfy");
+      setCfg(res.data);
+      setAlerts({
+        alerts_scan:       res.data.alerts_scan       ?? true,
+        alerts_entry_zone: res.data.alerts_entry_zone ?? true,
+        alerts_regime:     res.data.alerts_regime     ?? true,
+      });
+    } catch {}
+  }
+
+  async function save(e) {
+    e.preventDefault();
+    setSaving(true); setResult(null);
+    try {
+      await axios.put("/api/settings/ntfy", { topic: topic || undefined, ...alerts });
+      setResult({ ok: true, text: "Gespeichert." });
+      setTopic("");
+      await load();
+    } catch (err) {
+      setResult({ ok: false, text: err.response?.data?.detail || "Fehler" });
+    } finally { setSaving(false); }
+  }
+
+  async function test() {
+    setTesting(true); setResult(null);
+    try {
+      await axios.post("/api/settings/ntfy/test");
+      setResult({ ok: true, text: "Test-Nachricht gesendet — Handy checken!" });
+    } catch (err) {
+      setResult({ ok: false, text: err.response?.data?.detail || "Fehler" });
+    } finally { setTesting(false); }
+  }
+
+  const CHECKS = [
+    { key: "alerts_scan",       label: "Tägliches Scan-Ergebnis" },
+    { key: "alerts_entry_zone", label: "Kaufzonen-Alerts (stündlich während Marktzeiten)" },
+    { key: "alerts_regime",     label: "Regime-Wechsel" },
+  ];
+
+  return (
+    <Section title="Push-Notifications (ntfy.sh)">
+      {cfg && cfg.topic_set && (
+        <div className="flex items-center gap-1.5 text-xs text-green-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+          Topic: <span className="font-mono">{cfg.topic}</span>
+        </div>
+      )}
+      {cfg && !cfg.topic_set && (
+        <div className="text-xs text-gray-500">
+          Kein Topic konfiguriert — Push-Notifications deaktiviert.{" "}
+          <a href="https://ntfy.sh" target="_blank" rel="noreferrer" className="text-indigo-400 underline">ntfy.sh</a> ist kostenlos, kein Account nötig.
+        </div>
+      )}
+
+      <form onSubmit={save} className="space-y-3 mt-1">
+        <Field label="ntfy.sh Topic" hint="z.B. swing-scanner-mario — muss eindeutig sein (kein Account nötig)">
+          <input
+            type="text"
+            value={topic}
+            onChange={e => setTopic(e.target.value)}
+            placeholder={cfg?.topic || "swing-scanner-deinname"}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
+          />
+        </Field>
+
+        <div className="space-y-2">
+          <label className="block text-xs text-gray-400">Aktive Alerts</label>
+          {CHECKS.map(({ key, label }) => (
+            <label key={key} className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={alerts[key]}
+                onChange={e => setAlerts(a => ({ ...a, [key]: e.target.checked }))}
+                className="accent-indigo-500"
+              />
+              <span className="text-sm text-gray-300">{label}</span>
+            </label>
+          ))}
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={test}
+            disabled={testing || !cfg?.topic_set}
+            title={!cfg?.topic_set ? "Erst Topic speichern" : undefined}
+            className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 rounded-lg transition disabled:opacity-50"
+          >
+            {testing ? "Sende…" : "Test-Notification senden"}
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-3 py-1.5 text-xs bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg transition disabled:opacity-50"
+          >
+            {saving ? "Speichern…" : "Speichern"}
+          </button>
+        </div>
+        {result && (
+          <p className={`text-xs ${result.ok ? "text-green-400" : "text-red-400"}`}>{result.text}</p>
+        )}
+      </form>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Claude API Key & Health
+// ---------------------------------------------------------------------------
+function ClaudeApiSection() {
+  const [health,   setHealth]   = useState(null);
+  const [apiKey,   setApiKey]   = useState("");
+  const [saving,   setSaving]   = useState(false);
+  const [testing,  setTesting]  = useState(false);
+  const [result,   setResult]   = useState(null); // { ok, text }
+
+  useEffect(() => { loadHealth(); }, []);
+
+  async function loadHealth() {
+    try {
+      const res = await axios.get("/api/health/ai");
+      setHealth(res.data);
+    } catch {}
+  }
+
+  async function save(e) {
+    e.preventDefault();
+    if (!apiKey) return;
+    setSaving(true); setResult(null);
+    try {
+      await axios.put("/api/settings/anthropic-key", { api_key: apiKey });
+      setResult({ ok: true, text: "Key gespeichert. Scanner nutzt ihn ab sofort." });
+      setApiKey("");
+      await loadHealth();
+    } catch (err) {
+      setResult({ ok: false, text: err.response?.data?.detail || "Fehler beim Speichern" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function test() {
+    setTesting(true); setResult(null);
+    try {
+      const res = await axios.post("/api/settings/anthropic-key/test", { api_key: apiKey || undefined });
+      if (res.data.ok) {
+        setResult({ ok: true, text: "Verbindung erfolgreich — Key ist gültig." });
+        await loadHealth();
+      } else {
+        setResult({ ok: false, text: res.data.error || "Test fehlgeschlagen" });
+      }
+    } catch (err) {
+      setResult({ ok: false, text: err.response?.data?.detail || "Test fehlgeschlagen" });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <Section title="Claude API Key">
+      {/* Status banner */}
+      {health && !health.ok && (
+        <div className="bg-red-900/20 border border-red-700/50 rounded-lg p-3 text-xs text-red-300">
+          <div className="font-semibold mb-0.5">Claude API — Fehler zuletzt aufgetreten</div>
+          <div className="text-red-400/80">{health.error}</div>
+          {health.last_error_at && (
+            <div className="text-red-500/60 mt-1">{new Date(health.last_error_at).toLocaleString("de")}</div>
+          )}
+        </div>
+      )}
+      {health && health.ok && health.key_set && (
+        <div className="flex items-center gap-1.5 text-xs text-green-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+          Key konfiguriert — kein Fehler bekannt
+        </div>
+      )}
+      {health && !health.key_set && (
+        <div className="flex items-center gap-1.5 text-xs text-yellow-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+          Kein API-Key konfiguriert
+        </div>
+      )}
+
+      {/* Key input */}
+      <form onSubmit={save} className="space-y-3 mt-1">
+        <Field label="Anthropic API Key" hint="sk-ant-… — wird maskiert in .env gespeichert, nie in der UI angezeigt">
+          <input
+            type="password"
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+            placeholder="sk-ant-api03-… (leer = unverändert)"
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
+          />
+        </Field>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={test}
+            disabled={testing}
+            className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 rounded-lg transition disabled:opacity-50"
+          >
+            {testing ? "Teste…" : "Verbindung testen"}
+          </button>
+          <button
+            type="submit"
+            disabled={saving || !apiKey}
+            className="px-3 py-1.5 text-xs bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg transition disabled:opacity-50"
+          >
+            {saving ? "Speichern…" : "Key speichern"}
+          </button>
+        </div>
+        {result && (
+          <p className={`text-xs ${result.ok ? "text-green-400" : "text-red-400"}`}>{result.text}</p>
+        )}
+      </form>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 export default function SettingsTab({ currentUser, onLogout }) {
@@ -597,6 +831,8 @@ export default function SettingsTab({ currentUser, onLogout }) {
         <p className="text-xs text-gray-500 mt-0.5">Angemeldet als {currentUser?.email}</p>
       </div>
 
+      <ErrorBoundary><NtfySection /></ErrorBoundary>
+      <ErrorBoundary><ClaudeApiSection /></ErrorBoundary>
       <ErrorBoundary><BrokerManagementSection /></ErrorBoundary>
       <ErrorBoundary><ModulesSection /></ErrorBoundary>
       <ErrorBoundary><ScannerSection /></ErrorBoundary>
