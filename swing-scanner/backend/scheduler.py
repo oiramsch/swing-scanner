@@ -279,7 +279,12 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
                        i+1, total_candidates, saved, pct)
 
         try:
-            analysis = analyze_chart(chart_path, ticker, indicators, news_check=news_check)
+            analysis = analyze_chart(
+                chart_path, ticker, indicators,
+                news_check=news_check,
+                module=candidate.get("strategy_module"),
+                regime=regime,
+            )
         except Exception as exc:
             logger.warning("Analysis failed for %s: %s", ticker, exc)
             failed += 1
@@ -350,6 +355,7 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
                 strategy_module=module_name,
                 candidate_status=candidate_status,
                 composite_score=_composite,
+                extracted_facts_json=analysis.get("extracted_facts_json"),
             )
             saved_result = save_scan_result(result)
             # Only queue for deep analysis if the candidate is active

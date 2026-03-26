@@ -78,5 +78,9 @@ class Settings(BaseSettings):
     deep_analysis_threshold: int = 7
     deep_analysis_top_n: int = 10
 
+    # Two-stage analysis: fact extraction (Vision) + rule-based classifier (no LLM)
+    # Set to false to revert to single-stage analysis for comparison/debugging
+    use_two_stage_analysis: bool = True
+
 
 settings = Settings()

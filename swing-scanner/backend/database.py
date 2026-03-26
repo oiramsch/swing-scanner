@@ -94,6 +94,8 @@ def _apply_migrations():
         # v2.7 — Portfolio: Broker-Zuordnung + Wechselkurs bei Ausführung
         ("portfolioposition", "broker_id",          "INTEGER"),
         ("portfolioposition", "execution_fx_rate",  "REAL"),
+        # v2.8 — Two-stage analysis: Vision-extracted facts stored for debugging
+        ("scanresult", "extracted_facts_json", "TEXT"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -368,6 +370,8 @@ class ScanResult(SQLModel, table=True):
     # Formula: confidence * clamp(crv / 2.0, 0.5, 1.5)
     # CRV=2.0 is neutral, below=penalty, above=bonus
     composite_score: Optional[float] = None
+    # v2.8 — Two-stage analysis: JSON blob of Vision-extracted facts for debugging
+    extracted_facts_json: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
