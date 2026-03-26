@@ -120,6 +120,7 @@ def analyze_chart(
         response = client.messages.create(
             model=settings.claude_model,
             max_tokens=settings.claude_max_tokens,
+            temperature=0,
             system=SYSTEM_PROMPT,
             messages=[{
                 "role": "user",

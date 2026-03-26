@@ -187,6 +187,7 @@ Respond ONLY with JSON:
         response = client.messages.create(
             model=HAIKU_MODEL,
             max_tokens=256,
+            temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = response.content[0].text if response.content else "{}"

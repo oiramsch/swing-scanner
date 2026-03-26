@@ -98,6 +98,7 @@ def deep_analyze(
         response = client.messages.create(
             model=settings.claude_model,
             max_tokens=settings.claude_deep_max_tokens,
+            temperature=0,
             system=system_prompt,
             messages=[{
                 "role": "user",

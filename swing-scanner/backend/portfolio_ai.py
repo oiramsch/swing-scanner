@@ -114,6 +114,7 @@ async def run_portfolio_ai_check() -> Optional[dict]:
         response = client.messages.create(
             model=settings.claude_model,
             max_tokens=1500,
+            temperature=0,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_text}],
         )

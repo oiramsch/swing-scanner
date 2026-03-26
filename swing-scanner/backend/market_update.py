@@ -195,6 +195,7 @@ Respond ONLY with JSON:
         response = client.messages.create(
             model=settings.claude_model,
             max_tokens=1500,
+            temperature=0,
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}],
         )
