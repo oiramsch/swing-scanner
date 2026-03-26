@@ -11,6 +11,7 @@ from typing import Optional
 class BrokerConnector(ABC):
     broker_type: str = "unknown"
     currency: str = "USD"
+    supports_short_selling: bool = False
 
     def __init__(self, connection: dict):
         self.connection = connection

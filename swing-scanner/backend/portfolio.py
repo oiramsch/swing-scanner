@@ -109,6 +109,9 @@ def create_position(data: dict) -> dict:
         ),
         position_size_warning=data.get("position_size_warning"),
         setting_generated_at=datetime.utcnow() if action_setting else None,
+        # v2.7
+        broker_id=data.get("broker_id"),
+        execution_fx_rate=data.get("execution_fx_rate"),
     )
     saved = save_position(pos)
 

@@ -346,19 +346,34 @@ async def list_candidates(
 
     # Fix A/B/C: only show actionable candidates by default
     if not include_filtered:
+        # Check if any configured broker supports short selling → show direction_mismatch
+        from backend.brokers import get_connector
+        broker_conns = get_all_broker_connections(1)  # tenant_id=1
+        any_short = any(
+            get_connector(c.model_dump()).supports_short_selling
+            for c in broker_conns
+            if c.is_active
+        )
+
         actionable = []
         for r in results:
             status = r.candidate_status or "active"
+            if status == "filtered_avoid":
+                continue
+            if status == "direction_mismatch":
+                if any_short:
+                    actionable.append(r)  # show as Short-Setup for short-capable brokers
+                continue
             if status != "active":
                 continue
-            # Safety net for old NULL-status records: skip direction mismatches
+            # Safety net for old NULL-status records
             if r.entry_zone and r.stop_loss:
                 try:
                     import re as _re
                     nums = [float(x) for x in _re.findall(r"[\d.]+", str(r.entry_zone))]
                     entry_trigger = max(nums) if nums else None
                     if entry_trigger and float(r.stop_loss) >= entry_trigger:
-                        continue  # stop >= entry → direction mismatch
+                        continue
                 except Exception:
                     pass
             actionable.append(r)
@@ -1621,6 +1636,17 @@ async def tr_plan_executed(
 
     qty = int(data.get("qty", 1))
 
+    # Fetch current EURUSD rate for EUR P&L tracking
+    fx_rate = None
+    try:
+        import yfinance as _yf
+        _t = _yf.Ticker("EURUSD=X")
+        _hist = _t.history(period="1d")
+        if not _hist.empty:
+            fx_rate = round(float(_hist["Close"].iloc[-1]), 4)
+    except Exception:
+        fx_rate = 1.09  # fallback
+
     # Create portfolio entry from plan data
     pos_data = {
         "ticker": plan.ticker,
@@ -1632,6 +1658,8 @@ async def tr_plan_executed(
         "setup_type": plan.setup_type or "breakout",
         "notes": f"TR-Ausführung via TradePlan #{plan_id}",
         "scan_result_id": plan.scan_result_id,
+        "broker_id": broker_id,
+        "execution_fx_rate": fx_rate,
     }
     position = create_position(pos_data)
 
@@ -1729,6 +1757,16 @@ async def create_broker(
     """Create a new broker connection."""
     if not data.get("broker_type"):
         raise HTTPException(status_code=400, detail="broker_type erforderlich")
+    # Set broker-type defaults
+    broker_type = data["broker_type"]
+    if "supports_short_selling" not in data:
+        data["supports_short_selling"] = broker_type == "alpaca"
+    if "fee_model_json" not in data:
+        defaults = {
+            "alpaca":          json.dumps({"type": "flat", "amount": 0.0}),
+            "trade_republic":  json.dumps({"type": "flat", "amount": 1.0}),
+        }
+        data["fee_model_json"] = defaults.get(broker_type, json.dumps({"type": "flat", "amount": 0.0}))
     conn = create_broker_connection(current_user.tenant_id, data)
     return conn.model_dump()
 

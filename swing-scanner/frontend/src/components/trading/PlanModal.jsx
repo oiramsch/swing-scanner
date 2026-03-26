@@ -10,9 +10,24 @@ function parseEntryZone(entryZone) {
   return { low: String(lo), high: String(hi) };
 }
 
-function PositionSizer({ entryHigh, stopLoss, riskPct, brokers, selectedBrokers }) {
+function calcFee(feeModelJson, orderValue) {
+  try {
+    const m = feeModelJson ? JSON.parse(feeModelJson) : { type: "flat", amount: 0 };
+    if (m.type === "flat") return m.amount ?? 0;
+    if (m.type === "percent") {
+      let fee = orderValue * ((m.rate ?? 0) / 100);
+      if (m.min != null) fee = Math.max(fee, m.min);
+      if (m.max != null) fee = Math.min(fee, m.max);
+      return fee;
+    }
+  } catch { /* ignore */ }
+  return 0;
+}
+
+function PositionSizer({ entryHigh, stopLoss, target, riskPct, brokers, selectedBrokers }) {
   const entry = parseFloat(entryHigh);
   const stop  = parseFloat(stopLoss);
+  const tgt   = parseFloat(target);
 
   const lines = useMemo(() => {
     if (!entry || !stop || stop >= entry) return [];
@@ -20,31 +35,65 @@ function PositionSizer({ entryHigh, stopLoss, riskPct, brokers, selectedBrokers 
     return brokers
       .filter(b => selectedBrokers.includes(b.id))
       .map(b => {
-        const balance = b.manual_balance ?? 0;
+        const balance  = b.manual_balance ?? 0;
         const currency = b.manual_currency ?? "USD";
-        const riskAmount = balance * (parseFloat(riskPct) / 100);
-        const shares = riskAmount > 0 ? Math.floor(riskAmount / riskPerShare) : null;
-        const posValue = shares ? shares * entry : null;
-        return { label: b.label, balance, currency, riskAmount, shares, posValue };
+        const grossRiskBudget = balance * (parseFloat(riskPct) / 100);
+        // Estimate order value for fee calc (conservative: use entry × estimated shares)
+        const estimatedShares = grossRiskBudget > 0 ? Math.floor(grossRiskBudget / riskPerShare) : 0;
+        const orderValue = estimatedShares * entry;
+        const singleFee  = calcFee(b.fee_model_json, orderValue);
+        const roundTrip  = singleFee * 2;
+        const netRiskBudget = grossRiskBudget - roundTrip;
+        const shares = netRiskBudget > 0 ? Math.floor(netRiskBudget / riskPerShare) : 0;
+        const posValue = shares * entry;
+
+        // Net CRV
+        let netCrv = null;
+        if (shares > 0 && !isNaN(tgt) && tgt > entry) {
+          const netReward = (tgt - entry) * shares - roundTrip;
+          const netRisk   = (entry - stop) * shares + roundTrip;
+          netCrv = netRisk > 0 ? (netReward / netRisk).toFixed(2) : null;
+        }
+
+        // Warnings
+        const warnings = [];
+        if (netRiskBudget <= 0)
+          warnings.push("⚠ Risiko-Budget deckt die Gebühren nicht");
+        else if (roundTrip > 0 && roundTrip / grossRiskBudget > 0.1)
+          warnings.push(`⚠ Gebühren fressen ${((roundTrip / grossRiskBudget) * 100).toFixed(0)}% des Risikos`);
+        if (netCrv !== null && parseFloat(netCrv) < 1.0)
+          warnings.push("🔴 Netto-CRV < 1 — Trade nach Gebühren negativ");
+
+        return { label: b.label, balance, currency, grossRiskBudget, roundTrip, netRiskBudget, shares, posValue, netCrv, warnings };
       });
-  }, [entry, stop, riskPct, brokers, selectedBrokers]);
+  }, [entry, stop, tgt, riskPct, brokers, selectedBrokers]);
 
   if (lines.length === 0) return null;
 
   return (
-    <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-3 space-y-2">
-      <div className="text-xs text-gray-400 font-medium">Positionsgrößen-Rechner</div>
+    <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-3 space-y-3">
+      <div className="text-xs text-gray-400 font-medium">Positionsgrößen-Rechner (netto)</div>
       {lines.map((l, i) => (
-        <div key={i} className="text-xs space-y-0.5">
+        <div key={i} className="text-xs space-y-1">
           <div className="text-gray-300 font-medium">{l.label}</div>
-          <div className="grid grid-cols-3 gap-x-3 text-gray-400">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-gray-400">
             <span>Konto: <span className="text-white">{l.balance.toLocaleString("de")} {l.currency}</span></span>
-            <span>Risiko: <span className="text-orange-300">{l.riskAmount.toLocaleString("de", { maximumFractionDigits: 0 })} {l.currency}</span></span>
-            {l.shares != null
-              ? <span>Stücke: <span className="text-green-400 font-semibold">{l.shares}</span>{l.posValue ? <span className="text-gray-500"> (≈${l.posValue.toLocaleString("de", { maximumFractionDigits: 0 })})</span> : null}</span>
-              : <span className="text-gray-600">Kein Konto-Saldo</span>
+            <span>Brutto-Risiko: <span className="text-orange-300">{l.grossRiskBudget.toLocaleString("de", { maximumFractionDigits: 0 })} {l.currency}</span></span>
+            {l.roundTrip > 0 && <span>Gebühren (Hin+Rück): <span className="text-yellow-500">{l.roundTrip.toLocaleString("de", { maximumFractionDigits: 2 })} {l.currency}</span></span>}
+            <span>Netto-Risiko: <span className="text-orange-400">{l.netRiskBudget.toLocaleString("de", { maximumFractionDigits: 0 })} {l.currency}</span></span>
+            {l.shares > 0
+              ? <span>Stücke: <span className="text-green-400 font-semibold">{l.shares}</span><span className="text-gray-500"> (≈{l.currency === "EUR" ? "€" : "$"}{l.posValue.toLocaleString("de", { maximumFractionDigits: 0 })})</span></span>
+              : <span className="text-gray-600 col-span-2">Kein Saldo / Budget zu klein</span>
             }
+            {l.netCrv !== null && (
+              <span className={`col-span-2 font-medium ${parseFloat(l.netCrv) >= 2 ? "text-green-400" : parseFloat(l.netCrv) >= 1 ? "text-yellow-400" : "text-red-400"}`}>
+                Netto-CRV: {l.netCrv}
+              </span>
+            )}
           </div>
+          {l.warnings.map((w, wi) => (
+            <div key={wi} className="text-[10px] text-orange-400 bg-orange-900/20 px-2 py-0.5 rounded">{w}</div>
+          ))}
         </div>
       ))}
     </div>
@@ -263,6 +312,7 @@ export default function PlanModal({ candidate, onClose, onSaved }) {
           <PositionSizer
             entryHigh={entryHigh}
             stopLoss={stopLoss}
+            target={target}
             riskPct={riskPct}
             brokers={brokers}
             selectedBrokers={selectedBrokers}

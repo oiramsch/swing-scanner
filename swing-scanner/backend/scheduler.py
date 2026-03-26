@@ -79,7 +79,7 @@ def _is_direction_mismatch(analysis: dict) -> bool:
 def _classify_candidate(analysis: dict, ticker: str, module: Optional[str]) -> str:
     """
     Returns the candidate_status string for a newly analyzed candidate.
-    Called before saving to DB; Fix A is applied later (post deep-analysis).
+    Fix A (avoid) is checked here AND post deep-analysis for thorough coverage.
     """
     if not _has_full_setup(analysis):
         logger.info(
@@ -94,6 +94,14 @@ def _classify_candidate(analysis: dict, ticker: str, module: Optional[str]) -> s
             ticker, module,
         )
         return "direction_mismatch"
+
+    # Fix A (early): initial analysis already says avoid → filter immediately
+    if analysis.get("recommendation") == "avoid":
+        logger.info(
+            "[Fix-A-early] %s → filtered_avoid (initial recommendation=avoid) [module=%s]",
+            ticker, module,
+        )
+        return "filtered_avoid"
 
     return "active"
 

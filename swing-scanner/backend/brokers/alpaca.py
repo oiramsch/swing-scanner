@@ -9,6 +9,7 @@ from backend.brokers.base import BrokerConnector
 class AlpacaConnector(BrokerConnector):
     broker_type = "alpaca"
     currency = "USD"
+    supports_short_selling = True
 
     def supports_auto_trade(self) -> bool:
         return True

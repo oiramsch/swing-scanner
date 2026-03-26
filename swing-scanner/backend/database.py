@@ -89,6 +89,11 @@ def _apply_migrations():
         # v2.5 — BrokerConnection manual balance (for TR and other manual brokers)
         ("brokerconnection", "manual_balance",  "REAL"),
         ("brokerconnection", "manual_currency", "TEXT DEFAULT 'EUR'"),
+        # v2.7 — Gebühren-Modell pro Broker
+        ("brokerconnection", "fee_model_json", "TEXT DEFAULT '{\"type\": \"flat\", \"amount\": 0.0}'"),
+        # v2.7 — Portfolio: Broker-Zuordnung + Wechselkurs bei Ausführung
+        ("portfolioposition", "broker_id",          "INTEGER"),
+        ("portfolioposition", "execution_fx_rate",  "REAL"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -496,6 +501,9 @@ class PortfolioPosition(SQLModel, table=True):
     exit_trigger_json: Optional[str] = None        # JSON array of exit triggers
     position_size_warning: Optional[str] = None
     setting_generated_at: Optional[datetime] = None
+    # v2.7 — Broker-Zuordnung + Wechselkurs bei Ausführung
+    broker_id: Optional[int] = None              # FK → BrokerConnection.id
+    execution_fx_rate: Optional[float] = None   # EURUSD rate at execution time (for EUR P&L)
 
 
 class SignalAlert(SQLModel, table=True):
@@ -690,6 +698,9 @@ class BrokerConnection(SQLModel, table=True):
     # For manual brokers (e.g. Trade Republic): user-entered account balance
     manual_balance: Optional[float] = None
     manual_currency: str = "EUR"
+    # v2.7 — Gebühren-Modell (flat fee, percent, oder percent+min/max)
+    # Examples: {"type":"flat","amount":1.0}  {"type":"percent","rate":0.1,"min":1.0,"max":5.0}
+    fee_model_json: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -1669,3 +1680,30 @@ def update_broker_manual_balance(broker_id: int, balance: float, currency: str =
         session.commit()
         session.refresh(conn)
         return conn
+
+
+# ---------------------------------------------------------------------------
+# Fee calculation helper (v2.7)
+# ---------------------------------------------------------------------------
+
+def calculate_fee(fee_model: dict, order_value: float) -> float:
+    """
+    Calculate broker fee for a given order value.
+
+    fee_model examples:
+      {"type": "flat", "amount": 1.0}                         → always €1
+      {"type": "percent", "rate": 0.1, "min": 1.0, "max": 5.0}  → 0.1% capped
+    """
+    if not fee_model:
+        return 0.0
+    t = fee_model.get("type", "flat")
+    if t == "flat":
+        return float(fee_model.get("amount", 0.0))
+    if t == "percent":
+        fee = order_value * (float(fee_model.get("rate", 0.0)) / 100)
+        fee = max(fee, float(fee_model.get("min", 0.0)))
+        cap = fee_model.get("max")
+        if cap is not None:
+            fee = min(fee, float(cap))
+        return round(fee, 4)
+    return 0.0

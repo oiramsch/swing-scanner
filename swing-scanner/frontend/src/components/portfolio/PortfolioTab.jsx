@@ -7,6 +7,67 @@ import PortfolioAIReport from "./PortfolioAIReport.jsx";
 import MarketUpdateBanner from "./MarketUpdateBanner.jsx";
 import AlpacaPositions from "./AlpacaPositions.jsx";
 
+const BROKER_ICONS  = { alpaca: "🦙", trade_republic: "🇩🇪", ibkr: "📊" };
+const BROKER_LABELS = { alpaca: "Alpaca", trade_republic: "Trade Republic", ibkr: "IBKR" };
+
+function PortfolioByBroker({ positions, onUpdate }) {
+  // Group positions by broker_id (null = unassigned / legacy)
+  const groups = {};
+  for (const pos of positions) {
+    const key = pos.broker_id != null ? String(pos.broker_id) : "__unassigned__";
+    if (!groups[key]) groups[key] = { brokerId: pos.broker_id, positions: [] };
+    groups[key].positions.push(pos);
+  }
+
+  const [brokers, setBrokers] = useState([]);
+  useEffect(() => {
+    axios.get("/api/brokers").then(r => setBrokers(r.data || [])).catch(() => {});
+  }, []);
+
+  const brokerById = Object.fromEntries(brokers.map(b => [String(b.id), b]));
+
+  const keys = Object.keys(groups);
+  if (keys.length === 0) {
+    return (
+      <div className="text-center py-10 text-gray-600 text-sm bg-gray-900/50 border border-gray-800 rounded-xl">
+        Keine offenen Positionen — über "+ Position" oder "Ausgeführt ✓" in TR hinzufügen
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {keys.map(key => {
+        const group = groups[key];
+        const broker = key !== "__unassigned__" ? brokerById[key] : null;
+        const icon   = broker ? (BROKER_ICONS[broker.broker_type] ?? "💼") : "📋";
+        const label  = broker ? broker.label : "Ghost Portfolio";
+        const sym    = broker?.balance?.currency === "EUR" ? "€" : "$";
+        const bPow   = broker?.balance?.buying_power;
+        const count  = group.positions.length;
+
+        return (
+          <div key={key}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-base">{icon}</span>
+              <span className="text-sm font-semibold text-gray-300">{label}</span>
+              {bPow != null && (
+                <span className="text-xs text-gray-600 ml-1">Konto: {sym}{Math.round(bPow).toLocaleString("de")}</span>
+              )}
+              <span className="text-xs text-gray-700 ml-auto">{count} Position{count !== 1 ? "en" : ""}</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {group.positions.map(pos => (
+                <PositionCard key={pos.id} position={pos} onUpdate={onUpdate} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function PortfolioTab() {
   const [portfolio, setPortfolio] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -167,28 +228,8 @@ export default function PortfolioTab() {
       {/* Market Update Banner */}
       <MarketUpdateBanner update={marketUpdate} />
 
-      {/* Manual / Ghost Portfolio Positions */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">
-            Ghost Portfolio
-          </h2>
-          {portfolio?.positions?.length > 0 && (
-            <span className="text-xs text-gray-600">{portfolio.positions.length} Positionen offen</span>
-          )}
-        </div>
-        {portfolio?.positions?.length === 0 ? (
-          <div className="text-center py-10 text-gray-600 text-sm bg-gray-900/50 border border-gray-800 rounded-xl">
-            Keine offenen Positionen — über "+ Position" oder "Ausgeführt ✓" in TR hinzufügen
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {portfolio.positions.map((pos) => (
-              <PositionCard key={pos.id} position={pos} onUpdate={fetchPortfolio} />
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Per-Broker Position Sections */}
+      <PortfolioByBroker positions={portfolio?.positions ?? []} onUpdate={fetchPortfolio} />
 
       {/* Alpaca Live Positions */}
       <AlpacaPositions />

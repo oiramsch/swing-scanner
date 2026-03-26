@@ -42,9 +42,75 @@ function Field({ label, children, hint }) {
 const BROKER_ICONS  = { alpaca: "🦙", trade_republic: "🇩🇪", ibkr: "📊" };
 const BROKER_LABELS = { alpaca: "Alpaca", trade_republic: "Trade Republic", ibkr: "IBKR" };
 
+function parseFeeModel(json) {
+  try { return json ? JSON.parse(json) : { type: "flat", amount: 0 }; }
+  catch { return { type: "flat", amount: 0 }; }
+}
+
+function FeeModelField({ value, onChange, currency = "USD" }) {
+  const model = parseFeeModel(value);
+  const sym = currency === "EUR" ? "€" : "$";
+
+  function update(patch) {
+    onChange(JSON.stringify({ ...model, ...patch }));
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-3">
+        <label className="text-[10px] text-gray-500">Typ</label>
+        <select
+          value={model.type}
+          onChange={e => update({ type: e.target.value })}
+          className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none"
+        >
+          <option value="flat">Flat Fee</option>
+          <option value="percent">Prozentual</option>
+        </select>
+      </div>
+      {model.type === "flat" && (
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] text-gray-500 w-16">Betrag</label>
+          <input
+            type="number" step="0.01" min="0"
+            value={model.amount ?? 0}
+            onChange={e => update({ amount: parseFloat(e.target.value) || 0 })}
+            className="w-24 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none"
+          />
+          <span className="text-xs text-gray-500">{sym} / Order</span>
+        </div>
+      )}
+      {model.type === "percent" && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-[10px] text-gray-500 w-16">Rate</label>
+          <input type="number" step="0.01" min="0" value={model.rate ?? 0.1}
+            onChange={e => update({ rate: parseFloat(e.target.value) || 0 })}
+            className="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none" />
+          <span className="text-xs text-gray-500">%</span>
+          <label className="text-[10px] text-gray-500 ml-2">Min</label>
+          <input type="number" step="0.01" min="0" value={model.min ?? 0}
+            onChange={e => update({ min: parseFloat(e.target.value) || 0 })}
+            className="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none" />
+          <label className="text-[10px] text-gray-500 ml-2">Max</label>
+          <input type="number" step="0.01" min="0" value={model.max ?? ""}
+            onChange={e => update({ max: parseFloat(e.target.value) || undefined })}
+            placeholder="∞"
+            className="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none" />
+          <span className="text-xs text-gray-500">{sym}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AlpacaForm({ broker, onSaved }) {
   const isNew = !broker;
-  const [form, setForm] = useState({ label: broker?.label ?? "Alpaca", api_key: "", api_secret: "", is_paper: broker?.is_paper ?? true });
+  const [form, setForm] = useState({
+    label: broker?.label ?? "Alpaca",
+    api_key: "", api_secret: "",
+    is_paper: broker?.is_paper ?? true,
+    fee_model_json: broker?.fee_model_json ?? JSON.stringify({ type: "flat", amount: 0 }),
+  });
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -54,7 +120,7 @@ function AlpacaForm({ broker, onSaved }) {
     e.preventDefault();
     setSaving(true); setSaved(false);
     try {
-      const payload = { broker_type: "alpaca", ...form, api_key: form.api_key || undefined, api_secret: form.api_secret || undefined };
+      const payload = { broker_type: "alpaca", ...form, api_key: form.api_key || undefined, api_secret: form.api_secret || undefined, fee_model_json: form.fee_model_json };
       if (isNew) await axios.post("/api/brokers", payload);
       else       await axios.put(`/api/brokers/${broker.id}`, payload);
       setSaved(true);
@@ -107,6 +173,13 @@ function AlpacaForm({ broker, onSaved }) {
           {broker.source && <span className="text-gray-600">Quelle: {broker.source === "db" ? "DB" : ".env"}</span>}
         </div>
       )}
+      <Field label="Gebühr pro Order" hint="Wird für Netto-CRV und Positionsgrößen-Berechnung verwendet">
+        <FeeModelField
+          value={form.fee_model_json}
+          onChange={v => setForm(f => ({ ...f, fee_model_json: v }))}
+          currency="USD"
+        />
+      </Field>
       <div className="flex gap-2">
         <button type="submit" disabled={saving}
           className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition disabled:opacity-50">
@@ -136,6 +209,7 @@ function TRForm({ broker, onSaved }) {
     label: broker?.label ?? "Trade Republic",
     manual_balance: broker?.balance?.buying_power ?? "",
     manual_currency: broker?.balance?.currency ?? "EUR",
+    fee_model_json: broker?.fee_model_json ?? JSON.stringify({ type: "flat", amount: 1.0 }),
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -150,6 +224,7 @@ function TRForm({ broker, onSaved }) {
         is_paper: false,
         manual_balance: form.manual_balance !== "" ? parseFloat(form.manual_balance) : null,
         manual_currency: form.manual_currency,
+        fee_model_json: form.fee_model_json,
       };
       if (isNew) await axios.post("/api/brokers", payload);
       else       await axios.put(`/api/brokers/${broker.id}`, payload);
@@ -181,6 +256,13 @@ function TRForm({ broker, onSaved }) {
         </Field>
       </div>
       <p className="text-[11px] text-gray-600">Balance wird manuell gepflegt und im Deal Cockpit als Kaufkraft angezeigt.</p>
+      <Field label="Gebühr pro Order" hint="Trade Republic: €1 Flat Fee (Standard)">
+        <FeeModelField
+          value={form.fee_model_json}
+          onChange={v => setForm(f => ({ ...f, fee_model_json: v }))}
+          currency="EUR"
+        />
+      </Field>
       <button type="submit" disabled={saving}
         className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition disabled:opacity-50">
         {saving ? "Speichern…" : saved ? "✓ Gespeichert" : "Speichern"}
