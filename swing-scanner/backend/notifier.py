@@ -29,12 +29,13 @@ def send_push(
 
     try:
         resp = requests.post(
-            f"https://ntfy.sh/{settings.ntfy_topic}",
-            data=message.encode("utf-8"),
-            headers={
-                "Title": title,
-                "Priority": priority,
-                "Tags": tags,
+            "https://ntfy.sh/",
+            json={
+                "topic":    settings.ntfy_topic,
+                "title":    title,
+                "message":  message,
+                "priority": {"default": 3, "low": 2, "high": 4, "urgent": 5}.get(priority, 3),
+                "tags":     [tags] if tags else [],
             },
             timeout=10,
         )
