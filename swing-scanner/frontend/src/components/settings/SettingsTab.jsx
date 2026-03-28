@@ -884,13 +884,6 @@ function ClaudeApiSection() {
 // v3.1 — Scan Universe Management
 // ---------------------------------------------------------------------------
 
-const REGIME_BADGE = {
-  bull:    "bg-green-900/30 text-green-400 border-green-700/40",
-  bear:    "bg-red-900/30 text-red-400 border-red-700/40",
-  neutral: "bg-blue-900/30 text-blue-400 border-blue-700/40",
-  any:     "bg-gray-800 text-gray-400 border-gray-700",
-};
-
 function UniverseSection() {
   const [universes, setUniverses] = useState([]);
   const [saving, setSaving] = useState(null);
