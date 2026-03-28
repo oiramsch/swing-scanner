@@ -1,0 +1,96 @@
+name: 🏭 Gemini Architect Review
+
+# 1. DER TRIGGER: Feuert nur noch bei Labels oder wenn Code im gelabelten PR aktualisiert wird
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+jobs:
+  code-review:
+    # 2. DER KOSTEN-FILTER: Bricht sofort ab, wenn das Label "Ready for Review" fehlt
+    if: contains(github.event.pull_request.labels.*.name, 'Ready for Review')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: 📦 Code vom Fließband holen
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Den Git-Diff extrahieren
+        id: get_diff
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > pr_diff.txt
+
+      - name: 📖 Architecture Rules einlesen (Das Gehirn)
+        id: get_arch
+        run: |
+          if [ -f ARCHITECTURE.md ]; then
+            cat ARCHITECTURE.md > arch_rules.txt
+          else
+            echo "Keine ARCHITECTURE.md gefunden." > arch_rules.txt
+          fi
+
+      - name: 🐍 Python Setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: ⚙️ Abhängigkeiten installieren
+        run: pip install google-genai
+
+      - name: 🧠 Gemini 3.1 Pro den Code analysieren lassen
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python -c '
+          import os
+          from google import genai
+          
+          # Dateien einlesen
+          try:
+              with open("pr_diff.txt", "r") as f: diff = f.read()
+              with open("arch_rules.txt", "r") as f: arch_rules = f.read()
+          except FileNotFoundError:
+              exit(0)
+              
+          if not diff.strip(): exit(0)
+          
+          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+          
+          # DEIN FINALER FABRIK-PROMPT (Kombiniert Regeln + Diff)
+          prompt = f"""Du bist der Lead FinTech Architect in unserer Softwarefabrik.
+          Prüfe diesen Pull Request für unseren Swing Scanner extrem streng.
+          
+          --- UNSERE UNVERÄNDERLICHEN ARCHITEKTUR-REGELN ---
+          {arch_rules}
+          
+          --- PULL REQUEST DIFF (Von Claude Code) ---
+          {diff}
+          
+          Dein Output-Format:
+          - Starte zwingend mit einem fetten [PASS] oder [CHANGES REQUESTED].
+          - Liste maximal 3 Bulletpoints mit exakten Fehlerbeschreibungen und Code-Vorschlägen auf.
+          - Sei direkt, professionell und wie ein strenger Risiko-Manager. Tolerier keine Verstöße gegen die Regeln.
+          """
+          
+          # API Aufruf
+          response = client.models.generate_content(
+              model="gemini-3.1-pro", 
+              contents=prompt
+          )
+          
+          with open("review.md", "w") as f: f.write(response.text)
+          '
+
+      - name: 📝 Review als PR-Kommentar posten
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f review.md ]; then
+            gh pr comment ${{ github.event.pull_request.number }} --body-file review.md
+          fi
