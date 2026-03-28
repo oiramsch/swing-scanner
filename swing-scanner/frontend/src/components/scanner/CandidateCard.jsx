@@ -15,11 +15,13 @@ const MODULE_COLORS = {
   "Bull Breakout":          "bg-green-500/15 text-green-400 border-green-500/30",
   "Bear Relative Strength": "bg-orange-500/15 text-orange-300 border-orange-500/30",
   "Mean Reversion":         "bg-purple-500/15 text-purple-300 border-purple-500/30",
+  "Connors RSI-2":          "bg-violet-500/15 text-violet-300 border-violet-500/30",
 };
 const MODULE_ICONS = {
   "Bull Breakout":          "🚀",
   "Bear Relative Strength": "🛡️",
   "Mean Reversion":         "🔄",
+  "Connors RSI-2":          "🎯",
 };
 
 const FLAG_CONFIG = {
@@ -59,10 +61,10 @@ function CRVBadge({ crv, crvValid }) {
   if (!crv) return null;
   const color = crvValid === false
     ? "text-red-400"
-    : crv >= 2.0 ? "text-green-400"
+    : crv >= 2.5 ? "text-green-400"
     : crv >= 1.5 ? "text-yellow-400"
     : "text-red-400";
-  const icon = crvValid === false ? "⛔" : crv >= 2.0 ? "✅" : crv >= 1.5 ? "⚠️" : "⛔";
+  const icon = crvValid === false ? "⛔" : crv >= 2.5 ? "✅" : crv >= 1.5 ? "⚠️" : "⛔";
   return (
     <span className={`text-xs font-medium ${color}`}>
       CRV: {crv.toFixed(1)} {icon}

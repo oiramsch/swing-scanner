@@ -30,6 +30,7 @@ from backend.database import (
     FilterProfile,
     StrategyModule,
     get_active_filter,
+    get_active_universes,
     get_modules_for_regime,
 )
 from backend.providers import get_data_provider
@@ -62,11 +63,13 @@ async def fetch_ohlcv(ticker: str, days: int = 60):
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    df["SMA_5"]   = ta_lib.trend.sma_indicator(df["Close"], window=5)   # Connors RSI-2 exit target
     df["SMA_20"]  = ta_lib.trend.sma_indicator(df["Close"], window=20)
     df["SMA_50"]  = ta_lib.trend.sma_indicator(df["Close"], window=50)
     df["SMA_200"] = ta_lib.trend.sma_indicator(df["Close"], window=200)
     df["EMA_9"]   = ta_lib.trend.ema_indicator(df["Close"], window=9)
     df["RSI_14"]  = ta_lib.momentum.rsi(df["Close"], window=14)
+    df["RSI_2"]   = ta_lib.momentum.rsi(df["Close"], window=2)           # Connors RSI-2 signal
     df["ATRr_14"] = ta_lib.volatility.average_true_range(
         df["High"], df["Low"], df["Close"], window=14
     )
@@ -79,11 +82,13 @@ def get_indicator_snapshot(df: pd.DataFrame) -> dict:
     return {
         "close":    round(float(latest["Close"]), 2),
         "volume":   int(latest["Volume"]),
+        "sma5":     round(float(latest.get("SMA_5")   or 0), 2),
         "sma20":    round(float(latest.get("SMA_20")  or 0), 2),
         "sma50":    round(float(latest.get("SMA_50")  or 0), 2),
         "sma200":   round(float(latest.get("SMA_200") or 0), 2),
         "ema9":     round(float(latest.get("EMA_9")   or 0), 2),
         "rsi14":    round(float(latest.get("RSI_14")  or 0), 2),
+        "rsi2":     round(float(latest.get("RSI_2")   or 0), 2),
         "atr14":    round(float(latest.get("ATRr_14") or 0), 2),
         "vol_ma20": round(float(latest.get("Vol_MA20") or 0), 2),
     }
@@ -125,6 +130,8 @@ def _get_filter_params(source) -> dict:
             "rsi_bear_cap":       source.rsi_bear_cap,         # may be None → use module's rsi_max
             "volume_multiplier":  source.volume_multiplier,
             "relative_strength_vs_spy": source.relative_strength_vs_spy,
+            "rsi2_max":           getattr(source, "rsi2_max", None),          # Connors RSI-2
+            "close_below_sma5":   getattr(source, "close_below_sma5", None),  # Connors RSI-2
         }
     # FilterProfile (legacy)
     return {
@@ -213,6 +220,20 @@ def _filter_reason(
             if ticker_20d_return <= spy_20d_return:
                 return "relative_strength"
 
+    # Connors RSI-2: price must be below SMA5 (short-term pullback)
+    if params.get("close_below_sma5") is True:
+        sma5 = latest.get("SMA_5")
+        if sma5 is not None and not pd.isna(sma5) and float(sma5) > 0:
+            if close >= float(sma5):
+                return "close_above_sma5"
+
+    # Connors RSI-2: RSI(2) must be below threshold (extreme oversold)
+    if params.get("rsi2_max") is not None:
+        rsi2_val = latest.get("RSI_2")
+        if rsi2_val is not None and not pd.isna(rsi2_val):
+            if float(rsi2_val) > params["rsi2_max"]:
+                return "rsi2_range"
+
     return None  # passes all filters
 
 
@@ -224,6 +245,71 @@ def passes_filter(
 ) -> bool:
     """Thin wrapper kept for backward compatibility."""
     return _filter_reason(df, params, regime, spy_20d_return) is None
+
+
+def _near_miss_check(df: pd.DataFrame, params: dict, reason: str, ticker: str) -> Optional[dict]:
+    """
+    Returns a near-miss dict if the ticker just barely failed a quantitative filter.
+    Thresholds: RSI ±5 pts, volume within 20%, SMA within 2%.
+    """
+    NEAR_MISS_REASONS = {"rsi_range", "volume_surge", "sma50", "sma200", "rsi2_range"}
+    if reason not in NEAR_MISS_REASONS:
+        return None
+    latest = df.iloc[-1]
+    close = float(latest["Close"])
+    try:
+        if reason == "rsi_range":
+            rsi = float(latest.get("RSI_14") or 0)
+            if rsi < params["rsi_min"]:
+                gap = params["rsi_min"] - rsi
+                if gap <= 5:
+                    return {"ticker": ticker, "reason": "rsi_below_min",
+                            "actual": round(rsi, 1), "threshold": params["rsi_min"], "gap": round(gap, 1)}
+            else:
+                gap = rsi - params["rsi_max"]
+                if gap <= 5:
+                    return {"ticker": ticker, "reason": "rsi_above_max",
+                            "actual": round(rsi, 1), "threshold": params["rsi_max"], "gap": round(gap, 1)}
+
+        elif reason == "volume_surge":
+            avg_vol = float(df["Volume"].iloc[-20:-1].mean())
+            actual_vol = float(latest["Volume"])
+            required = avg_vol * params["volume_multiplier"]
+            if required > 0:
+                gap_pct = (required - actual_vol) / required * 100
+                if gap_pct <= 20:
+                    return {"ticker": ticker, "reason": "volume_low",
+                            "actual": int(actual_vol), "threshold": int(required),
+                            "gap_pct": round(gap_pct, 1)}
+
+        elif reason == "sma50":
+            sma50 = float(latest.get("SMA_50") or 0)
+            if sma50 > 0:
+                gap_pct = (sma50 - close) / sma50 * 100
+                if gap_pct <= 2:
+                    return {"ticker": ticker, "reason": "below_sma50",
+                            "actual": round(close, 2), "threshold": round(sma50, 2),
+                            "gap_pct": round(gap_pct, 2)}
+
+        elif reason == "sma200":
+            sma200 = float(latest.get("SMA_200") or 0)
+            if sma200 > 0:
+                gap_pct = (sma200 - close) / sma200 * 100
+                if gap_pct <= 2:
+                    return {"ticker": ticker, "reason": "below_sma200",
+                            "actual": round(close, 2), "threshold": round(sma200, 2),
+                            "gap_pct": round(gap_pct, 2)}
+
+        elif reason == "rsi2_range":
+            rsi2 = float(latest.get("RSI_2") or 0)
+            threshold = params.get("rsi2_max", 10.0)
+            gap = rsi2 - threshold
+            if gap <= 5:
+                return {"ticker": ticker, "reason": "rsi2_above_max",
+                        "actual": round(rsi2, 1), "threshold": threshold, "gap": round(gap, 1)}
+    except Exception:
+        pass
+    return None
 
 
 def pre_filter_snapshot(item: dict, params: dict) -> bool:
@@ -260,8 +346,9 @@ async def _run_single_module(
         "price_range": 0, "volume_min": 0,
         "sma50": 0, "sma20": 0, "sma200": 0,
         "rsi_range": 0, "rsi_bear": 0, "volume_surge": 0,
-        "relative_strength": 0, "error": 0,
+        "relative_strength": 0, "close_above_sma5": 0, "rsi2_range": 0, "error": 0,
     }
+    near_misses: list[dict] = []
     ohlcv_ok = 0
     ohlcv_none = 0
     total = len(pre_candidates)
@@ -285,6 +372,9 @@ async def _run_single_module(
             reason = _filter_reason(df, params, regime=regime, spy_20d_return=spy_20d_return)
             if reason is not None:
                 rejection[reason] = rejection.get(reason, 0) + 1
+                nm = _near_miss_check(df, params, reason, ticker)
+                if nm:
+                    near_misses.append(nm)
                 continue
             indicators = get_indicator_snapshot(df)
             candidates.append({
@@ -307,6 +397,7 @@ async def _run_single_module(
     return candidates, {
         "ohlcv_ok": ohlcv_ok, "ohlcv_none": ohlcv_none,
         "rejections": rejection,
+        "near_misses": near_misses,
     }
 
 
@@ -357,13 +448,29 @@ async def run_screener(
     """
     global _last_funnel
     provider = get_data_provider()
-    universe = settings.stock_universe
 
-    # ── Step 1: Symbol universe ───────────────────────────────────────────────
+    # ── Step 1: Symbol universe (DB-driven if universes exist, fallback to config) ──
     if progress_cb:
         progress_cb("snapshot", "Loading symbol universe…", 0, 0, 0, 1)
-    symbols = provider.get_symbols(universe)
-    logger.info("Universe: %d symbols", len(symbols))
+
+    active_universes = get_active_universes(regime)
+    if active_universes:
+        symbols_set: set[str] = set()
+        for u in active_universes:
+            if u.tickers_source == "custom_json" and u.tickers_json:
+                import json as _json
+                try:
+                    symbols_set.update(_json.loads(u.tickers_json))
+                except Exception:
+                    pass
+            else:
+                # static_sp500 / static_russell1000 → use provider
+                symbols_set.update(provider.get_symbols(u.tickers_source.replace("static_", "")))
+        symbols = sorted(symbols_set)
+        logger.info("Universe (DB): %d symbols from %d active universe(s)", len(symbols), len(active_universes))
+    else:
+        symbols = provider.get_symbols(settings.stock_universe)
+        logger.info("Universe (config fallback): %d symbols", len(symbols))
 
     # ── Step 2: Market snapshot ───────────────────────────────────────────────
     if progress_cb:
@@ -398,6 +505,7 @@ async def run_screener(
 
     # ── Step 5: Run each module ───────────────────────────────────────────────
     all_candidates: list[dict] = []
+    all_near_misses: list[dict] = []
     seen_tickers: set[str] = set()
     combined_funnel: dict = {
         "ran_at":      datetime.utcnow().isoformat(),
@@ -435,12 +543,16 @@ async def run_screener(
         seen_tickers.update(c["ticker"] for c in new)
         all_candidates.extend(new)
 
+        module_near_misses = [{"module": module_name, **nm} for nm in stats.get("near_misses", [])]
+        all_near_misses.extend(module_near_misses)
+
         combined_funnel["modules"][module_name] = {
             "pre_filter":    len(pre),
             "ohlcv_fetched": stats["ohlcv_ok"],
             "ohlcv_failed":  stats["ohlcv_none"],
             "rejections":    stats["rejections"],
             "candidates":    len(new),
+            "near_misses":   len(module_near_misses),
         }
         _log_funnel(module_name, {
             "universe":    len(symbols),
@@ -456,6 +568,7 @@ async def run_screener(
             break
 
     combined_funnel["candidates"] = len(all_candidates)
+    combined_funnel["near_misses"] = all_near_misses[:50]  # cap at 50 to limit payload
 
     # ── Step 6: Adaptive suggestion ───────────────────────────────────────────
     if len(all_candidates) == 0 and using_modules:

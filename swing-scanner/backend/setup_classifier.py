@@ -109,9 +109,9 @@ def classify_setup(
 
     Args:
         facts:      Visual facts from fact_extractor (trend, candles, levels)
-        indicators: Computed OHLCV indicators (close, sma20, sma50, sma200, rsi14, atr14)
+        indicators: Computed OHLCV indicators (close, sma20, sma50, sma200, rsi14, atr14, rsi2, sma5)
         regime:     "bull" | "bear" | "neutral"
-        module:     "Bull Breakout" | "Bear Relative Strength" | "Mean Reversion"
+        module:     "Bull Breakout" | "Bear Relative Strength" | "Mean Reversion" | "Connors RSI-2"
 
     Returns dict with:
         direction, setup_type, entry_zone, stop_loss, target,
@@ -130,10 +130,12 @@ def classify_setup(
 
     # ── Exact computed indicators ─────────────────────────────────────────────
     close  = indicators["close"]
+    sma5   = float(indicators.get("sma5")   or 0.0)
     sma20  = indicators.get("sma20") or 0.0
     sma50  = indicators.get("sma50") or 0.0
     sma200 = indicators.get("sma200") or 0.0
     rsi    = float(indicators.get("rsi14") or 50.0)
+    rsi2   = float(indicators.get("rsi2")  or 50.0)
     atr    = float(indicators.get("atr14") or close * 0.02)
 
     price_above_sma20  = sma20 > 0 and close > sma20
@@ -276,6 +278,57 @@ def classify_setup(
                     "setup_type": "reversal",
                     "reasoning": f"Mean reversion: RSI {rsi:.0f} oversold but no reversal candle and trend unclear → watchlist only",
                 })
+
+    # ════════════════════════════════════════════════════════════════════════
+    # CONNORS RSI-2
+    # Screener: close > SMA200, close < SMA5, RSI(2) < 10, RSI(14) 2–40, vol × 0.8
+    # Source: Larry Connors "Short Term Trading Strategies That Work"
+    # ════════════════════════════════════════════════════════════════════════
+    elif module == "Connors RSI-2":
+        price_below_sma5 = sma5 > 0 and close < sma5
+
+        if price_above_sma200 and price_below_sma5 and rsi2 < 10:
+            # Core Connors RSI-2 signal: extreme short-term panic in long-term uptrend
+            result.update({
+                "direction":  "long",
+                "setup_type": "pullback",
+                "entry_zone": f"{close:.2f}",
+                "stop_loss":  f"{max(close - 2.5 * atr, close * 0.85):.2f}",
+                "target":     f"{sma5:.2f}",  # exit: reversion to SMA5
+                "reasoning":  (
+                    f"Connors RSI-2 ({rsi2:.1f}) < 10 — extreme kurzfristige Panik. "
+                    f"Preis über SMA200 ({sma200:.2f}) — langfristiger Trend intakt. "
+                    f"Preis unter SMA5 ({sma5:.2f}) — kurzfristiger Rücksetzer bestätigt. "
+                    f"Exit wenn Close > SMA5 ({sma5:.2f})."
+                ),
+            })
+            n = _count_signals([reversal_candle, rsi2 < 5, vol_surge, price_above_sma50])
+            result["confidence_adjustment"] = +1   # mechanisch, wenig Interpretationsspielraum
+            result["signal_convergence_bonus"] = min(2, n)
+
+        elif price_above_sma200 and price_below_sma5 and rsi2 < 25:
+            # Softer version: RSI-2 not extreme yet, but setup is forming
+            result.update({
+                "direction":  "long",
+                "setup_type": "pullback",
+                "entry_zone": f"{close:.2f}",
+                "stop_loss":  f"{max(close - 2.5 * atr, close * 0.85):.2f}",
+                "target":     f"{sma5:.2f}",
+                "reasoning":  (
+                    f"Connors RSI-2 ({rsi2:.1f}) < 25 — kurzfristiger Rücksetzer unter SMA5. "
+                    f"Preis über SMA200 — Trend intakt. Warten auf weitere Schwäche (RSI-2 < 10) bevorzugt."
+                ),
+            })
+            result["signal_convergence_bonus"] = min(1, _count_signals([reversal_candle, rsi2 < 15]))
+        else:
+            result.update({
+                "setup_type": "pullback",
+                "reasoning":  (
+                    f"Connors RSI-2 ({rsi2:.1f}) — Bedingungen nicht erfüllt: "
+                    f"SMA200={sma200:.2f}, SMA5={sma5:.2f}, close={close:.2f}. "
+                    f"Kein aktionsfähiges Setup."
+                ),
+            })
 
     result = _validate_geometry(result)
     logger.info(

@@ -881,6 +881,99 @@ function ClaudeApiSection() {
 }
 
 // ---------------------------------------------------------------------------
+// v3.1 — Scan Universe Management
+// ---------------------------------------------------------------------------
+
+const REGIME_BADGE = {
+  bull:    "bg-green-900/30 text-green-400 border-green-700/40",
+  bear:    "bg-red-900/30 text-red-400 border-red-700/40",
+  neutral: "bg-blue-900/30 text-blue-400 border-blue-700/40",
+  any:     "bg-gray-800 text-gray-400 border-gray-700",
+};
+
+function UniverseSection() {
+  const [universes, setUniverses] = useState([]);
+  const [saving, setSaving] = useState(null);
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    try {
+      const res = await axios.get("/api/universes");
+      setUniverses(res.data || []);
+    } catch {}
+  }
+
+  async function toggle(u) {
+    setSaving(u.id);
+    try {
+      const res = await axios.patch(`/api/universes/${u.id}`, { is_active: !u.is_active });
+      setUniverses(prev => prev.map(x => x.id === u.id ? res.data : x));
+    } catch {}
+    setSaving(null);
+  }
+
+  return (
+    <Section title="Scan-Universen">
+      <p className="text-xs text-gray-500 mb-3">
+        Aktive Universen werden beim nächsten Scan kombiniert. S&P 500 ist immer verfügbar.
+        ETF-Körbe ergänzen — ideal für Bear-Märkte.
+      </p>
+      <div className="space-y-2">
+        {universes.map(u => {
+          const regimes = (u.regime_default || "any").split(",").map(r => r.trim());
+          return (
+            <div key={u.id} className={`flex items-start gap-3 p-3 rounded-lg border transition ${
+              u.is_active ? "border-indigo-700/40 bg-indigo-900/10" : "border-gray-800 bg-gray-900"
+            }`}>
+              <button
+                onClick={() => toggle(u)}
+                disabled={saving === u.id}
+                className={`mt-0.5 w-9 h-5 rounded-full transition relative flex-shrink-0 ${
+                  u.is_active ? "bg-indigo-600" : "bg-gray-700"
+                } disabled:opacity-50`}
+              >
+                <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${
+                  u.is_active ? "left-4" : "left-0.5"
+                }`} />
+              </button>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-white">{u.name}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500">{u.type}</span>
+                  {regimes.map(r => (
+                    <span key={r} className={`text-[10px] px-1.5 py-0.5 rounded border ${REGIME_BADGE[r] ?? REGIME_BADGE.any}`}>
+                      {r}
+                    </span>
+                  ))}
+                  {u.requires_capability && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-yellow-700/40 bg-yellow-900/20 text-yellow-500">
+                      {u.requires_capability}
+                    </span>
+                  )}
+                </div>
+                {u.description && (
+                  <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{u.description}</p>
+                )}
+                {u.tickers_json && u.tickers_source === "custom_json" && (
+                  <p className="text-[11px] text-gray-600 mt-0.5 font-mono">
+                    {JSON.parse(u.tickers_json || "[]").join(", ")}
+                  </p>
+                )}
+                {u.risk_warning && (
+                  <p className="text-[11px] text-amber-500/70 mt-1">⚠ {u.risk_warning}</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 export default function SettingsTab({ currentUser, onLogout }) {
@@ -895,6 +988,7 @@ export default function SettingsTab({ currentUser, onLogout }) {
       <ErrorBoundary><ClaudeApiSection /></ErrorBoundary>
       <ErrorBoundary><BrokerManagementSection /></ErrorBoundary>
       <ErrorBoundary><ModulesSection /></ErrorBoundary>
+      <ErrorBoundary><UniverseSection /></ErrorBoundary>
       <ErrorBoundary><ScannerSection /></ErrorBoundary>
       <ErrorBoundary><PasswordSection currentUser={currentUser} onLogout={onLogout} /></ErrorBoundary>
     </div>

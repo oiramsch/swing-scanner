@@ -146,6 +146,8 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
   const [budget, setBudget] = useState(null);
   const [funnel, setFunnel] = useState(null);
   const [showFunnel, setShowFunnel] = useState(false);
+  const [nearMisses, setNearMisses] = useState([]);
+  const [showNearMisses, setShowNearMisses] = useState(false);
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -154,6 +156,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
     fetchActiveFilter();
     fetchBudget();
     fetchFunnel();
+    fetchNearMisses();
     if (scanStatus?.running) startPolling();
     return () => stopPolling();
   }, []);
@@ -170,6 +173,13 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
     try {
       const res = await axios.get("/api/scan/funnel");
       setFunnel(res.data);
+    } catch {}
+  }
+
+  async function fetchNearMisses() {
+    try {
+      const res = await axios.get("/api/scan/near-misses");
+      setNearMisses(res.data?.near_misses || []);
     } catch {}
   }
 
@@ -519,6 +529,49 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
                         : c.reasoning || "Kein Setup ableitbar"}
                     </span>
                     <span className="text-[10px] text-yellow-600 shrink-0">Beobachten</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Near-Misses — tickers that just barely failed a filter */}
+      {nearMisses.length > 0 && (
+        <div className="mt-4">
+          <button
+            onClick={() => setShowNearMisses(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-900 border border-gray-800 rounded-xl text-sm text-gray-400 hover:text-gray-200 transition"
+          >
+            <span>
+              🎯 Near Misses — knapp an einem Filter gescheitert
+              <span className="ml-2 text-xs bg-gray-800 px-2 py-0.5 rounded-full">{nearMisses.length}</span>
+            </span>
+            <span className="text-gray-600">{showNearMisses ? "▲" : "▼"}</span>
+          </button>
+
+          {showNearMisses && (
+            <div className="mt-2 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+              <div className="px-4 py-2 border-b border-gray-800 text-xs text-gray-500">
+                Diese Aktien hätten fast gepasst. Du kannst sie manuell prüfen — kein Trade-Signal.
+              </div>
+              <div className="divide-y divide-gray-800">
+                {nearMisses.map((nm, i) => (
+                  <div key={i} className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+                    <span className="text-white font-semibold text-sm w-16">{nm.ticker}</span>
+                    {nm.module && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500">{nm.module}</span>
+                    )}
+                    <span className="text-xs text-amber-500/80 flex-1">
+                      {nm.reason === "rsi_below_min" && `RSI ${nm.actual} < Min ${nm.threshold} (Δ${nm.gap})`}
+                      {nm.reason === "rsi_above_max" && `RSI ${nm.actual} > Max ${nm.threshold} (Δ${nm.gap})`}
+                      {nm.reason === "volume_low" && `Volumen ${(nm.actual/1000).toFixed(0)}k < nötig ${(nm.threshold/1000).toFixed(0)}k (-${nm.gap_pct?.toFixed(0)}%)`}
+                      {nm.reason === "below_sma50" && `Close ${nm.actual} < SMA50 ${nm.threshold} (-${nm.gap_pct?.toFixed(1)}%)`}
+                      {nm.reason === "below_sma200" && `Close ${nm.actual} < SMA200 ${nm.threshold} (-${nm.gap_pct?.toFixed(1)}%)`}
+                      {nm.reason === "rsi2_above_max" && `RSI-2 ${nm.actual} > ${nm.threshold} (Δ${nm.gap})`}
+                      {!["rsi_below_min","rsi_above_max","volume_low","below_sma50","below_sma200","rsi2_above_max"].includes(nm.reason) && nm.reason}
+                    </span>
                   </div>
                 ))}
               </div>

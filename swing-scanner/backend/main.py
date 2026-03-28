@@ -75,6 +75,12 @@ from backend.database import (
     update_broker_connection,
     delete_broker_connection,
 )
+from backend.database import (
+    ScanUniverse,
+    get_all_universes,
+    get_active_universes,
+    update_universe,
+)
 from backend.journal import create_journal_entry, get_journal_stats, update_lesson
 from backend.performance import (
     get_equity_curve,
@@ -2087,3 +2093,155 @@ async def place_sell_order(
         raise HTTPException(status_code=422, detail=f"Missing field: {e}")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# v3.1 — Near-Misses endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/scan/near-misses")
+async def get_near_misses():
+    """
+    Returns tickers that narrowly failed a filter in the last scan.
+    Pulled from in-memory funnel (populated by run_screener).
+    """
+    from backend.screener import get_last_funnel
+    funnel = get_last_funnel()
+    return {
+        "near_misses": funnel.get("near_misses", []),
+        "scan_date": funnel.get("ran_at", ""),
+    }
+
+
+# ---------------------------------------------------------------------------
+# v3.1 — Dynamic Universe Management
+# ---------------------------------------------------------------------------
+
+@app.get("/api/universes")
+async def list_universes(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """List all scan universes."""
+    universes = get_all_universes()
+    return [u.model_dump() for u in universes]
+
+
+@app.patch("/api/universes/{universe_id}")
+async def patch_universe(
+    universe_id: int,
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Update a universe (is_active, tickers_json, etc.)."""
+    allowed = {"is_active", "tickers_json", "name", "description", "regime_default", "sort_order"}
+    payload = {k: v for k, v in data.items() if k in allowed}
+    updated = update_universe(universe_id, payload)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Universe not found")
+    return updated.model_dump()
+
+
+@app.post("/api/universes")
+async def create_universe(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Create a custom scan universe."""
+    from backend.database import ScanUniverse
+    from sqlmodel import Session
+    from backend.database import get_engine
+    u = ScanUniverse(
+        name=data.get("name", "Custom Universe"),
+        type="custom",
+        description=data.get("description"),
+        tickers_source="custom_json",
+        tickers_json=data.get("tickers_json", "[]"),
+        regime_default=data.get("regime_default", "any"),
+        is_active=data.get("is_active", False),
+        sort_order=data.get("sort_order", 99),
+    )
+    with Session(get_engine()) as session:
+        session.add(u)
+        session.commit()
+        session.refresh(u)
+    return u.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# v3.1 — AI Chat (8.5)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/chat")
+async def ai_chat(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    AI Chat endpoint — send a question with scanner context, get Claude's answer.
+    Body: { "message": str, "session_history": [...] }
+    Returns: { "reply": str, "tokens_used": int }
+    """
+    import anthropic
+    from backend.database import get_ai_status, set_ai_error, clear_ai_error, get_latest_regime
+
+    message = (data.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="message darf nicht leer sein")
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="Kein ANTHROPIC_API_KEY konfiguriert")
+
+    session_history = data.get("session_history", [])
+
+    # Build context: today's candidates + regime
+    scan_date = date.today()
+    candidates = get_results_for_date(scan_date)
+    if not candidates:
+        latest = get_latest_scan_date()
+        if latest:
+            candidates = get_results_for_date(latest)
+            scan_date = latest
+
+    regime_data = get_latest_regime()
+    regime = regime_data.get("regime", "neutral") if regime_data else "neutral"
+
+    # Build compact candidate context
+    cand_lines = []
+    for c in candidates[:20]:  # cap at 20 to control token cost
+        crv = f"CRV:{c.crv_calculated:.1f}" if c.crv_calculated else ""
+        cand_lines.append(
+            f"- {c.ticker} [{c.strategy_module}] {c.setup_type} conf={c.confidence} "
+            f"{crv} entry={c.entry_zone} stop={c.stop_loss} target={c.target} "
+            f"status={c.candidate_status}"
+        )
+
+    system_prompt = f"""Du bist ein erfahrener Swing-Trading-Assistent. Du hast Zugriff auf die aktuellen Scanner-Ergebnisse.
+
+AKTUELLES REGIME: {regime.upper()}
+SCAN-DATUM: {scan_date}
+
+KANDIDATEN ({len(candidates)} total, zeige Top 20):
+{chr(10).join(cand_lines) if cand_lines else "Keine Kandidaten heute."}
+
+Beantworte Fragen präzise und faktenbasiert. Wenn du unsicher bist, sage es. Gib keine Anlageberatung — weise darauf hin dass dies keine Rechts- oder Finanzberatung ist. Antworte auf Deutsch."""
+
+    # Prepare messages
+    messages = []
+    for h in session_history[-10:]:  # keep last 10 turns
+        if h.get("role") in ("user", "assistant") and h.get("content"):
+            messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": message})
+
+    try:
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        response = client.messages.create(
+            model=settings.claude_model,
+            max_tokens=800,
+            system=system_prompt,
+            messages=messages,
+        )
+        reply = response.content[0].text
+        tokens_used = response.usage.input_tokens + response.usage.output_tokens
+        clear_ai_error()
+        return {"reply": reply, "tokens_used": tokens_used}
+    except Exception as exc:
+        error_msg = str(exc)
+        set_ai_error(error_msg)
+        raise HTTPException(status_code=503, detail=f"Claude API Fehler: {error_msg}")

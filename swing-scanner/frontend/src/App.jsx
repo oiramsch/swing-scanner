@@ -11,6 +11,7 @@ import SettingsTab from "./components/settings/SettingsTab.jsx";
 import TradingCockpit from "./components/trading/TradingCockpit.jsx";
 import DealCockpit from "./components/trading/DealCockpit.jsx";
 import ResearchTab from "./components/research/ResearchTab.jsx";
+import ChatTab from "./components/chat/ChatTab.jsx";
 
 // Restore token from localStorage on startup
 const storedToken = localStorage.getItem("auth_token");
@@ -26,6 +27,7 @@ const TABS = [
   { id: "history", label: "History" },
   { id: "performance", label: "Performance" },
   { id: "research", label: "Research" },
+  { id: "chat", label: "AI Chat" },
   { id: "deals", label: "Deals" },
   { id: "cockpit", label: "Cockpit" },
   { id: "settings", label: "Einstellungen" },
@@ -319,6 +321,7 @@ export default function App() {
         {activeTab === "history" && <HistoryTab />}
         {activeTab === "performance" && <PerformanceTab />}
         {activeTab === "research" && <ResearchTab />}
+        {activeTab === "chat" && <ChatTab />}
         {activeTab === "deals" && <DealCockpit />}
         {activeTab === "cockpit" && <TradingCockpit />}
         {activeTab === "settings" && <SettingsTab currentUser={currentUser} onLogout={handleLogout} />}

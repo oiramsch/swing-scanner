@@ -31,6 +31,8 @@ def init_db():
     _seed_default_filters()
     _migrate_filter_defaults()
     _seed_strategy_modules()
+    _seed_connors_rsi2_module()
+    _seed_default_universes()
     _seed_admin_user()
     logger.info("Database initialized.")
 
@@ -98,6 +100,16 @@ def _apply_migrations():
         ("scanresult", "extracted_facts_json", "TEXT"),
         # v2.9 — Slippage Tracker: actual fill price vs. planned entry
         ("tradeplan", "actual_entry_price", "REAL"),
+        # v3.1 — Connors RSI-2 module: new StrategyModule filter fields
+        ("strategymodule", "rsi2_max",         "REAL"),
+        ("strategymodule", "close_below_sma5",  "INTEGER"),
+        # v3.1 — Dynamic Universe Management
+        ("scanuniverse", "tickers_json",       "TEXT"),
+        ("scanuniverse", "regime_default",     "TEXT DEFAULT 'any'"),
+        ("scanuniverse", "is_active",          "INTEGER DEFAULT 0"),
+        ("scanuniverse", "requires_capability","TEXT"),
+        ("scanuniverse", "risk_warning",       "TEXT"),
+        ("scanuniverse", "sort_order",         "INTEGER DEFAULT 99"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -321,6 +333,103 @@ def _seed_strategy_modules():
         logger.info("Seeded 3 strategy modules: Bull Breakout / Bear Relative Strength / Mean Reversion.")
 
 
+def _seed_connors_rsi2_module():
+    """Add Connors RSI-2 strategy module if it doesn't exist yet (safe to run on existing DBs)."""
+    with Session(get_engine()) as session:
+        existing = session.exec(
+            select(StrategyModule).where(StrategyModule.name == "Connors RSI-2")
+        ).first()
+        if existing:
+            return
+        session.add(StrategyModule(
+            name="Connors RSI-2",
+            description=(
+                "Larry Connors' short-term mean-reversion strategy. "
+                "Buys extreme short-term panic (RSI-2 < 10) in stocks whose long-term trend is intact "
+                "(close > SMA200). Exit when price closes above SMA5. "
+                "Mechanically defined — minimal interpretation, ideal for Ghost Portfolio tracking."
+            ),
+            regime="bull",        # optimal in overarching uptrend (bull or neutral)
+            direction="long",
+            is_active=True,
+            auto_activate=True,
+            price_min=10.0,
+            price_max=500.0,
+            avg_volume_min=500_000,
+            rsi_min=2.0,           # pre-filter with RSI-14 as proxy (loose; tight check via RSI-2)
+            rsi_max=40.0,
+            price_above_sma20=None,  # skip — stock is in short-term pullback
+            price_above_sma50=None,  # skip
+            close_above_sma200=True, # long-term trend must be intact
+            rsi_bear_cap=None,
+            volume_multiplier=0.8,   # don't require volume surge for pullbacks
+            relative_strength_vs_spy=False,
+            confidence_min=5,
+            setup_types='["pullback"]',
+            rsi2_max=10.0,            # RSI(2) < 10 = extreme short-term oversold
+            close_below_sma5=True,    # price must be in short-term pullback
+        ))
+        session.commit()
+        logger.info("Seeded strategy module: Connors RSI-2")
+
+
+def _seed_default_universes():
+    """Seed default scan universes (v3.1). Safe to run on existing DBs."""
+    with Session(get_engine()) as session:
+        if session.exec(select(ScanUniverse)).first():
+            return  # already seeded
+        universes = [
+            ScanUniverse(
+                name="S&P 500 Aktien",
+                type="equity_index",
+                description="Die 500 größten US-Unternehmen — Basis für Bull-Markt-Scans.",
+                tickers_source="static_sp500",
+                regime_default="bull,neutral",
+                is_active=True,
+                requires_capability=None,
+                sort_order=1,
+            ),
+            ScanUniverse(
+                name="Defensive Sektor-ETFs",
+                type="etf_basket",
+                description="Versorger, Basiskonsumgüter, Healthcare — defensiv in Bärenmärkten.",
+                tickers_source="custom_json",
+                tickers_json='["XLU","XLP","XLV","XLF","XBI"]',
+                regime_default="bear,neutral",
+                is_active=False,
+                requires_capability="supports_us_stocks",
+                sort_order=2,
+            ),
+            ScanUniverse(
+                name="Safe Haven Rohstoffe",
+                type="etf_basket",
+                description="Gold, Silber, Öl, Anleihen — steigen oft wenn Aktien fallen.",
+                tickers_source="custom_json",
+                tickers_json='["GLD","SLV","USO","TLT","IEF","GDX"]',
+                regime_default="bear",
+                is_active=False,
+                requires_capability="supports_us_stocks",
+                sort_order=3,
+            ),
+            ScanUniverse(
+                name="Inverse Index-ETFs",
+                type="etf_basket",
+                description="Steigen wenn der Markt fällt — Long-Position auf fallenden Markt.",
+                tickers_source="custom_json",
+                tickers_json='["SH","PSQ","DOG","SDS","QID"]',
+                regime_default="bear",
+                is_active=False,
+                requires_capability="supports_inverse_etfs",
+                risk_warning="Nur für erfahrene Trader. Inverse ETFs sind für kurzfristige Haltedauer konzipiert.",
+                sort_order=4,
+            ),
+        ]
+        for u in universes:
+            session.add(u)
+        session.commit()
+        logger.info("Seeded 4 default scan universes.")
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -454,6 +563,9 @@ class StrategyModule(SQLModel, table=True):
     rsi_bear_cap: Optional[float] = None        # Override default 60-cap in bear regime
     volume_multiplier: float = 1.0
     relative_strength_vs_spy: bool = False      # Require ticker to outperform SPY 20d return
+    # Connors RSI-2 specific filters (None = skip)
+    rsi2_max: Optional[float] = None            # Max RSI(2) value e.g. 10.0
+    close_below_sma5: Optional[bool] = None     # True = require close < SMA5
     # Output / ranking
     confidence_min: int = 6
     setup_types: str = '["breakout","pullback","pattern","momentum"]'
@@ -667,6 +779,36 @@ class MarketUpdate(SQLModel, table=True):
     notification_sent: bool = False
     notification_level: Optional[str] = None  # info|warning|critical
     generated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# v3.1 — Dynamic Universe Management
+# ---------------------------------------------------------------------------
+
+class ScanUniverse(SQLModel, table=True):
+    """
+    DB-backed universe definition (v3.1).
+    Each row represents a group of tickers the scanner can scan.
+    Activating a universe adds its tickers to the screener's symbol pool.
+
+    type: equity_index | etf_basket | custom
+    tickers_source: "static_sp500" | "static_russell1000" | "custom_json"
+      When "custom_json", tickers_json holds the actual list.
+    regime_default: comma-separated regimes that auto-activate this universe
+      e.g. "bear" or "bull,neutral" or "any"
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    type: str = "etf_basket"              # equity_index | etf_basket | custom
+    description: Optional[str] = None
+    tickers_source: str = "custom_json"   # static_sp500 | static_russell1000 | custom_json
+    tickers_json: Optional[str] = None    # JSON list of tickers (when tickers_source=custom_json)
+    regime_default: str = "any"           # comma-sep regimes: bull|bear|neutral|any
+    is_active: bool = False
+    requires_capability: Optional[str] = None  # broker capability gate e.g. "supports_us_stocks"
+    risk_warning: Optional[str] = None
+    sort_order: int = 99
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------
@@ -1822,3 +1964,39 @@ def set_ntfy_entry_sent(ticker: str) -> None:
         row.value = "1"
         session.add(row)
         session.commit()
+
+
+# ---------------------------------------------------------------------------
+# v3.1 — ScanUniverse CRUD
+# ---------------------------------------------------------------------------
+
+def get_all_universes() -> list[ScanUniverse]:
+    with Session(get_engine()) as session:
+        return list(session.exec(select(ScanUniverse).order_by(ScanUniverse.sort_order)).all())
+
+
+def get_active_universes(regime: str = "any") -> list[ScanUniverse]:
+    """Return universes that are active and match the current regime."""
+    all_u = get_all_universes()
+    result = []
+    for u in all_u:
+        if not u.is_active:
+            continue
+        defaults = [r.strip() for r in (u.regime_default or "any").split(",")]
+        if "any" in defaults or regime in defaults:
+            result.append(u)
+    return result
+
+
+def update_universe(universe_id: int, data: dict) -> Optional[ScanUniverse]:
+    with Session(get_engine()) as session:
+        u = session.get(ScanUniverse, universe_id)
+        if not u:
+            return None
+        for k, v in data.items():
+            if hasattr(u, k):
+                setattr(u, k, v)
+        session.add(u)
+        session.commit()
+        session.refresh(u)
+        return u
