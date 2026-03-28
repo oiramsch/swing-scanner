@@ -103,6 +103,9 @@ def _apply_migrations():
         # v3.1 — Connors RSI-2 module: new StrategyModule filter fields
         ("strategymodule", "rsi2_max",         "REAL"),
         ("strategymodule", "close_below_sma5",  "INTEGER"),
+        # v3.2 — Trigger-Preis: breakout confirmation tracking on ScanResult
+        ("scanresult", "trigger_price",    "REAL"),
+        ("scanresult", "trigger_reached",  "INTEGER DEFAULT 0"),
         # v3.1 — Dynamic Universe Management
         ("scanuniverse", "tickers_json",       "TEXT"),
         ("scanuniverse", "regime_default",     "TEXT DEFAULT 'any'"),
@@ -483,6 +486,9 @@ class ScanResult(SQLModel, table=True):
     composite_score: Optional[float] = None
     # v2.8 — Two-stage analysis: JSON blob of Vision-extracted facts for debugging
     extracted_facts_json: Optional[str] = None
+    # v3.2 — Trigger-Preis: breakout confirmation level (upper bound of entry_zone)
+    trigger_price: Optional[float] = None     # e.g. 148.00 = upper edge of entry zone
+    trigger_reached: bool = False             # True once price >= trigger_price → alert sent
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -2000,3 +2006,30 @@ def update_universe(universe_id: int, data: dict) -> Optional[ScanUniverse]:
         session.commit()
         session.refresh(u)
         return u
+
+
+# ---------------------------------------------------------------------------
+# v3.2 — Trigger-Preis CRUD
+# ---------------------------------------------------------------------------
+
+def get_trigger_waiting(scan_date: Optional[date] = None) -> list[ScanResult]:
+    """Return active candidates with trigger_price set but not yet reached."""
+    with Session(get_engine()) as session:
+        stmt = select(ScanResult).where(
+            ScanResult.trigger_price.isnot(None),
+            ScanResult.trigger_reached == False,
+            ScanResult.candidate_status.in_(["active", "watchlist_pending"]),
+        )
+        if scan_date:
+            stmt = stmt.where(ScanResult.scan_date == scan_date)
+        return list(session.exec(stmt).all())
+
+
+def mark_trigger_reached(scan_result_id: int) -> None:
+    """Mark a candidate's trigger as reached (avoids duplicate alerts)."""
+    with Session(get_engine()) as session:
+        sr = session.get(ScanResult, scan_result_id)
+        if sr:
+            sr.trigger_reached = True
+            session.add(sr)
+            session.commit()

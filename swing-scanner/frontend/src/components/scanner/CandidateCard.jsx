@@ -303,6 +303,21 @@ export default function CandidateCard({ candidate: c }) {
             </div>
           )}
 
+          {/* v3.2 — Trigger-Preis status badge */}
+          {c.trigger_price && (
+            <div className="flex items-center gap-1.5">
+              {c.trigger_reached ? (
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-green-500/15 text-green-400 border-green-500/30 flex items-center gap-1">
+                  ✅ Trigger erreicht — ${c.trigger_price?.toFixed(2)}
+                </span>
+              ) : (
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-amber-500/10 text-amber-400 border-amber-500/30 flex items-center gap-1">
+                  ⏳ Trigger: ${c.trigger_price?.toFixed(2)}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Non-critical flag badges (exclude corporate_action + technicals_invalid — shown separately above) */}
           {nonTechFlags.filter(f => f !== "corporate_action").length > 0 && (
             <div className="flex flex-wrap gap-1">

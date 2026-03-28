@@ -35,15 +35,30 @@ from backend.news_checker import run_full_news_check
 from backend.notifier import (
     notify_scan_complete,
     notify_sell_signal,
+    notify_trigger_reached,
     notify_watchlist_alert,
     send_daily_summary_email,
 )
 from backend.performance import update_performance_tracking
 from backend.screener import run_screener
-from backend.signal_checker import run_portfolio_signal_check
+from backend.signal_checker import run_portfolio_signal_check, check_candidate_triggers
 from backend.watchlist import check_watchlist_alerts
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_entry_upper(entry_zone: Optional[str]) -> Optional[float]:
+    """
+    Extract the upper bound from an entry_zone string.
+    "145.50-148.00" → 148.00
+    "150.00"        → 150.00 (single value = the trigger)
+    Returns None if unparseable.
+    """
+    import re as _re
+    if not entry_zone:
+        return None
+    nums = [float(x) for x in _re.findall(r"[\d.]+", str(entry_zone))]
+    return max(nums) if nums else None
 
 
 def next_trading_day(from_date: date) -> date:
@@ -364,6 +379,9 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
                 candidate_status=candidate_status,
                 composite_score=_composite,
                 extracted_facts_json=analysis.get("extracted_facts_json"),
+                # v3.2 — Trigger-Preis: upper bound of entry zone
+                trigger_price=_parse_entry_upper(analysis.get("entry_zone")),
+                trigger_reached=False,
             )
             saved_result = save_scan_result(result)
             # Only queue for deep analysis if the candidate is active
@@ -450,7 +468,7 @@ async def _run_deep_analysis(
 
 
 async def portfolio_signal_check(ctx: dict):
-    """22:30 UTC — Check open positions for sell signals."""
+    """22:30 UTC — Check open positions for sell signals + candidate trigger prices."""
     logger.info("=== portfolio_signal_check ===")
     try:
         new_signals = await run_portfolio_signal_check()
@@ -459,6 +477,13 @@ async def portfolio_signal_check(ctx: dict):
         logger.info("Portfolio signal check: %d new signals", len(new_signals))
     except Exception as exc:
         logger.error("Portfolio signal check failed: %s", exc)
+
+    # v3.2 — Trigger-Preis check (runs alongside portfolio signals)
+    try:
+        triggered = await check_candidate_triggers()
+        logger.info("Trigger check: %d triggers fired", len(triggered))
+    except Exception as exc:
+        logger.error("Trigger check failed: %s", exc)
 
 
 async def watchlist_check(ctx: dict):

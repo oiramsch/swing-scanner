@@ -38,14 +38,94 @@ class TRConnector(BrokerConnector):
     def get_balance(self) -> dict:
         """
         Phase 1: returns user-entered balance from BrokerConnection.
-        Phase 2: will use pytr to fetch live balance.
+        Phase 2 (pytr, if TR_PYTR_ENABLED=true): live balance from TR API.
+
+        pytr ToS Warning: pytr is an unofficial client. Use only for personal
+        accounts. Default is disabled (TR_PYTR_ENABLED=false in .env).
         """
+        from backend.config import settings
+        if settings.tr_pytr_enabled:
+            try:
+                return self._pytr_get_balance()
+            except Exception as exc:
+                logger.warning("pytr balance fetch failed, falling back to manual: %s", exc)
+
         balance = self.connection.get("manual_balance") or 0.0
         return {
             "buying_power": float(balance),
             "currency": "EUR",
             "is_paper": False,
             "manual": True,
+        }
+
+    def _pytr_get_balance(self) -> dict:
+        """
+        Fetch live balance from Trade Republic via pytr (unofficial client).
+
+        Requires TR_PYTR_ENABLED=true + TR_PHONE + TR_PIN in .env.
+        On first run, pytr triggers a 2FA via the TR app.
+        Session is stored as .pytr_session in the app root for reuse.
+
+        ToS risk: pytr is NOT an official TR API. Use at your own risk.
+        For personal use only — do NOT use in SaaS contexts.
+        """
+        import asyncio
+        from pathlib import Path
+
+        try:
+            from pytr.api import TradeRepublicApi
+        except ImportError:
+            raise RuntimeError(
+                "pytr nicht installiert. Führe 'pip install pytr' aus. "
+                "Beachte das ToS-Risiko bei inoffiziellen Clients."
+            )
+
+        from backend.config import settings
+
+        phone = self.connection.get("manual_balance_note") or settings.tr_phone
+        pin   = settings.tr_pin
+        if not phone or not pin:
+            raise RuntimeError(
+                "TR_PHONE und TR_PIN müssen in .env gesetzt sein um pytr zu nutzen."
+            )
+
+        session_file = Path(__file__).parent.parent.parent / ".pytr_session"
+
+        async def _fetch():
+            api = TradeRepublicApi(
+                phone_no=phone,
+                pin=pin,
+                locale="de",
+                credentials_file=str(session_file),
+            )
+            await api.login()
+            portfolio = await api.portfolio()
+            return portfolio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(asyncio.run, _fetch())
+                    portfolio = future.result(timeout=30)
+            else:
+                portfolio = loop.run_until_complete(_fetch())
+        except Exception as exc:
+            raise RuntimeError(f"pytr Verbindungsfehler: {exc}")
+
+        # Portfolio cash is in portfolio.cash
+        cash = getattr(portfolio, "cash", None)
+        if cash is None and isinstance(portfolio, dict):
+            cash = portfolio.get("cash", 0.0)
+        buying_power = float(cash or 0.0) / 100  # TR returns amounts in cents
+
+        return {
+            "buying_power": buying_power,
+            "currency": "EUR",
+            "is_paper": False,
+            "manual": False,
+            "source": "pytr",
         }
 
     def place_order(self, plan: dict) -> dict:
@@ -55,8 +135,58 @@ class TRConnector(BrokerConnector):
         )
 
     def get_portfolio(self) -> list[dict]:
-        # Phase 2: pytr portfolio sync
+        """
+        Phase 1: empty (manual tracking).
+        Phase 2 (pytr, if TR_PYTR_ENABLED=true): live positions from TR.
+        """
+        from backend.config import settings
+        if settings.tr_pytr_enabled:
+            try:
+                return self._pytr_get_portfolio()
+            except Exception as exc:
+                logger.warning("pytr portfolio sync failed: %s", exc)
         return []
+
+    def _pytr_get_portfolio(self) -> list[dict]:
+        """Fetch positions from Trade Republic via pytr."""
+        import asyncio
+        from pathlib import Path
+
+        try:
+            from pytr.api import TradeRepublicApi
+        except ImportError:
+            raise RuntimeError("pytr nicht installiert. pip install pytr")
+
+        from backend.config import settings
+        phone = settings.tr_phone
+        pin   = settings.tr_pin
+        session_file = Path(__file__).parent.parent.parent / ".pytr_session"
+
+        async def _fetch():
+            api = TradeRepublicApi(
+                phone_no=phone, pin=pin, locale="de",
+                credentials_file=str(session_file),
+            )
+            await api.login()
+            return await api.portfolio()
+
+        try:
+            portfolio = asyncio.run(_fetch())
+        except Exception as exc:
+            raise RuntimeError(f"pytr portfolio Fehler: {exc}")
+
+        positions_raw = getattr(portfolio, "positions", None) or []
+        result = []
+        for p in positions_raw:
+            if isinstance(p, dict):
+                result.append({
+                    "ticker":      p.get("instrument", {}).get("shortName", ""),
+                    "isin":        p.get("instrumentId", ""),
+                    "qty":         p.get("quantity", 0),
+                    "avg_cost":    (p.get("averageBuyIn", 0) or 0) / 100,
+                    "market_price": (p.get("currentPrice", 0) or 0) / 100,
+                })
+        return result
 
     def get_execution_checklist(
         self,

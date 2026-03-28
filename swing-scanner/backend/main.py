@@ -2008,11 +2008,14 @@ async def create_broker(
     # Set broker-type defaults
     broker_type = data["broker_type"]
     if "supports_short_selling" not in data:
-        data["supports_short_selling"] = broker_type == "alpaca"
+        data["supports_short_selling"] = broker_type in ("alpaca", "ibkr")
     if "fee_model_json" not in data:
         defaults = {
             "alpaca":          json.dumps({"type": "flat", "amount": 0.0}),
             "trade_republic":  json.dumps({"type": "flat", "amount": 1.0}),
+            "ibkr":            json.dumps({
+                "type": "tiered", "per_share": 0.005, "min": 0.35, "max_pct": 1.0
+            }),
         }
         data["fee_model_json"] = defaults.get(broker_type, json.dumps({"type": "flat", "amount": 0.0}))
     conn = create_broker_connection(current_user.tenant_id, data)
@@ -2056,8 +2059,18 @@ async def test_broker_connection_by_id(
     conn = next((c for c in conns if c.id == broker_id), None)
     if not conn:
         raise HTTPException(status_code=404, detail="Broker nicht gefunden")
+
+    # IBKR: test CP Gateway connection
+    if conn.broker_type == "ibkr":
+        from backend.brokers.ibkr import IBKRConnector
+        connector = IBKRConnector(conn.model_dump())
+        result = connector.test_connection()
+        if result["ok"]:
+            return {"status": "ok", **result}
+        raise HTTPException(status_code=400, detail=result.get("message", "Verbindung fehlgeschlagen"))
+
     if conn.broker_type != "alpaca":
-        raise HTTPException(status_code=400, detail="Verbindungstest nur für Alpaca verfügbar")
+        raise HTTPException(status_code=400, detail="Verbindungstest nur für Alpaca und IBKR verfügbar")
     api_key = decrypt_or_none(conn.api_key_enc)
     api_secret = decrypt_or_none(conn.api_secret_enc)
     if not api_key or not api_secret:
@@ -2111,6 +2124,48 @@ async def get_near_misses():
         "near_misses": funnel.get("near_misses", []),
         "scan_date": funnel.get("ran_at", ""),
     }
+
+
+# ---------------------------------------------------------------------------
+# v3.2 — Trigger-Preis
+# ---------------------------------------------------------------------------
+
+@app.get("/api/scan/trigger-waiting")
+async def get_trigger_waiting(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Returns active candidates that have a trigger_price set but not yet reached.
+    Shown in Dashboard as '⏳ Wartet auf Trigger'.
+    """
+    from backend.database import get_trigger_waiting as _get_trigger_waiting
+    from backend.database import get_latest_scan_date
+    scan_date = date.today()
+    candidates = _get_trigger_waiting(scan_date)
+    if not candidates:
+        latest = get_latest_scan_date()
+        if latest and latest != scan_date:
+            candidates = _get_trigger_waiting(latest)
+    return {
+        "candidates": [c.model_dump() for c in candidates],
+        "count": len(candidates),
+    }
+
+
+@app.post("/api/scan/trigger-check")
+async def manual_trigger_check(
+    background_tasks: BackgroundTasks,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Manually trigger a price check for all pending trigger candidates.
+    Fires ntfy alerts for any that have reached their trigger price.
+    """
+    async def _run():
+        from backend.signal_checker import check_candidate_triggers
+        return await check_candidate_triggers()
+    background_tasks.add_task(_run)
+    return {"status": "started"}
 
 
 # ---------------------------------------------------------------------------

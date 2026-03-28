@@ -115,6 +115,29 @@ def notify_regime_change(old_regime: str, new_regime: str, spy_close: float, sma
     )
 
 
+def notify_trigger_reached(
+    ticker: str,
+    trigger_price: float,
+    current_price: float,
+    setup_type: str = "",
+    crv: Optional[float] = None,
+    strategy_module: str = "",
+):
+    """Push when a candidate's breakout trigger price is hit."""
+    crv_str = f" · CRV {crv:.1f}" if crv else ""
+    module_str = f" [{strategy_module}]" if strategy_module else ""
+    setup_str = f" · {setup_type}" if setup_type else ""
+    send_push(
+        title=f"⚡ {ticker} Trigger erreicht!{module_str}",
+        message=(
+            f"Preis: ${current_price:.2f} ≥ Trigger ${trigger_price:.2f}"
+            f"{setup_str}{crv_str}\nSetup jetzt aktiv — Entry prüfen."
+        ),
+        priority="high",
+        tags="zap",
+    )
+
+
 def notify_entry_zone(
     ticker: str,
     price: float,

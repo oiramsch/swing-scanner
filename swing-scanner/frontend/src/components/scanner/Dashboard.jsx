@@ -148,6 +148,8 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
   const [showFunnel, setShowFunnel] = useState(false);
   const [nearMisses, setNearMisses] = useState([]);
   const [showNearMisses, setShowNearMisses] = useState(false);
+  const [triggerWaiting, setTriggerWaiting] = useState([]);
+  const [showTriggerWaiting, setShowTriggerWaiting] = useState(false);
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -157,6 +159,7 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
     fetchBudget();
     fetchFunnel();
     fetchNearMisses();
+    fetchTriggerWaiting();
     if (scanStatus?.running) startPolling();
     return () => stopPolling();
   }, []);
@@ -180,6 +183,13 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
     try {
       const res = await axios.get("/api/scan/near-misses");
       setNearMisses(res.data?.near_misses || []);
+    } catch {}
+  }
+
+  async function fetchTriggerWaiting() {
+    try {
+      const res = await axios.get("/api/scan/trigger-waiting");
+      setTriggerWaiting(res.data?.candidates || []);
     } catch {}
   }
 
@@ -529,6 +539,50 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
                         : c.reasoning || "Kein Setup ableitbar"}
                     </span>
                     <span className="text-[10px] text-yellow-600 shrink-0">Beobachten</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Trigger-Waiting — candidates with trigger price set, not yet reached */}
+      {triggerWaiting.length > 0 && (
+        <div className="mt-4">
+          <button
+            onClick={() => setShowTriggerWaiting(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-2.5 bg-amber-950/30 border border-amber-800/40 rounded-xl text-sm text-amber-400/80 hover:text-amber-300 transition"
+          >
+            <span>
+              ⏳ Wartet auf Trigger — Breakout-Bestätigung ausstehend
+              <span className="ml-2 text-xs bg-amber-900/40 text-amber-400 px-2 py-0.5 rounded-full">{triggerWaiting.length}</span>
+            </span>
+            <span className="text-amber-700">{showTriggerWaiting ? "▲" : "▼"}</span>
+          </button>
+
+          {showTriggerWaiting && (
+            <div className="mt-2 bg-gray-900/80 border border-amber-800/30 rounded-xl overflow-hidden">
+              <div className="px-4 py-2 border-b border-amber-800/20 text-xs text-amber-700/80">
+                Diese Kandidaten haben ein Setup, brauchen aber eine Kurs-Bestätigung oberhalb des Triggers. Du erhältst eine Push-Benachrichtigung sobald der Trigger erreicht wird.
+              </div>
+              <div className="divide-y divide-gray-800/50">
+                {triggerWaiting.map(c => (
+                  <div key={c.id} className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+                    <span className="text-white font-semibold text-sm w-16">{c.ticker}</span>
+                    {c.strategy_module && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-gray-700 text-gray-500">{c.strategy_module}</span>
+                    )}
+                    <span className="text-xs text-amber-500/90">
+                      Trigger: <span className="font-semibold text-amber-300">${c.trigger_price?.toFixed(2)}</span>
+                    </span>
+                    {c.entry_zone && (
+                      <span className="text-xs text-gray-500">Zone: {c.entry_zone}</span>
+                    )}
+                    {c.crv_calculated && (
+                      <span className="text-xs text-gray-500">CRV {c.crv_calculated.toFixed(1)}</span>
+                    )}
+                    <span className="ml-auto text-[10px] text-amber-700 bg-amber-900/30 border border-amber-800/40 px-1.5 py-0.5 rounded">⏳ Ausstehend</span>
                   </div>
                 ))}
               </div>

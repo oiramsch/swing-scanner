@@ -1,6 +1,7 @@
 from backend.brokers.base import BrokerConnector
 from backend.brokers.alpaca import AlpacaConnector
 from backend.brokers.trade_republic import TRConnector
+from backend.brokers.ibkr import IBKRConnector
 
 
 def get_connector(broker_connection: dict) -> BrokerConnector:
@@ -13,7 +14,9 @@ def get_connector(broker_connection: dict) -> BrokerConnector:
         return AlpacaConnector(broker_connection)
     if bt == "trade_republic":
         return TRConnector(broker_connection)
+    if bt == "ibkr":
+        return IBKRConnector(broker_connection)
     raise ValueError(f"Unbekannter Broker-Typ: {bt}")
 
 
-__all__ = ["BrokerConnector", "AlpacaConnector", "TRConnector", "get_connector"]
+__all__ = ["BrokerConnector", "AlpacaConnector", "TRConnector", "IBKRConnector", "get_connector"]

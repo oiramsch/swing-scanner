@@ -1,6 +1,7 @@
 """
 Daily signal checker for open portfolio positions.
 Generates sell signals based on 6 criteria.
+Also checks trigger prices for active scan candidates (v3.2).
 """
 import logging
 from datetime import date
@@ -14,6 +15,8 @@ from backend.database import (
     SignalAlert,
     get_open_positions,
     get_signals_for_position,
+    get_trigger_waiting,
+    mark_trigger_reached,
     save_signal,
 )
 from backend.screener import fetch_ohlcv, compute_indicators
@@ -144,3 +147,64 @@ async def run_portfolio_signal_check() -> list[SignalAlert]:
     logger.info("Signal check complete: %d new signals for %d positions",
                 len(all_new_signals), len(positions))
     return all_new_signals
+
+
+async def check_candidate_triggers() -> list[dict]:
+    """
+    v3.2 — Trigger-Preis check.
+
+    Iterates today's (or most recent) active candidates with trigger_price set
+    but not yet reached. Fetches current EOD close and fires a push notification
+    when price >= trigger_price. Marks reached to avoid duplicate alerts.
+
+    Returns list of triggered candidate dicts.
+    """
+    from backend.database import get_latest_scan_date
+    from backend.notifier import notify_trigger_reached
+
+    scan_date = date.today()
+    candidates = get_trigger_waiting(scan_date)
+    if not candidates:
+        # Try latest available scan date
+        latest = get_latest_scan_date()
+        if latest and latest != scan_date:
+            candidates = get_trigger_waiting(latest)
+
+    if not candidates:
+        logger.info("Trigger check: no candidates with pending trigger_price")
+        return []
+
+    triggered = []
+    for c in candidates:
+        try:
+            df = await fetch_ohlcv(c.ticker, days=3)
+            if df is None or df.empty:
+                continue
+            current_price = float(df.iloc[-1]["Close"])
+            if current_price >= c.trigger_price:
+                mark_trigger_reached(c.id)
+                notify_trigger_reached(
+                    ticker=c.ticker,
+                    trigger_price=c.trigger_price,
+                    current_price=current_price,
+                    setup_type=c.setup_type or "",
+                    crv=c.crv_calculated,
+                    strategy_module=c.strategy_module or "",
+                )
+                triggered.append({
+                    "ticker": c.ticker,
+                    "trigger_price": c.trigger_price,
+                    "current_price": current_price,
+                    "setup_type": c.setup_type,
+                    "crv": c.crv_calculated,
+                    "module": c.strategy_module,
+                })
+                logger.info(
+                    "Trigger reached: %s price=%.2f trigger=%.2f",
+                    c.ticker, current_price, c.trigger_price,
+                )
+        except Exception as exc:
+            logger.error("Trigger check failed for %s: %s", c.ticker, exc)
+
+    logger.info("Trigger check: %d triggered out of %d pending", len(triggered), len(candidates))
+    return triggered

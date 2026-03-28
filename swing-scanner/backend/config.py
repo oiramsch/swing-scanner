@@ -82,5 +82,17 @@ class Settings(BaseSettings):
     # Set to false to revert to single-stage analysis for comparison/debugging
     use_two_stage_analysis: bool = True
 
+    # ── Trade Republic pytr (Phase 8.4) ───────────────────────────────────────
+    # WARNING: pytr is an unofficial client. ToS risk — default off.
+    # Only enable for personal use. Requires one-time interactive 2FA setup.
+    tr_pytr_enabled: bool = False
+    tr_phone: str = ""   # +49…
+    tr_pin: str = ""     # 4-6 digit PIN
+
+    # ── IBKR Client Portal Gateway (Phase 8.8) ────────────────────────────────
+    # User must run IBKR CP Gateway locally (Docker or native)
+    # Default: https://localhost:5000
+    ibkr_gateway_url: str = "https://localhost:5000"
+
 
 settings = Settings()
