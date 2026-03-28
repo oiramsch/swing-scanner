@@ -385,9 +385,9 @@ def _seed_default_universes():
             ScanUniverse(
                 name="S&P 500 Aktien",
                 type="equity_index",
-                description="Die 500 größten US-Unternehmen — Basis für Bull-Markt-Scans.",
+                description="Die 500 größten US-Unternehmen — Basis für alle Marktphasen (Bear-Module: Bear Relative Strength, Mean Reversion, Connors RSI-2).",
                 tickers_source="static_sp500",
-                regime_default="bull,neutral",
+                regime_default="bull,neutral,bear",
                 is_active=True,
                 requires_capability=None,
                 sort_order=1,
