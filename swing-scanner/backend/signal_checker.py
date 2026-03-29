@@ -107,14 +107,15 @@ async def check_position_signals(pos: PortfolioPosition) -> list[SignalAlert]:
 
     # 5. Stagnation (LOW)
     # ATR dropped below 60% of entry-day ATR AND price barely moved
-    entry_date_dt = pd.Timestamp(pos.entry_date)
+    entry_date = pos.entry_date if isinstance(pos.entry_date, date) else pd.Timestamp(pos.entry_date).date()
+    entry_date_dt = pd.Timestamp(entry_date)
     entry_window = df[df.index <= entry_date_dt].tail(5)
     if not entry_window.empty and atr_now > 0:
         entry_atr = float(entry_window["ATRr_14"].iloc[-1] or 0)
         price_move_pct = abs(close - pos.entry_price) / pos.entry_price * 100
         if entry_atr > 0 and atr_now < entry_atr * 0.6 and price_move_pct < 2:
             # Check at least 5 days in trade
-            days_in_trade = (today - pos.entry_date).days
+            days_in_trade = (today - entry_date).days
             if days_in_trade >= 5:
                 _new(
                     "stagnation",

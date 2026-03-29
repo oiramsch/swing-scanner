@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # ── App ───────────────────────────────────────────────────────────────────
     database_url: str = "sqlite:///./swing_scanner.db"
     redis_url: str = "redis://localhost:6379"
-    scan_time_utc: str = "22:15"
+    scan_time_utc: str = "21:15"
 
     # ── Auth (Phase 2a) ────────────────────────────────────────────────────────
     # Generate a strong key: python -c "import secrets; print(secrets.token_hex(32))"
