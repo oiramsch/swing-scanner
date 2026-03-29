@@ -83,6 +83,18 @@ export default function JournalTab() {
         </select>
         <button onClick={fetchEntries}
           className="text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-2 rounded-lg">Apply</button>
+        <button
+          onClick={async () => {
+            const res = await axios.get("/api/journal/export.csv", { responseType: "blob" });
+            const url = URL.createObjectURL(res.data);
+            const a = document.createElement("a");
+            a.href = url; a.download = "journal_export.csv"; a.click();
+            URL.revokeObjectURL(url);
+          }}
+          className="text-sm px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 rounded-lg transition"
+        >
+          CSV Export
+        </button>
         <button onClick={() => { setEditEntry(null); setShowForm(true); }}
           className="ml-auto text-sm px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium">
           + New Entry
