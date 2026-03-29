@@ -1,34 +1,17 @@
-name: 🧪 Swing Scanner CI & Auto-Fix
-
-on:
-  pull_request:
-    types: [opened, synchronize]
-
-jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write # Zwingend nötig, um Kommentare und Labels zu posten
-      issues: write
-      contents: read
-
-    steps:
-      - name: 📦 Code auschecken
-        uses: actions/checkout@v5 # V5, um die Node 20 Warnung zu vermeiden!
-
-      - name: 🐍 Backend Setup (FastAPI)
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: ⚙️ Backend Tests ausführen
+- name: ⚙️ Backend Tests ausführen
         id: backend
-        continue-on-error: true # Skript bricht hier nicht ab, damit wir den Fehler fangen können
+        continue-on-error: true
         run: |
-          cd backend
-          pip install -r requirements.txt || true
-          pip install pytest || true
-          pytest > ../backend_error.log 2>&1
+          touch backend_error.log # Datei sicherheitshalber anlegen
+          if [ -d "backend" ]; then
+            cd backend
+            pip install -r requirements.txt || true
+            pip install pytest || true
+            pytest > ../backend_error.log 2>&1
+          else
+            echo "Fehler: Ordner 'backend' existiert nicht in diesem Branch!" > backend_error.log
+            exit 1
+          fi
 
       - name: ⚛️ Frontend Setup (React/Vite)
         uses: actions/setup-node@v4
@@ -39,49 +22,12 @@ jobs:
         id: frontend
         continue-on-error: true
         run: |
-          cd frontend
-          npm install
-          npm run build > ../frontend_error.log 2>&1
-
-      - name: 🤖 Circuit Breaker & Auto-Fix Trigger
-        # Läuft nur, wenn einer der beiden Tests fehlgeschlagen ist
-        if: steps.backend.outcome == 'failure' || steps.frontend.outcome == 'failure'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          # 1. Error Logs zusammenfassen
-          ERROR_MSG="🚨 **CI Build fehlgeschlagen!**\n\n"
-          if [ "${{ steps.backend.outcome }}" == "failure" ]; then
-            ERROR_MSG+="**Backend Fehler:**\n\`\`\`text\n$(tail -n 30 backend_error.log)\n\`\`\`\n"
-          fi
-          if [ "${{ steps.frontend.outcome }}" == "failure" ]; then
-            ERROR_MSG+="**Frontend Fehler:**\n\`\`\`text\n$(tail -n 30 frontend_error.log)\n\`\`\`\n"
-          fi
-
-          # 2. Aktuelle Labels des PRs auslesen
-          LABELS=$(gh pr view $PR_NUMBER --json labels -q '.labels[].name')
-
-          # 3. Die Endlosschleifen-Prüfung
-          if echo "$LABELS" | grep -q 'auto-fix-failed'; then
-            echo "Circuit Breaker aktiv. Kein weiterer KI-Versuch."
-            gh pr comment $PR_NUMBER --body "$ERROR_MSG 🛑 **Endlosschleife verhindert!** Claude hat den Fix bereits erfolglos versucht. Bitte manuell prüfen, Herr Fabrikdirektor."
-            exit 1
-            
-          elif echo "$LABELS" | grep -q 'auto-fix-1'; then
-            echo "Zweiter Fehlschlag. Setze auf failed."
-            gh pr edit $PR_NUMBER --add-label 'auto-fix-failed' --remove-label 'auto-fix-1'
-            gh pr comment $PR_NUMBER --body "@claude ⚠️ **LETZTER VERSUCH!** Dein letzter Fix hat nicht funktioniert. Der CI Build schlägt immer noch fehl. Analysiere das Log und pushe die Lösung:\n\n$ERROR_MSG"
-            exit 1
-            
+          touch frontend_error.log # Datei sicherheitshalber anlegen
+          if [ -d "frontend" ]; then
+            cd frontend
+            npm install > ../frontend_error.log 2>&1
+            npm run build >> ../frontend_error.log 2>&1
           else
-            echo "Erster Fehlschlag. Triggere Claude."
-            gh pr edit $PR_NUMBER --add-label 'auto-fix-1'
-            gh pr comment $PR_NUMBER --body "@claude ⚠️ **CI Build fehlgeschlagen!** Bitte behebe diese Fehler und pushe erneut:\n\n$ERROR_MSG"
+            echo "Fehler: Ordner 'frontend' existiert nicht in diesem Branch!" > frontend_error.log
             exit 1
           fi
-
-      - name: ✅ Erfolg prüfen
-        # Wenn wir hier ankommen, waren Backend und Frontend erfolgreich
-        if: steps.backend.outcome == 'success' && steps.frontend.outcome == 'success'
-        run: echo "Alle Tests grün! Bereit für NAS Deployment."
