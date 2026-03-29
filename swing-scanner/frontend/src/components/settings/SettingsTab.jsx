@@ -39,8 +39,8 @@ function Field({ label, children, hint }) {
 // ---------------------------------------------------------------------------
 // Broker Management
 // ---------------------------------------------------------------------------
-const BROKER_ICONS  = { alpaca: "🦙", trade_republic: "🇩🇪", ibkr: "📊" };
-const BROKER_LABELS = { alpaca: "Alpaca", trade_republic: "Trade Republic", ibkr: "IBKR" };
+const BROKER_ICONS  = { alpaca: "🦙", trade_republic: "🇩🇪", ibkr: "📊", scalable: "📈", zero: "0️⃣" };
+const BROKER_LABELS = { alpaca: "Alpaca", trade_republic: "Trade Republic", ibkr: "IBKR", scalable: "Scalable Capital", zero: "Zero" };
 
 function parseFeeModel(json) {
   try { return json ? JSON.parse(json) : { type: "flat", amount: 0 }; }
@@ -271,6 +271,66 @@ function TRForm({ broker, onSaved }) {
   );
 }
 
+function ManualBrokerForm({ broker, brokerType, onSaved }) {
+  const isNew = !broker;
+  const defaultFees = { scalable: JSON.stringify({ type: "flat", amount: 0.99 }), zero: JSON.stringify({ type: "flat", amount: 0.0 }) };
+  const defaultLabels = { scalable: "Scalable Capital", zero: "Zero" };
+  const [form, setForm] = useState({
+    label: broker?.label ?? defaultLabels[brokerType] ?? brokerType,
+    manual_balance: broker?.balance?.buying_power ?? "",
+    fee_model_json: broker?.fee_model_json ?? defaultFees[brokerType] ?? JSON.stringify({ type: "flat", amount: 0.0 }),
+  });
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function save(e) {
+    e.preventDefault();
+    setSaving(true); setSaved(false);
+    try {
+      const payload = {
+        broker_type: brokerType,
+        label: form.label,
+        is_paper: false,
+        manual_balance: form.manual_balance !== "" ? parseFloat(form.manual_balance) : null,
+        manual_currency: "EUR",
+        fee_model_json: form.fee_model_json,
+      };
+      if (isNew) await axios.post("/api/brokers", payload);
+      else       await axios.put(`/api/brokers/${broker.id}`, payload);
+      setSaved(true);
+      onSaved();
+    } catch (err) { alert(err.response?.data?.detail || "Fehler"); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <form onSubmit={save} className="space-y-3 mt-3">
+      <Field label="Label">
+        <input value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500" />
+      </Field>
+      <Field label="Konto-Balance (EUR)">
+        <input type="number" step="0.01" value={form.manual_balance}
+          onChange={e => setForm(f => ({ ...f, manual_balance: e.target.value }))}
+          placeholder="z.B. 1000.00"
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500" />
+      </Field>
+      <p className="text-[11px] text-gray-600">Manueller Broker — Orders werden als Checkliste angezeigt. Balance manuell pflegen.</p>
+      <Field label="Gebühr pro Order">
+        <FeeModelField
+          value={form.fee_model_json}
+          onChange={v => setForm(f => ({ ...f, fee_model_json: v }))}
+          currency="EUR"
+        />
+      </Field>
+      <button type="submit" disabled={saving}
+        className="px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition disabled:opacity-50">
+        {saving ? "Speichern…" : saved ? "✓ Gespeichert" : "Speichern"}
+      </button>
+    </form>
+  );
+}
+
 function BrokerCard({ broker, onSaved, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -311,7 +371,10 @@ function BrokerCard({ broker, onSaved, onDelete }) {
         <div className="px-4 pb-4 bg-gray-800/20">
           {broker.broker_type === "alpaca"          && <AlpacaForm broker={broker} onSaved={onSaved} />}
           {broker.broker_type === "trade_republic"  && <TRForm     broker={broker} onSaved={onSaved} />}
-          {!["alpaca", "trade_republic"].includes(broker.broker_type) && (
+          {["scalable", "zero"].includes(broker.broker_type) && (
+            <ManualBrokerForm broker={broker} brokerType={broker.broker_type} onSaved={onSaved} />
+          )}
+          {!["alpaca", "trade_republic", "scalable", "zero"].includes(broker.broker_type) && (
             <p className="text-xs text-gray-500 mt-3">Kein Editor für diesen Broker-Typ.</p>
           )}
         </div>
@@ -355,6 +418,9 @@ function BrokerManagementSection() {
           </div>
           {adding === "alpaca"         && <AlpacaForm onSaved={() => { setAdding(null); loadBrokers(); }} />}
           {adding === "trade_republic" && <TRForm     onSaved={() => { setAdding(null); loadBrokers(); }} />}
+          {["scalable", "zero"].includes(adding) && (
+            <ManualBrokerForm brokerType={adding} onSaved={() => { setAdding(null); loadBrokers(); }} />
+          )}
         </div>
       ) : (
         <div className="flex gap-2 mt-2 flex-wrap">
@@ -362,6 +428,8 @@ function BrokerManagementSection() {
           {[
             { type: "alpaca",         label: "🦙 Alpaca" },
             { type: "trade_republic", label: "🇩🇪 Trade Republic" },
+            { type: "scalable",       label: "📈 Scalable Capital" },
+            { type: "zero",           label: "0️⃣ Zero" },
           ].map(opt => (
             <button key={opt.type} onClick={() => setAdding(opt.type)}
               className="text-xs px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 text-gray-300 transition">
