@@ -161,6 +161,81 @@ function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute }) {
 }
 
 // ---------------------------------------------------------------------------
+// Open orders list (Alpaca only)
+// ---------------------------------------------------------------------------
+function OpenOrdersSection({ visible }) {
+  const [orders,    setOrders]    = useState([]);
+  const [loading,   setLoading]   = useState(false);
+  const [cancelling, setCancelling] = useState({});
+
+  useEffect(() => {
+    if (!visible) return;
+    load();
+  }, [visible]);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const res = await axios.get("/api/orders");
+      setOrders(res.data || []);
+    } catch {}
+    setLoading(false);
+  }
+
+  async function cancel(orderId) {
+    setCancelling(c => ({ ...c, [orderId]: true }));
+    try {
+      await axios.delete(`/api/orders/${orderId}`);
+      setOrders(o => o.filter(x => x.id !== orderId));
+    } catch (err) {
+      alert(err.response?.data?.detail || "Stornierung fehlgeschlagen");
+    }
+    setCancelling(c => ({ ...c, [orderId]: false }));
+  }
+
+  if (!visible) return null;
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-gray-200">Offene Orders ({orders.length})</h2>
+        <button onClick={load} className="text-xs px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded border border-gray-700 transition">↻</button>
+      </div>
+      {loading ? (
+        <div className="flex items-center justify-center h-16">
+          <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : orders.length === 0 ? (
+        <div className="text-center py-6 text-xs text-gray-600">Keine offenen Orders</div>
+      ) : (
+        <div>
+          {orders.map(o => (
+            <div key={o.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-800 last:border-b-0 text-sm">
+              <span className="font-bold text-white w-16 shrink-0">{o.ticker}</span>
+              <span className="text-gray-400">{o.qty} Stk.</span>
+              {o.limit_price != null && <span className="text-gray-400">@ ${o.limit_price.toFixed(2)}</span>}
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">{o.type}</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded border ${o.status === "new" || o.status === "accepted" ? "bg-blue-900/20 border-blue-700/40 text-blue-400" : "bg-gray-800 border-gray-700 text-gray-500"}`}>
+                {o.status}
+              </span>
+              <div className="ml-auto">
+                <button
+                  onClick={() => cancel(o.id)}
+                  disabled={cancelling[o.id]}
+                  className="text-xs px-2.5 py-1 bg-red-900/30 hover:bg-red-900/60 border border-red-700/40 text-red-400 rounded transition disabled:opacity-50"
+                >
+                  {cancelling[o.id] ? "…" : "Stornieren"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export default function TradingCockpit({ setActiveTab }) {
@@ -312,6 +387,9 @@ export default function TradingCockpit({ setActiveTab }) {
           </div>
         )}
       </div>
+
+      {/* Open orders (Alpaca only) */}
+      <OpenOrdersSection visible={!!alpacaBroker} />
 
       {/* Justage Modal */}
       {justageTarget && (
