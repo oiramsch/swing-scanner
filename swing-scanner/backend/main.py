@@ -1437,8 +1437,8 @@ async def get_live_quotes(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
-    Fetch latest prices for comma-separated symbols via yfinance.
-    Returns { AAPL: 182.50, MSFT: null, ... }
+    Fetch latest prices + volume ratio for comma-separated symbols via yfinance.
+    Returns { AAPL: { price: 182.50, volume_ratio: 1.4 }, MSFT: { price: null, volume_ratio: null }, ... }
     """
     import asyncio
     import yfinance as yf
@@ -1453,9 +1453,15 @@ async def get_live_quotes(
             try:
                 info = yf.Ticker(sym).fast_info
                 price = getattr(info, "last_price", None)
-                result[sym] = round(float(price), 2) if price else None
+                current_vol = getattr(info, "regular_market_volume", None)
+                avg_vol = getattr(info, "three_month_average_volume", None)
+                vol_ratio = round(current_vol / avg_vol, 1) if (current_vol and avg_vol and avg_vol > 0) else None
+                result[sym] = {
+                    "price": round(float(price), 2) if price else None,
+                    "volume_ratio": vol_ratio,
+                }
             except Exception:
-                result[sym] = None
+                result[sym] = {"price": None, "volume_ratio": None}
         return result
 
     loop = asyncio.get_event_loop()
@@ -1639,10 +1645,13 @@ async def research_ticker(
 @app.get("/api/trade-plans")
 async def list_trade_plans(
     active_only: bool = True,
+    status: Optional[str] = None,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     plans = get_active_trade_plans(current_user.tenant_id) if active_only \
             else get_all_trade_plans(current_user.tenant_id)
+    if status:
+        plans = [p for p in plans if p.status == status]
     return [p.model_dump() for p in plans]
 
 

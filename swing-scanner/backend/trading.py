@@ -28,6 +28,7 @@ def get_account_info(creds: dict) -> dict:
         "currency":        str(acc.currency),
         "is_paper":        creds.get("is_paper", True),
         "status":          str(acc.status),
+        "daytrade_count":  int(getattr(acc, "daytrade_count", 0) or 0),
     }
 
 

@@ -323,7 +323,7 @@ export default function App() {
         {activeTab === "research" && <ResearchTab />}
         {activeTab === "chat" && <ChatTab />}
         {activeTab === "deals" && <DealCockpit />}
-        {activeTab === "cockpit" && <TradingCockpit />}
+        {activeTab === "cockpit" && <TradingCockpit setActiveTab={setActiveTab} />}
         {activeTab === "settings" && <SettingsTab currentUser={currentUser} onLogout={handleLogout} />}
       </main>
     </div>

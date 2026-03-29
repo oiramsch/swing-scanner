@@ -97,7 +97,7 @@ function SlippageInput({ plan, onSaved }) {
 }
 
 function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRefresh }) {
-  const livePrice = quotes[plan.ticker];
+  const livePrice = quotes[plan.ticker]?.price ?? null;
   const zone = parseEntryZone(plan.entry_low, plan.entry_high);
   const inZone    = livePrice && zone && livePrice >= zone.low && livePrice <= zone.trigger;
   const belowZone = livePrice && zone && livePrice < zone.low;
@@ -357,7 +357,7 @@ export default function DealCockpit() {
         <JustageModal
           plan={justageTarget.plan}
           broker={justageTarget.broker}
-          livePrice={quotes[justageTarget.plan.ticker]}
+          livePrice={quotes[justageTarget.plan.ticker]?.price ?? null}
           onClose={() => setJustageTarget(null)}
           onSuccess={() => { setJustageTarget(null); loadPlans(); }}
         />
