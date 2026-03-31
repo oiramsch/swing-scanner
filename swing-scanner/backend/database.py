@@ -191,11 +191,9 @@ def _migrate_filter_defaults():
 
 
 def _seed_default_filters():
-    """Create the 3 built-in filter presets if none exist yet."""
+    """Create the 3 built-in filter presets if any are missing."""
     with Session(get_engine()) as session:
-        existing = list(session.exec(select(FilterProfile)).all())
-        if existing:
-            return  # Already seeded — don't overwrite user settings
+        existing_names = {fp.name for fp in session.exec(select(FilterProfile)).all()}
 
         defaults = [
             FilterProfile(
@@ -238,10 +236,14 @@ def _seed_default_filters():
                 is_active=False,
             ),
         ]
+        added = 0
         for fp in defaults:
-            session.add(fp)
-        session.commit()
-        logger.info("Seeded 3 default filter profiles (Strikt / Standard / Breit).")
+            if fp.name not in existing_names:
+                session.add(fp)
+                added += 1
+        if added:
+            session.commit()
+            logger.info("Seeded %d missing filter profile(s) (Strikt / Standard / Breit).", added)
 
 
 def _seed_strategy_modules():

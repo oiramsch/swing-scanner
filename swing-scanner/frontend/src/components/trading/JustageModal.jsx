@@ -60,6 +60,7 @@ export default function JustageModal({ plan, broker, livePrice, onClose, onSucce
   const [error,     setError]     = useState(null);
   const [success,   setSuccess]   = useState(null);
   const [showTR,    setShowTR]    = useState(false);
+  const [confirmLive, setConfirmLive] = useState(false); // double-confirm for live Alpaca
 
   const entry      = parseFloat(plan.entry_high);
   const stop       = parseFloat(plan.stop_loss);
@@ -234,9 +235,9 @@ export default function JustageModal({ plan, broker, livePrice, onClose, onSucce
             >
               Abbrechen
             </button>
-            {isAlpaca && (
+            {isAlpaca && !confirmLive && (
               <button
-                onClick={executeAlpaca}
+                onClick={() => broker.is_paper ? executeAlpaca() : setConfirmLive(true)}
                 disabled={executing || belowZone}
                 title={belowZone ? "Preis unter Support — Setup ungültig" : undefined}
                 className={`flex-2 px-6 py-2 text-sm rounded font-semibold transition disabled:opacity-50 ${
@@ -249,6 +250,23 @@ export default function JustageModal({ plan, broker, livePrice, onClose, onSucce
               >
                 {executing ? "Kaufe…" : belowZone ? "⚠️ Below Zone" : `${qty} Stk. kaufen`}
               </button>
+            )}
+            {isAlpaca && confirmLive && (
+              <>
+                <button
+                  onClick={() => setConfirmLive(false)}
+                  className="flex-1 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-gray-400 rounded border border-gray-700 transition"
+                >
+                  Zurück
+                </button>
+                <button
+                  onClick={() => { setConfirmLive(false); executeAlpaca(); }}
+                  disabled={executing}
+                  className="flex-2 px-4 py-2 text-sm rounded font-semibold bg-red-700 hover:bg-red-600 text-white transition disabled:opacity-50"
+                >
+                  {executing ? "Kaufe…" : `⚠️ LIVE: ${qty} Stk. ${plan.ticker} kaufen`}
+                </button>
+              </>
             )}
             {(isTR || !isAlpaca) && (
               <button

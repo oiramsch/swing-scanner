@@ -1,0 +1,33 @@
+- name: ⚙️ Backend Tests ausführen
+        id: backend
+        continue-on-error: true
+        run: |
+          touch backend_error.log # Datei sicherheitshalber anlegen
+          if [ -d "backend" ]; then
+            cd backend
+            pip install -r requirements.txt || true
+            pip install pytest || true
+            pytest > ../backend_error.log 2>&1
+          else
+            echo "Fehler: Ordner 'backend' existiert nicht in diesem Branch!" > backend_error.log
+            exit 1
+          fi
+
+      - name: ⚛️ Frontend Setup (React/Vite)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: ⚙️ Frontend Build-Check
+        id: frontend
+        continue-on-error: true
+        run: |
+          touch frontend_error.log # Datei sicherheitshalber anlegen
+          if [ -d "frontend" ]; then
+            cd frontend
+            npm install > ../frontend_error.log 2>&1
+            npm run build >> ../frontend_error.log 2>&1
+          else
+            echo "Fehler: Ordner 'frontend' existiert nicht in diesem Branch!" > frontend_error.log
+            exit 1
+          fi

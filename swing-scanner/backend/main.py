@@ -1073,6 +1073,35 @@ async def journal_stats():
     return get_journal_stats()
 
 
+@app.get("/api/journal/export.csv")
+async def export_journal_csv(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Export all journal entries as CSV (UTF-8 with BOM for Excel)."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    entries = get_journal_entries()
+    fields = [
+        "id", "trade_date", "ticker", "setup_type", "entry_price", "stop_loss",
+        "target", "risk_eur", "risk_reward", "position_size", "exit_price",
+        "exit_date", "pnl_eur", "pnl_pct", "followed_rules", "emotion_entry",
+        "emotion_exit", "setup_reason", "lesson", "mistakes", "created_at",
+    ]
+    buf = io.StringIO()
+    buf.write("\ufeff")  # UTF-8 BOM for Excel
+    writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore", lineterminator="\n")
+    writer.writeheader()
+    for e in entries:
+        writer.writerow({f: getattr(e, f, None) for f in fields})
+
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=journal_export.csv"},
+    )
+
+
 @app.get("/api/journal/{entry_id}/replay-chart")
 async def get_replay_chart(entry_id: int):
     entry = get_journal_entry(entry_id)

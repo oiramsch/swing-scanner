@@ -1,0 +1,37 @@
+name: Copilot Auto-Fix & Circuit Breaker
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  copilot-to-claude:
+    # Nur bei Copilot-Reviews mit "changes_requested" — nicht bei menschlichen Reviewern
+    if: |
+      github.event.review.state == 'changes_requested' &&
+      (github.event.review.user.login == 'copilot[bot]' || 
+       github.event.review.user.login == 'github-advanced-security[bot]')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Circuit Breaker Logik
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          LABELS=$(gh pr view $PR_NUMBER --json labels -q '.labels[].name')
+          if echo "$LABELS" | grep -q 'copilot-fix-failed'; then
+            gh pr comment $PR_NUMBER --body "@${{ github.repository_owner }} Circuit Breaker! Copilot hat Claudes Fix erneut abgelehnt. Auto-Fix gestoppt — bitte manuell prüfen."
+            exit 0
+          elif echo "$LABELS" | grep -q 'copilot-fix-1'; then
+            gh pr edit $PR_NUMBER --add-label 'copilot-fix-failed' --remove-label 'copilot-fix-1'
+            gh pr comment $PR_NUMBER --body "@claude LETZTER VERSUCH! Copilot hat abgelehnt. Lies das Feedback per \`gh pr view $PR_NUMBER --comments\` und pushe den Fix."
+            exit 0
+          else
+            gh pr edit $PR_NUMBER --add-label 'copilot-fix-1'
+            gh pr comment $PR_NUMBER --body "@claude Copilot hat Fehler gefunden! Bitte lies das Feedback (\`gh pr view $PR_NUMBER --comments\`) und korrigiere."
+            exit 0
+          fi
