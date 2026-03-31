@@ -39,6 +39,7 @@ from backend.notifier import (
     notify_watchlist_alert,
     send_daily_summary_email,
 )
+from backend.notifier import send_push
 from backend.performance import update_performance_tracking
 from backend.screener import run_screener
 from backend.signal_checker import run_portfolio_signal_check, check_candidate_triggers
@@ -656,24 +657,49 @@ async def ghost_portfolio_resolve(ctx: dict):
 
 
 async def daily_summary_notification(ctx: dict):
-    """22:55 UTC — Send daily summary email + push (includes market update)."""
+    """22:55 UTC — Send daily summary push + email (includes market update)."""
     logger.info("=== daily_summary_notification ===")
     try:
         from backend.database import (
             get_results_for_date,
+            get_latest_scan_date,
             get_unnotified_signals,
             get_latest_market_update,
+            get_ntfy_alerts,
         )
         from backend.market_regime import get_current_regime
 
         regime = get_current_regime()
-        today_results = get_results_for_date(date.today())
-        top_candidates = [r.model_dump() for r in today_results[:3]]
+
+        # Use latest scan_date (post-market scans assign scan_date = next trading day,
+        # so date.today() would miss results saved for tomorrow)
+        scan_date = get_latest_scan_date() or date.today()
+        today_results = get_results_for_date(scan_date)
+        top_results = today_results[:3]
+        top_candidates = [r.model_dump() for r in top_results]
 
         signals = get_unnotified_signals()
         active_signals = [s.model_dump() for s in signals]
 
         market_update = get_latest_market_update()
+
+        # ntfy push — always send (even when no candidates)
+        ntfy_alerts = get_ntfy_alerts()
+        if ntfy_alerts.get("alerts_scan", True):
+            if top_results:
+                lines = []
+                for r in top_results:
+                    crv = f" CRV {r.crv_calculated:.1f}" if r.crv_calculated else ""
+                    lines.append(f"{r.ticker}{crv}")
+                msg = "Top: " + ", ".join(lines)
+                title = f"Scan {scan_date}: {len(today_results)} Kandidaten"
+                tags = "chart_with_upwards_trend"
+            else:
+                msg = f"Regime: {regime.upper()} — Keine Kandidaten heute."
+                title = f"Scan {scan_date}: Keine Kandidaten"
+                tags = "calendar"
+            send_push(title=title, message=msg, priority="default", tags=tags)
+            logger.info("Daily summary push sent: %s", title)
 
         send_daily_summary_email(
             regime=regime,
