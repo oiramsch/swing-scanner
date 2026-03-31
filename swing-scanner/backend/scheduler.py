@@ -33,6 +33,7 @@ from backend.deep_analyzer import deep_analyze
 from backend.market_regime import ensure_regime_current, get_current_regime, update_market_regime
 from backend.news_checker import run_full_news_check
 from backend.notifier import (
+    notify_daily_summary,
     notify_scan_complete,
     notify_sell_signal,
     notify_trigger_reached,
@@ -656,24 +657,33 @@ async def ghost_portfolio_resolve(ctx: dict):
 
 
 async def daily_summary_notification(ctx: dict):
-    """22:55 UTC — Send daily summary email + push (includes market update)."""
+    """22:55 UTC — Send daily summary push + email (includes market update)."""
     logger.info("=== daily_summary_notification ===")
     try:
         from backend.database import (
             get_results_for_date,
+            get_latest_scan_date,
             get_unnotified_signals,
             get_latest_market_update,
         )
         from backend.market_regime import get_current_regime
 
         regime = get_current_regime()
-        today_results = get_results_for_date(date.today())
-        top_candidates = [r.model_dump() for r in today_results[:3]]
+
+        # Use latest scan_date — post-market scans save scan_date = next trading day,
+        # so date.today() would return 0 results for the just-completed scan.
+        scan_date = get_latest_scan_date() or date.today()
+        all_results = get_results_for_date(scan_date)
+        # Only notify about actionable candidates (exclude filtered_avoid, watchlist_pending etc.)
+        active_results = [r for r in all_results if r.candidate_status == "active"]
+        top_candidates = [r.model_dump() for r in active_results[:3]]
 
         signals = get_unnotified_signals()
         active_signals = [s.model_dump() for s in signals]
 
         market_update = get_latest_market_update()
+
+        notify_daily_summary(scan_date=scan_date, active_results=active_results, regime=regime)
 
         send_daily_summary_email(
             regime=regime,

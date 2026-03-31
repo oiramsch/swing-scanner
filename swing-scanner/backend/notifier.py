@@ -100,6 +100,42 @@ def notify_scan_complete(
     send_push(title=title, message=msg, priority="default", tags="chart_with_upwards_trend")
 
 
+def notify_daily_summary(
+    scan_date,
+    active_results: list,  # list of ScanResult with candidate_status == "active"
+    regime: str = "",
+):
+    """
+    22:55 UTC summary push. Uses the same formatting as notify_scan_complete
+    but is called from daily_summary_notification with the latest scan date.
+    Only active candidates are included (filtered_avoid / watchlist_pending excluded).
+    """
+    from backend.database import get_ntfy_alerts
+    if not get_ntfy_alerts().get("alerts_scan", True):
+        return
+
+    top = active_results[:3]
+    count = len(active_results)
+
+    if top:
+        lines = []
+        for r in top:
+            crv = f"CRV {r.crv_calculated:.1f}" if r.crv_calculated else ""
+            lines.append(f"{r.ticker} {crv}".strip())
+        msg = "Top: " + ", ".join(lines)
+        if regime:
+            msg += f"\nRegime: {regime.upper()}"
+        title = f"Scan {scan_date}: {count} Kandidaten"
+        tags = "chart_with_upwards_trend"
+    else:
+        msg = f"Regime: {regime.upper()} — Keine Kandidaten heute." if regime else "Keine Kandidaten heute."
+        title = f"Scan {scan_date}: Keine Kandidaten"
+        tags = "calendar"
+
+    send_push(title=title, message=msg, priority="default", tags=tags)
+    logger.info("Daily summary push sent: %s", title)
+
+
 def notify_regime_change(old_regime: str, new_regime: str, spy_close: float, sma50: float, sma200: float):
     """Push when the market regime changes (e.g. bear → neutral)."""
     from backend.database import get_ntfy_alerts
