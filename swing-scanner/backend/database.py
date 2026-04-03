@@ -1930,7 +1930,41 @@ def clear_ai_error() -> None:
 # ntfy.sh Push-Alert Settings
 # ---------------------------------------------------------------------------
 
-_NTFY_ALERT_KEYS = ("ntfy_alerts_scan", "ntfy_alerts_entry_zone", "ntfy_alerts_regime")
+_NTFY_TOPIC_KEY   = "ntfy_topic"
+_ANTHROPIC_KEY    = "anthropic_api_key"
+_NTFY_ALERT_KEYS  = ("ntfy_alerts_scan", "ntfy_alerts_entry_zone", "ntfy_alerts_regime")
+
+
+def get_ntfy_topic() -> str:
+    """Return the persisted ntfy topic, or empty string if not set."""
+    with Session(get_engine()) as session:
+        row = session.get(AppSetting, _NTFY_TOPIC_KEY)
+        return row.value if row else ""
+
+
+def set_ntfy_topic(topic: str) -> None:
+    """Persist ntfy topic to DB (survives container rebuilds)."""
+    with Session(get_engine()) as session:
+        row = session.get(AppSetting, _NTFY_TOPIC_KEY) or AppSetting(key=_NTFY_TOPIC_KEY)
+        row.value = topic.strip()
+        session.add(row)
+        session.commit()
+
+
+def get_anthropic_api_key() -> str:
+    """Return the persisted Anthropic API key, or empty string if not set."""
+    with Session(get_engine()) as session:
+        row = session.get(AppSetting, _ANTHROPIC_KEY)
+        return row.value if row else ""
+
+
+def set_anthropic_api_key(api_key: str) -> None:
+    """Persist Anthropic API key to DB (survives container rebuilds)."""
+    with Session(get_engine()) as session:
+        row = session.get(AppSetting, _ANTHROPIC_KEY) or AppSetting(key=_ANTHROPIC_KEY)
+        row.value = api_key.strip()
+        session.add(row)
+        session.commit()
 
 
 def get_ntfy_alerts() -> dict:

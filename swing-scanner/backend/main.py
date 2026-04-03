@@ -188,6 +188,16 @@ async def on_startup():
     init_db()
     CHARTS_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("DB initialized, charts dir ready.")
+
+    # Load persisted settings from DB — these override .env defaults
+    # so they survive container rebuilds without needing .env changes.
+    from backend.database import get_ntfy_topic, get_anthropic_api_key
+    if db_topic := get_ntfy_topic():
+        settings.ntfy_topic = db_topic
+        logger.info("ntfy_topic loaded from DB")
+    if db_key := get_anthropic_api_key():
+        settings.anthropic_api_key = db_key
+        logger.info("ANTHROPIC_API_KEY loaded from DB")
     # Kick off a background regime refresh so the UI always shows a current value
     async def _warm_regime():
         try:
@@ -1256,11 +1266,11 @@ async def update_anthropic_key(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
-    Write ANTHROPIC_API_KEY to .env and reload the setting in-process.
+    Save ANTHROPIC_API_KEY to DB (persists across container rebuilds).
+    Also updates in-process setting so the scanner picks it up immediately.
     Body: { "api_key": "sk-ant-..." }
     """
-    from backend.database import clear_ai_error
-    import re as _re
+    from backend.database import clear_ai_error, set_anthropic_api_key
 
     api_key = (data.get("api_key") or "").strip()
     if not api_key:
@@ -1268,40 +1278,23 @@ async def update_anthropic_key(
     if not api_key.startswith("sk-ant-"):
         raise HTTPException(status_code=422, detail="Ungültiges Key-Format (erwartet sk-ant-…)")
 
-    env_path = Path(__file__).parent.parent / ".env"
-    # Read existing .env (create empty if not found)
-    if env_path.exists():
-        content = env_path.read_text(encoding="utf-8")
-    else:
-        content = ""
-
-    pattern = _re.compile(r"^ANTHROPIC_API_KEY=.*$", _re.MULTILINE)
-    new_line = f"ANTHROPIC_API_KEY={api_key}"
-    if pattern.search(content):
-        content = pattern.sub(new_line, content)
-    else:
-        content = content.rstrip("\n") + "\n" + new_line + "\n"
-
-    env_path.write_text(content, encoding="utf-8")
-
-    # Update in-process so the scanner/analyzer picks it up immediately
-    settings.anthropic_api_key = api_key
-
-    # Clear any stored error since we have a new key
+    set_anthropic_api_key(api_key)
+    settings.anthropic_api_key = api_key  # update in-process immediately
     clear_ai_error()
 
-    logger.info("ANTHROPIC_API_KEY updated via Settings UI")
+    logger.info("ANTHROPIC_API_KEY updated via Settings UI (stored in DB)")
     return {"status": "saved"}
 
 
 @app.get("/api/settings/ntfy")
 async def get_ntfy_settings(current_user: AuthenticatedUser = Depends(get_current_user)):
     """Return current ntfy.sh configuration."""
-    from backend.database import get_ntfy_alerts
+    from backend.database import get_ntfy_alerts, get_ntfy_topic
     alerts = get_ntfy_alerts()
+    topic = get_ntfy_topic() or settings.ntfy_topic  # DB takes precedence, .env as fallback
     return {
-        "topic": settings.ntfy_topic,
-        "topic_set": bool(settings.ntfy_topic),
+        "topic": topic,
+        "topic_set": bool(topic),
         **alerts,
     }
 
@@ -1311,22 +1304,13 @@ async def update_ntfy_settings(
     data: dict,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """Save ntfy topic to .env and alert flags to DB."""
-    import re as _re
-    from backend.database import set_ntfy_alerts
+    """Save ntfy topic and alert flags to DB (persists across container rebuilds)."""
+    from backend.database import set_ntfy_alerts, set_ntfy_topic
 
     topic = data.get("topic", "").strip()
     if topic:
-        env_path = Path(__file__).parent.parent / ".env"
-        content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
-        pattern = _re.compile(r"^NTFY_TOPIC=.*$", _re.MULTILINE)
-        new_line = f"NTFY_TOPIC={topic}"
-        if pattern.search(content):
-            content = pattern.sub(new_line, content)
-        else:
-            content = content.rstrip("\n") + "\n" + new_line + "\n"
-        env_path.write_text(content, encoding="utf-8")
-        settings.ntfy_topic = topic
+        set_ntfy_topic(topic)
+        settings.ntfy_topic = topic  # update in-process immediately
 
     set_ntfy_alerts({
         "alerts_scan":        bool(data.get("alerts_scan", True)),
@@ -1339,8 +1323,10 @@ async def update_ntfy_settings(
 @app.post("/api/settings/ntfy/test")
 async def test_ntfy(current_user: AuthenticatedUser = Depends(get_current_user)):
     """Send a test push notification via ntfy.sh."""
+    from backend.database import get_ntfy_topic
     from backend.notifier import send_push
-    if not settings.ntfy_topic:
+    topic = get_ntfy_topic() or settings.ntfy_topic
+    if not topic:
         raise HTTPException(status_code=400, detail="Kein ntfy-Topic konfiguriert")
     ok = send_push(
         title="✅ Swing Scanner — Test",

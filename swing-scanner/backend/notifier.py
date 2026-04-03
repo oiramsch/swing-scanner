@@ -23,7 +23,9 @@ def send_push(
     tags: str = "chart_with_upwards_trend",
 ) -> bool:
     """Send push notification via ntfy.sh."""
-    if not settings.ntfy_topic:
+    from backend.database import get_ntfy_topic
+    topic = get_ntfy_topic() or settings.ntfy_topic  # DB takes precedence, .env as fallback
+    if not topic:
         logger.debug("ntfy_topic not configured, skipping push")
         return False
 
@@ -31,7 +33,7 @@ def send_push(
         resp = requests.post(
             "https://ntfy.sh/",
             json={
-                "topic":    settings.ntfy_topic,
+                "topic":    topic,
                 "title":    title,
                 "message":  message,
                 "priority": {"default": 3, "low": 2, "high": 4, "urgent": 5}.get(priority, 3),
