@@ -1977,14 +1977,14 @@ def set_ntfy_entry_sent(ticker: str) -> None:
 _SUMMARY_NOTIFIED_KEY = "ntfy_summary_last_notified_date"
 
 
-def was_summary_notified(scan_date) -> bool:
+def was_summary_notified(scan_date: date) -> bool:
     """True if a daily summary push was already sent for this scan_date."""
     with Session(get_engine()) as session:
         row = session.get(AppSetting, _SUMMARY_NOTIFIED_KEY)
         return row is not None and row.value == str(scan_date)
 
 
-def set_summary_notified(scan_date) -> None:
+def set_summary_notified(scan_date: date) -> None:
     """Store the scan_date for which the daily summary push was last sent."""
     with Session(get_engine()) as session:
         row = session.get(AppSetting, _SUMMARY_NOTIFIED_KEY) or AppSetting(key=_SUMMARY_NOTIFIED_KEY)

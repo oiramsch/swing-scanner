@@ -116,7 +116,7 @@ def extract_facts(
 
     try:
         response = client.messages.create(
-            model=settings.claude_model,
+            model=settings.claude_vision_model,
             max_tokens=400,
             temperature=0,
             system=FACT_PROMPT,

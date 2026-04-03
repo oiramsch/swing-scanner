@@ -676,28 +676,25 @@ async def daily_summary_notification(ctx: dict):
         # so date.today() would return 0 results for the just-completed scan.
         scan_date = get_latest_scan_date() or date.today()
 
-        # Dedup: skip if push was already sent for this scan_date (e.g. on weekends
-        # get_latest_scan_date() keeps returning the same Friday scan_date).
+        # Dedup: skip push + email if already sent for this scan_date
+        # (e.g. on weekends get_latest_scan_date() keeps returning the same Friday scan_date).
         if was_summary_notified(scan_date):
-            logger.info("Daily summary already sent for %s — skipping push", scan_date)
-        else:
-            all_results = get_results_for_date(scan_date)
-            active_results = [r for r in all_results if r.candidate_status == "active"]
-            notify_daily_summary(scan_date=scan_date, active_results=active_results, regime=regime)
-            set_summary_notified(scan_date)
+            logger.info("Daily summary already sent for %s — skipping", scan_date)
+            return
 
         all_results = get_results_for_date(scan_date)
         active_results = [r for r in all_results if r.candidate_status == "active"]
-        top_candidates = [r.model_dump() for r in active_results[:3]]
+
+        notify_daily_summary(scan_date=scan_date, active_results=active_results, regime=regime)
+        set_summary_notified(scan_date)
 
         signals = get_unnotified_signals()
         active_signals = [s.model_dump() for s in signals]
-
         market_update = get_latest_market_update()
 
         send_daily_summary_email(
             regime=regime,
-            top_candidates=top_candidates,
+            top_candidates=[r.model_dump() for r in active_results[:3]],
             active_signals=active_signals,
             watchlist_alerts=[],
             market_update=market_update.model_dump() if market_update else None,
