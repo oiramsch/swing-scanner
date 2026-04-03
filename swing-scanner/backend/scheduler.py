@@ -577,9 +577,12 @@ async def ghost_portfolio_resolve(ctx: dict):
 
     Resolution rules (in order):
       1. TIMEOUT  — scan_date is >= 14 days ago (regardless of stop/target)
-      2. LOSS     — today's low  <= stop_loss
-      3. WIN      — today's high >= target_price
-      4. Skip     — no stop AND no target (watchlist_pending without setup)
+      2. Direction-aware LOSS/WIN:
+         LONG  (stop_loss < entry_price): LOSS if daily_low  <= stop_loss
+                                          WIN  if daily_high >= target_price
+         SHORT (stop_loss > entry_price): LOSS if daily_high >= stop_loss
+                                          WIN  if daily_low  <= target_price
+      3. Skip     — no stop AND no target (watchlist_pending without setup)
 
     Only resolves predictions that are at least 1 day old (entry happens
     the day AFTER the scan, so day-0 data is irrelevant).
@@ -626,25 +629,43 @@ async def ghost_portfolio_resolve(ctx: dict):
             daily_high = float(latest["High"])
             daily_low  = float(latest["Low"])
 
-            if pred.stop_loss and daily_low <= pred.stop_loss:
+            # Determine direction: SHORT if stop is above entry, else LONG
+            is_short = (
+                pred.stop_loss is not None
+                and pred.entry_price is not None
+                and pred.stop_loss > pred.entry_price
+            )
+
+            loss_hit = (
+                (not is_short and pred.stop_loss   and daily_low  <= pred.stop_loss)
+                or (is_short  and pred.stop_loss   and daily_high >= pred.stop_loss)
+            )
+            win_hit = (
+                (not is_short and pred.target_price and daily_high >= pred.target_price)
+                or (is_short  and pred.target_price and daily_low  <= pred.target_price)
+            )
+
+            if loss_hit:
+                resolved_price = daily_low if not is_short else daily_high
                 resolve_prediction(
                     pred.id, "LOSS",
-                    resolved_price=daily_low,
-                    notes=f"stop {pred.stop_loss:.2f} hit (low={daily_low:.2f})",
+                    resolved_price=resolved_price,
+                    notes=f"stop {pred.stop_loss:.2f} hit ({'high' if is_short else 'low'}={resolved_price:.2f})",
                 )
                 resolved += 1
-                logger.info("Ghost [LOSS] %s — low %.2f <= stop %.2f",
-                            pred.ticker, daily_low, pred.stop_loss)
+                logger.info("Ghost [LOSS] %s (%s) — stop %.2f hit",
+                            pred.ticker, "short" if is_short else "long", pred.stop_loss)
 
-            elif pred.target_price and daily_high >= pred.target_price:
+            elif win_hit:
+                resolved_price = daily_high if not is_short else daily_low
                 resolve_prediction(
                     pred.id, "WIN",
-                    resolved_price=daily_high,
-                    notes=f"target {pred.target_price:.2f} hit (high={daily_high:.2f})",
+                    resolved_price=resolved_price,
+                    notes=f"target {pred.target_price:.2f} hit ({'low' if is_short else 'high'}={resolved_price:.2f})",
                 )
                 resolved += 1
-                logger.info("Ghost [WIN] %s — high %.2f >= target %.2f",
-                            pred.ticker, daily_high, pred.target_price)
+                logger.info("Ghost [WIN] %s (%s) — target %.2f hit",
+                            pred.ticker, "short" if is_short else "long", pred.target_price)
 
         except Exception as exc:
             logger.warning("Ghost resolve failed for %s: %s", pred.ticker, exc)
