@@ -1,8 +1,26 @@
-- name: ⚙️ Backend Tests ausführen
+name: 🧪 CI Tests & Auto-Fix
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+      contents: read
+
+    steps:
+      - name: 📦 Code auschecken
+        uses: actions/checkout@v5
+
+      - name: ⚙️ Backend Tests ausführen
         id: backend
         continue-on-error: true
         run: |
-          touch backend_error.log # Datei sicherheitshalber anlegen
+          touch backend_error.log
           if [ -d "backend" ]; then
             cd backend
             pip install -r requirements.txt || true
@@ -22,7 +40,7 @@
         id: frontend
         continue-on-error: true
         run: |
-          touch frontend_error.log # Datei sicherheitshalber anlegen
+          touch frontend_error.log
           if [ -d "frontend" ]; then
             cd frontend
             npm install > ../frontend_error.log 2>&1
@@ -31,3 +49,29 @@
             echo "Fehler: Ordner 'frontend' existiert nicht in diesem Branch!" > frontend_error.log
             exit 1
           fi
+
+      - name: 🤖 Circuit Breaker
+        if: steps.backend.outcome == 'failure' || steps.frontend.outcome == 'failure'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          ERROR_MSG="🚨 **CI Build fehlgeschlagen!**\n\n**Backend:**\n\`\`\`text\n$(tail -n 30 backend_error.log)\n\`\`\`\n**Frontend:**\n\`\`\`text\n$(tail -n 30 frontend_error.log)\n\`\`\`\n"
+          LABELS=$(gh pr view $PR_NUMBER --json labels -q '.labels[].name')
+
+          if echo "$LABELS" | grep -q 'auto-fix-failed'; then
+            gh pr comment $PR_NUMBER --body "$ERROR_MSG 🛑 **Endlosschleife verhindert!** Bitte manuell prüfen."
+            exit 1
+          elif echo "$LABELS" | grep -q 'auto-fix-1'; then
+            gh pr edit $PR_NUMBER --add-label 'auto-fix-failed' --remove-label 'auto-fix-1'
+            gh pr comment $PR_NUMBER --body "@claude ⚠️ **LETZTER VERSUCH!** Der CI Build schlägt immer noch fehl:\n\n$ERROR_MSG"
+            exit 1
+          else
+            gh pr edit $PR_NUMBER --add-label 'auto-fix-1'
+            gh pr comment $PR_NUMBER --body "@claude ⚠️ **CI Build fehlgeschlagen!** Bitte behebe diese Fehler:\n\n$ERROR_MSG"
+            exit 1
+          fi
+
+      - name: ✅ Erfolg prüfen
+        if: steps.backend.outcome == 'success' && steps.frontend.outcome == 'success'
+        run: echo "Alle Tests grün!"
