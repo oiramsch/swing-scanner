@@ -665,6 +665,8 @@ async def daily_summary_notification(ctx: dict):
             get_latest_scan_date,
             get_unnotified_signals,
             get_latest_market_update,
+            was_summary_notified,
+            set_summary_notified,
         )
         from backend.market_regime import get_current_regime
 
@@ -673,8 +675,18 @@ async def daily_summary_notification(ctx: dict):
         # Use latest scan_date — post-market scans save scan_date = next trading day,
         # so date.today() would return 0 results for the just-completed scan.
         scan_date = get_latest_scan_date() or date.today()
+
+        # Dedup: skip if push was already sent for this scan_date (e.g. on weekends
+        # get_latest_scan_date() keeps returning the same Friday scan_date).
+        if was_summary_notified(scan_date):
+            logger.info("Daily summary already sent for %s — skipping push", scan_date)
+        else:
+            all_results = get_results_for_date(scan_date)
+            active_results = [r for r in all_results if r.candidate_status == "active"]
+            notify_daily_summary(scan_date=scan_date, active_results=active_results, regime=regime)
+            set_summary_notified(scan_date)
+
         all_results = get_results_for_date(scan_date)
-        # Only notify about actionable candidates (exclude filtered_avoid, watchlist_pending etc.)
         active_results = [r for r in all_results if r.candidate_status == "active"]
         top_candidates = [r.model_dump() for r in active_results[:3]]
 
@@ -682,8 +694,6 @@ async def daily_summary_notification(ctx: dict):
         active_signals = [s.model_dump() for s in signals]
 
         market_update = get_latest_market_update()
-
-        notify_daily_summary(scan_date=scan_date, active_results=active_results, regime=regime)
 
         send_daily_summary_email(
             regime=regime,

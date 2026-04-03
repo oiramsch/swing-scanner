@@ -125,11 +125,12 @@ def notify_daily_summary(
         msg = "Top: " + ", ".join(lines)
         if regime:
             msg += f"\nRegime: {regime.upper()}"
-        title = f"Scan {scan_date}: {count} Kandidaten"
+        kandidat = "Kandidat" if count == 1 else "Kandidaten"
+        title = f"🔍 Scan {scan_date}: {count} {kandidat}"
         tags = "chart_with_upwards_trend"
     else:
         msg = f"Regime: {regime.upper()} — Keine Kandidaten heute." if regime else "Keine Kandidaten heute."
-        title = f"Scan {scan_date}: Keine Kandidaten"
+        title = f"📭 Scan {scan_date}: Keine Kandidaten"
         tags = "calendar"
 
     send_push(title=title, message=msg, priority="default", tags=tags)
