@@ -21,13 +21,13 @@ jobs:
         continue-on-error: true
         run: |
           touch backend_error.log
-          if [ -d "backend" ]; then
-            cd backend
+          if [ -d "swing-scanner/backend" ]; then
+            cd swing-scanner/backend
             pip install -r requirements.txt || true
             pip install pytest || true
-            pytest > ../backend_error.log 2>&1
+            pytest > ../../backend_error.log 2>&1
           else
-            echo "Fehler: Ordner 'backend' existiert nicht in diesem Branch!" > backend_error.log
+            echo "Fehler: Ordner 'swing-scanner/backend' existiert nicht in diesem Branch!" > backend_error.log
             exit 1
           fi
 
@@ -41,12 +41,12 @@ jobs:
         continue-on-error: true
         run: |
           touch frontend_error.log
-          if [ -d "frontend" ]; then
-            cd frontend
-            npm install > ../frontend_error.log 2>&1
-            npm run build >> ../frontend_error.log 2>&1
+          if [ -d "swing-scanner/frontend" ]; then
+            cd swing-scanner/frontend
+            npm install > ../../frontend_error.log 2>&1
+            npm run build >> ../../frontend_error.log 2>&1
           else
-            echo "Fehler: Ordner 'frontend' existiert nicht in diesem Branch!" > frontend_error.log
+            echo "Fehler: Ordner 'swing-scanner/frontend' existiert nicht in diesem Branch!" > frontend_error.log
             exit 1
           fi
 
@@ -74,4 +74,4 @@ jobs:
 
       - name: ✅ Erfolg prüfen
         if: steps.backend.outcome == 'success' && steps.frontend.outcome == 'success'
-        run: echo "Alle Tests grün!"
+        run: echo "Alle Tests grün! Bereit für NAS Deployment."
