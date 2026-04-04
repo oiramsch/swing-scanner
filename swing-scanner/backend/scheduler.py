@@ -629,21 +629,21 @@ async def ghost_portfolio_resolve(ctx: dict):
             daily_high = float(latest["High"])
             daily_low  = float(latest["Low"])
 
-            # Determine direction: SHORT if stop is above entry, else LONG
-            is_short = (
-                pred.stop_loss is not None
-                and pred.entry_price is not None
-                and pred.stop_loss > pred.entry_price
-            )
+            # Determine direction: SHORT if stop > entry.
+            # Fallback to target < entry for watchlist items without stop-loss.
+            is_short = False
+            if pred.entry_price is not None:
+                if pred.stop_loss is not None:
+                    is_short = pred.stop_loss > pred.entry_price
+                elif pred.target_price is not None:
+                    is_short = pred.target_price < pred.entry_price
 
-            loss_hit = (
-                (not is_short and pred.stop_loss   and daily_low  <= pred.stop_loss)
-                or (is_short  and pred.stop_loss   and daily_high >= pred.stop_loss)
-            )
-            win_hit = (
-                (not is_short and pred.target_price and daily_high >= pred.target_price)
-                or (is_short  and pred.target_price and daily_low  <= pred.target_price)
-            )
+            if is_short:
+                loss_hit = pred.stop_loss is not None and daily_high >= pred.stop_loss
+                win_hit  = pred.target_price is not None and daily_low  <= pred.target_price
+            else:
+                loss_hit = pred.stop_loss is not None and daily_low  <= pred.stop_loss
+                win_hit  = pred.target_price is not None and daily_high >= pred.target_price
 
             if loss_hit:
                 resolved_price = daily_low if not is_short else daily_high
