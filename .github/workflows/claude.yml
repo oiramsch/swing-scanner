@@ -31,6 +31,7 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      id-token: write  # <--- Diese Zeile fehlt bei dir!
 
     steps:
       - name: Checkout Repository
