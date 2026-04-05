@@ -790,6 +790,41 @@ async def entry_zone_check(ctx: dict):
 
 
 # ---------------------------------------------------------------------------
+# Scan Health Check — 23:30 UTC (optional ntfy alert if scan missed)
+# ---------------------------------------------------------------------------
+
+async def check_scan_health(ctx: dict):
+    """23:30 UTC — Alert via ntfy if daily scan did not run today."""
+    logger.info("=== check_scan_health ===")
+    try:
+        from backend.database import get_last_scan_datetime
+        from backend.notifier import send_push
+
+        row = get_last_scan_datetime()
+        if row is None:
+            last_scan_label = "unbekannt"
+            scan_ran_today = False
+        else:
+            last_scan_date, last_scan_created_at = row
+            today_utc = datetime.now(timezone.utc).date()
+            scan_ran_today = last_scan_date >= today_utc
+            last_scan_label = str(last_scan_date)
+
+        if not scan_ran_today:
+            send_push(
+                title="🚨 Scan ausgefallen!",
+                message=f"Letzter Scan: {last_scan_label}",
+                priority="urgent",
+                tags="rotating_light",
+            )
+            logger.warning("check_scan_health: scan missing, ntfy sent (last=%s)", last_scan_label)
+        else:
+            logger.info("check_scan_health: scan ran today, all good")
+    except Exception as exc:
+        logger.error("check_scan_health failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner (for manual trigger from FastAPI)
 # ---------------------------------------------------------------------------
 
@@ -825,6 +860,7 @@ class WorkerSettings:
         market_update_auto,
         daily_summary_notification,
         entry_zone_check,
+        check_scan_health,
     ]
     cron_jobs = [
         cron(market_regime_update, hour={22}, minute={0}, run_at_startup=False),
@@ -835,6 +871,7 @@ class WorkerSettings:
         cron(performance_update, hour={22}, minute={45}, run_at_startup=False),
         cron(market_update_auto, hour={22}, minute={50}, run_at_startup=False),
         cron(daily_summary_notification, hour={22}, minute={55}, run_at_startup=False),
+        cron(check_scan_health, hour={23}, minute={30}, run_at_startup=False),
         # Entry-zone check: hourly 14–20 UTC (09:00–15:00 ET, while market is open)
         cron(entry_zone_check, hour={14, 15, 16, 17, 18, 19, 20}, minute={0}, run_at_startup=False),
     ]

@@ -548,10 +548,33 @@ async def trigger_scan(background_tasks: BackgroundTasks):
 
 @app.get("/api/scan/status")
 async def scan_status():
+    from datetime import datetime, timezone
+    from backend.database import get_last_scan_datetime
+
+    last_scan_date = None
+    last_scan_time = None
+    hours_since_last_scan = None
+    scan_missing = False
+
+    row = get_last_scan_datetime()
+    if row:
+        last_scan_date = str(row[0])
+        last_scan_time = row[1].strftime("%H:%M:%S")
+        created_at = row[1]
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - created_at
+        hours_since_last_scan = round(delta.total_seconds() / 3600, 1)
+        scan_missing = hours_since_last_scan > 26
+
     return {
         "running": _scan_running,
         "progress": _scan_progress,
         "last_scan": _last_scan,
+        "last_scan_date": last_scan_date,
+        "last_scan_time": last_scan_time,
+        "hours_since_last_scan": hours_since_last_scan,
+        "scan_missing": scan_missing,
     }
 
 
@@ -1536,7 +1559,10 @@ async def research_ticker(
         except Exception:
             pass
         try:
-            news = t.news or []
+            import time as _time
+            raw_news = t.news or []
+            news = [n for n in raw_news
+                    if _time.time() - n.get("providerPublishTime", 0) < 48 * 3600]
         except Exception:
             pass
         return info, hist, cal, news
