@@ -26,6 +26,13 @@ Stock Screening App für Swing Trading. Täglich werden ~500 S&P 500 Aktien + ET
 * 3. **PR automatisch erstellen mit Trigger-Label:** * Bei neuen PRs zwingend: `gh pr create --fill --label "Ready for Review"`
    * Bei Fixes in bestehenden PRs: `gh pr edit <PR-NUMMER> --add-label "Ready for Review"`
 
+### Auto-PR via GitHub Actions (claude.yml)
+Wenn du über `@claude` in einem Issue oder Issue-Kommentar getriggert wirst, übernimmt der Workflow die PR-Erstellung automatisch:
+* Nach deinem Run prüft der Step **"Create Pull Request"** (`steps.claude.outputs.branch_name`), ob ein Branch erstellt wurde.
+* Gibt es neue Commits gegenüber `main`, wird ein PR mit dem Issue-Titel und `Fixes #<issue>` erstellt – sofern noch kein offener PR für diesen Branch existiert (idempotent).
+* Ohne Änderungen wird **kein** PR erstellt.
+* Du musst also bei GitHub-Actions-Triggered-Runs **keinen** eigenen `gh pr create`-Aufruf machen – der Workflow übernimmt das.
+
 ## 4. Wie du mit Prompts arbeitest
 Alle Aufgaben liegen als Markdown-Dateien in `_Prompts/`.
 * **Wenn Mario sagt "lies [Dateiname]":**

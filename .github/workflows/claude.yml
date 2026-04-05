@@ -31,7 +31,7 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-      id-token: write  # <--- Diese Zeile fehlt bei dir!
+      id-token: write
 
     steps:
       - name: Checkout Repository
@@ -44,3 +44,62 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+      - name: Create Pull Request
+        if: steps.claude.outputs.branch_name != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.claude.outputs.branch_name }}"
+          REPO="${{ github.repository }}"
+
+          # Check if branch exists on remote and has commits compared to main
+          AHEAD=$(gh api "repos/$REPO/compare/main...$BRANCH" --jq '.ahead_by' 2>/dev/null) || {
+            echo "GitHub API call failed (branch may not exist remotely, or auth/network issue). Skipping PR creation."
+            exit 0
+          }
+
+          if [ "${AHEAD:-0}" -eq 0 ]; then
+            echo "No new commits on branch '$BRANCH' compared to main. Skipping PR creation."
+            exit 0
+          fi
+          echo "$AHEAD new commit(s) found on branch '$BRANCH'."
+
+          # Check if a PR already exists for this branch (idempotent)
+          EXISTING=$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number' 2>/dev/null)
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING already exists for branch '$BRANCH'. Skipping."
+            exit 0
+          fi
+
+          # Build PR title and body from triggering issue (if available)
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+          ISSUE_TITLE="${{ github.event.issue.title }}"
+
+          if [ -n "$ISSUE_NUMBER" ]; then
+            PR_TITLE="$ISSUE_TITLE"
+            PR_BODY=$(printf "Automatisch erstellt durch Claude Code 🤖\n\nFixes #%s" "$ISSUE_NUMBER")
+          else
+            PR_TITLE="Claude Code: Changes on $BRANCH"
+            PR_BODY="Automatisch erstellt durch Claude Code 🤖"
+          fi
+
+          echo "Creating PR: '$PR_TITLE'"
+
+          # Create PR – add 'Ready for Review' label if it exists in the repo
+          if gh label list --json name -q '.[].name' | grep -qx "Ready for Review"; then
+            gh pr create \
+              --head "$BRANCH" \
+              --base main \
+              --title "$PR_TITLE" \
+              --body "$PR_BODY" \
+              --label "Ready for Review"
+          else
+            gh pr create \
+              --head "$BRANCH" \
+              --base main \
+              --title "$PR_TITLE" \
+              --body "$PR_BODY"
+          fi
+
+          echo "PR created successfully."
