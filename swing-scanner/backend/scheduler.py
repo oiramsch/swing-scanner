@@ -3,6 +3,7 @@ ARQ worker + cron job definitions.
 Daily pipeline: regime → screener → charting → analysis → deep analysis →
 portfolio signals → watchlist → performance → daily summary
 """
+import asyncio
 import logging
 from datetime import date, datetime, timezone, timedelta
 from typing import Callable, Optional
@@ -20,6 +21,7 @@ from backend.database import (
     archive_prediction,
     clear_results_for_date,
     get_archived_tickers_for_date,
+    get_last_scan_datetime,
     get_pending_predictions,
     get_watchlist_pending,
     init_db,
@@ -39,6 +41,7 @@ from backend.notifier import (
     notify_trigger_reached,
     notify_watchlist_alert,
     send_daily_summary_email,
+    send_push,
 )
 from backend.performance import update_performance_tracking
 from backend.screener import run_screener
@@ -797,21 +800,27 @@ async def check_scan_health(ctx: dict):
     """23:30 UTC — Alert via ntfy if daily scan did not run today."""
     logger.info("=== check_scan_health ===")
     try:
-        from backend.database import get_last_scan_datetime
-        from backend.notifier import send_push
-
+        now_utc = datetime.now(timezone.utc)
         row = get_last_scan_datetime()
         if row is None:
             last_scan_label = "unbekannt"
             scan_ran_today = False
         else:
-            last_scan_date, last_scan_created_at = row
-            today_utc = datetime.now(timezone.utc).date()
-            scan_ran_today = last_scan_date >= today_utc
-            last_scan_label = str(last_scan_date)
+            _last_scan_date, last_scan_created_at = row
+            if last_scan_created_at is None:
+                scan_ran_today = False
+                last_scan_label = str(_last_scan_date)
+            else:
+                if last_scan_created_at.tzinfo is None:
+                    last_scan_created_at = last_scan_created_at.replace(tzinfo=timezone.utc)
+                else:
+                    last_scan_created_at = last_scan_created_at.astimezone(timezone.utc)
+                scan_ran_today = last_scan_created_at.date() == now_utc.date()
+                last_scan_label = last_scan_created_at.isoformat()
 
         if not scan_ran_today:
-            send_push(
+            await asyncio.to_thread(
+                send_push,
                 title="🚨 Scan ausgefallen!",
                 message=f"Letzter Scan: {last_scan_label}",
                 priority="urgent",

@@ -3,7 +3,8 @@ FastAPI application — all API endpoints.
 """
 import json
 import logging
-from datetime import date
+import time
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -79,6 +80,7 @@ from backend.database import (
     ScanUniverse,
     get_all_universes,
     get_active_universes,
+    get_last_scan_datetime,
     update_universe,
 )
 from backend.journal import create_journal_entry, get_journal_stats, update_lesson
@@ -98,6 +100,8 @@ from backend.watchlist import add_to_watchlist, get_watchlist_with_prices
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+SCAN_MISSING_THRESHOLD_HOURS = 26
 
 app = FastAPI(title="Swing Scanner API", version="2.0.0")
 
@@ -548,9 +552,6 @@ async def trigger_scan(background_tasks: BackgroundTasks):
 
 @app.get("/api/scan/status")
 async def scan_status():
-    from datetime import datetime, timezone
-    from backend.database import get_last_scan_datetime
-
     last_scan_date = None
     last_scan_time = None
     hours_since_last_scan = None
@@ -565,7 +566,7 @@ async def scan_status():
             created_at = created_at.replace(tzinfo=timezone.utc)
         delta = datetime.now(timezone.utc) - created_at
         hours_since_last_scan = round(delta.total_seconds() / 3600, 1)
-        scan_missing = hours_since_last_scan > 26
+        scan_missing = hours_since_last_scan > SCAN_MISSING_THRESHOLD_HOURS
 
     return {
         "running": _scan_running,
@@ -1559,10 +1560,23 @@ async def research_ticker(
         except Exception:
             pass
         try:
-            import time as _time
+            now_ts = time.time()
+            cutoff = now_ts - (48 * 3600)
             raw_news = t.news or []
-            news = [n for n in raw_news
-                    if _time.time() - n.get("providerPublishTime", 0) < 48 * 3600]
+            news = []
+            for n in raw_news:
+                publish_time = n.get("providerPublishTime")
+                if publish_time is None:
+                    news.append(n)
+                    continue
+                try:
+                    publish_time = float(publish_time)
+                    if publish_time > 1e12:
+                        publish_time /= 1000.0
+                    if publish_time > cutoff:
+                        news.append(n)
+                except (TypeError, ValueError):
+                    news.append(n)
         except Exception:
             pass
         return info, hist, cal, news
