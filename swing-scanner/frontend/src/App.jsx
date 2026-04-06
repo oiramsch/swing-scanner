@@ -279,6 +279,15 @@ export default function App() {
             </span>
           </div>
         )}
+        {/* Scan Missing Banner */}
+        {scanStatus?.scan_missing && (
+          <div className="px-4 py-1.5 text-xs bg-orange-950/80 border-b border-orange-800/60 flex items-center gap-2">
+            <span className="text-orange-400 font-semibold">⚠️ Scan ausgefallen</span>
+            <span className="text-orange-300/80">
+              Letzter Scan vor {scanStatus.hours_since_last_scan}h — Scan möglicherweise ausgefallen
+            </span>
+          </div>
+        )}
         {/* Tab Navigation */}
         <div className="flex items-center px-4 min-w-0 gap-2">
           <span className="text-white font-bold mr-2 py-3 text-sm shrink-0 hidden sm:block">Swing Scanner</span>

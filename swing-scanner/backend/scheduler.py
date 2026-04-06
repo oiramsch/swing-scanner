@@ -3,6 +3,7 @@ ARQ worker + cron job definitions.
 Daily pipeline: regime → screener → charting → analysis → deep analysis →
 portfolio signals → watchlist → performance → daily summary
 """
+import asyncio
 import logging
 from datetime import date, datetime, timezone, timedelta
 from typing import Callable, Optional
@@ -20,6 +21,7 @@ from backend.database import (
     archive_prediction,
     clear_results_for_date,
     get_archived_tickers_for_date,
+    get_last_scan_datetime,
     get_pending_predictions,
     get_watchlist_pending,
     init_db,
@@ -39,6 +41,7 @@ from backend.notifier import (
     notify_trigger_reached,
     notify_watchlist_alert,
     send_daily_summary_email,
+    send_push,
 )
 from backend.performance import update_performance_tracking
 from backend.screener import run_screener
@@ -790,6 +793,47 @@ async def entry_zone_check(ctx: dict):
 
 
 # ---------------------------------------------------------------------------
+# Scan Health Check — 23:30 UTC (optional ntfy alert if scan missed)
+# ---------------------------------------------------------------------------
+
+async def check_scan_health(ctx: dict):
+    """23:30 UTC — Alert via ntfy if daily scan did not run today."""
+    logger.info("=== check_scan_health ===")
+    try:
+        now_utc = datetime.now(timezone.utc)
+        row = get_last_scan_datetime()
+        if row is None:
+            last_scan_label = "unbekannt"
+            scan_ran_today = False
+        else:
+            _last_scan_date, last_scan_created_at = row
+            if last_scan_created_at is None:
+                scan_ran_today = False
+                last_scan_label = str(_last_scan_date)
+            else:
+                if last_scan_created_at.tzinfo is None:
+                    last_scan_created_at = last_scan_created_at.replace(tzinfo=timezone.utc)
+                else:
+                    last_scan_created_at = last_scan_created_at.astimezone(timezone.utc)
+                scan_ran_today = last_scan_created_at.date() == now_utc.date()
+                last_scan_label = last_scan_created_at.isoformat()
+
+        if not scan_ran_today:
+            await asyncio.to_thread(
+                send_push,
+                title="🚨 Scan ausgefallen!",
+                message=f"Letzter Scan: {last_scan_label}",
+                priority="urgent",
+                tags="rotating_light",
+            )
+            logger.warning("check_scan_health: scan missing, ntfy sent (last=%s)", last_scan_label)
+        else:
+            logger.info("check_scan_health: scan ran today, all good")
+    except Exception as exc:
+        logger.error("check_scan_health failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Standalone runner (for manual trigger from FastAPI)
 # ---------------------------------------------------------------------------
 
@@ -825,6 +869,7 @@ class WorkerSettings:
         market_update_auto,
         daily_summary_notification,
         entry_zone_check,
+        check_scan_health,
     ]
     cron_jobs = [
         cron(market_regime_update, hour={22}, minute={0}, run_at_startup=False),
@@ -835,6 +880,7 @@ class WorkerSettings:
         cron(performance_update, hour={22}, minute={45}, run_at_startup=False),
         cron(market_update_auto, hour={22}, minute={50}, run_at_startup=False),
         cron(daily_summary_notification, hour={22}, minute={55}, run_at_startup=False),
+        cron(check_scan_health, hour={23}, minute={30}, run_at_startup=False),
         # Entry-zone check: hourly 14–20 UTC (09:00–15:00 ET, while market is open)
         cron(entry_zone_check, hour={14, 15, 16, 17, 18, 19, 20}, minute={0}, run_at_startup=False),
     ]

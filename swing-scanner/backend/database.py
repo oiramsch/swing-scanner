@@ -961,6 +961,17 @@ def get_latest_scan_date() -> Optional[date]:
         return row if row else None
 
 
+def get_last_scan_datetime() -> Optional[tuple]:
+    """Return (scan_date, created_at) of the most recent ScanResult row (any status)."""
+    with Session(get_engine()) as session:
+        row = session.exec(
+            select(ScanResult.scan_date, ScanResult.created_at)
+            .order_by(ScanResult.created_at.desc())
+            .limit(1)
+        ).first()
+        return row if row else None
+
+
 def get_result_by_ticker(ticker: str, scan_date: date) -> Optional[ScanResult]:
     with Session(get_engine()) as session:
         stmt = (
