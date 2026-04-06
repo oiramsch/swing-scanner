@@ -1,46 +1,61 @@
 # 🏭 Swing Scanner – Claude Code Anweisungen
 
-Du bist der ausführende Lead Developer für den "Swing Scanner". Bevor du Code schreibst, änderst oder einen Pull Request erstellst, MUSST du diese Regeln strikt befolgen. Copilot wird deinen Code danach strengstens auf diese Kriterien prüfen!
+Du bist der ausführende Lead Developer für den "Swing Scanner".
+Copilot wird deinen Code strengstens prüfen — halte dich an diese Regeln.
 
 ## 1. Projekt-Überblick
-Stock Screening App für Swing Trading. Täglich werden ~500 S&P 500 Aktien + ETFs gescannt und Kandidaten mit Entry/Stop/Target bewertet.
-* **Stack:** Backend: Python 3.11, FastAPI, SQLite, ARQ/Redis | Frontend: React 18, Vite, Tailwind CSS, Recharts.
-* **Data:** yfinance (kostenlos, kein API-Key).
-* **Broker:** Alpaca (Paper + Live), Trade Republic (manuell), IBKR (CP Gateway).
-* **Deployment:** Docker auf Synology NAS, deploy via `./update.sh`.
+
+Stock Screening App für Swing Trading. Täglich ~500 S&P 500 Aktien + ETFs gescannt.
+
+- **Stack:** Python 3.11, FastAPI, SQLite, ARQ/Redis | React 18, Vite, Tailwind CSS, Recharts
+- **Data:** yfinance (kostenlos, kein API-Key)
+- **Broker:** Alpaca (Paper + Live), Trade Republic (manuell), IBKR (CP Gateway)
+- **Deployment:** Docker auf Synology NAS, deploy via `./update.sh`
 
 ## 2. Kernprinzipien & FinTech-Regeln (Unveränderlich)
-* **Finanz-Mathematik:** Nutze NIEMALS `Double` oder `Float` für Währungen, Aktienkurse, P&L oder Kontostände. Nutze zwingend `Decimal` zur Vermeidung von Floating-Point-Fehlern.
-* **ZERO FIXKOSTEN:** Kein Paid API solange nicht profitabel.
-* **Data Provider Abstraction:** Scanner nie direkt yfinance/alpaca aufrufen. Halte dich an das einheitliche Interface `BrokerConnector ABC`.
-* **Determinismus:** `temperature=0` für alle Claude Vision Calls.
-* **SaaS-Readiness:** `tenant_id` in allen DB-Tabellen ist Pflicht — SaaS-Migration ohne Schema-Änderung.
-* **Security:** Broker-Keys (API Key/Secret) MÜSSEN in der Datenbank AES-256 verschlüsselt sein. Niemals im Klartext, Code oder unverschlüsselt in `.env`.
-* **Ghost Portfolio (ML Pipeline):** Der `actual_entry_price` (Slippage Tracker) muss immer im `TradePlan` gespeichert werden. Ein `TIMEOUT`-Status darf für ML-Auswertungen niemals pauschal als `LOSS` gewertet werden.
+
+- **Finanz-Mathematik:** NIEMALS `Double`/`Float` für Währungen/Kurse/Kontostände → zwingend `Decimal`
+- **ZERO FIXKOSTEN:** Kein Paid API solange nicht profitabel
+- **Data Provider Abstraction:** Scanner nie direkt yfinance/alpaca aufrufen → `BrokerConnector ABC`
+- **Determinismus:** `temperature=0` für alle Claude Vision Calls
+- **SaaS-Readiness:** `tenant_id` in allen neuen DB-Tabellen — Pflicht
+- **Security:** Broker-Keys AES-256 verschlüsselt in DB — niemals in `.env` oder Klartext
+- **Ghost Portfolio:** `TIMEOUT` darf niemals als `LOSS` gewertet werden
 
 ## 3. Branch-Management & Workflow
-* **NIEMALS direkt auf `main` arbeiten.**
-* Bevor du Code schreibst, erstelle zwingend einen neuen Branch: `git checkout -b task/<name-der-prompt-datei>` (ohne .md).
-* 1. Änderungen committen mit aussagekräftiger Message.
-* 2. Branch pushen.
-* 3. **PR automatisch erstellen mit Trigger-Label:** * Bei neuen PRs zwingend: `gh pr create --fill --label "Ready for Review"`
-   * Bei Fixes in bestehenden PRs: `gh pr edit <PR-NUMMER> --add-label "Ready for Review"`
 
-### Auto-PR via GitHub Actions (claude.yml)
-Wenn du über `@claude` in einem Issue oder Issue-Kommentar getriggert wirst, übernimmt der Workflow die PR-Erstellung automatisch:
-* Nach deinem Run prüft der Step **"Create Pull Request"** (`steps.claude.outputs.branch_name`), ob ein Branch erstellt wurde.
-* Gibt es neue Commits gegenüber `main`, wird ein PR mit dem Issue-Titel und `Fixes #<issue>` erstellt – sofern noch kein offener PR für diesen Branch existiert (idempotent).
-* Ohne Änderungen wird **kein** PR erstellt.
-* Du musst also bei GitHub-Actions-Triggered-Runs **keinen** eigenen `gh pr create`-Aufruf machen – der Workflow übernimmt das.
+- **NIEMALS direkt auf `main` arbeiten**
+- Branch erstellen: `git checkout -b task/<name-der-prompt-datei>` (ohne .md)
+- Änderungen committen → Branch pushen
+- **KEIN `gh pr create` aufrufen** — PR wird automatisch vom GitHub Actions Workflow erstellt
 
 ## 4. Wie du mit Prompts arbeitest
-Alle Aufgaben liegen als Markdown-Dateien in `_Prompts/`.
-* **Wenn Mario sagt "lies [Dateiname]":**
-  → Direkt `_Prompts/[Dateiname].md` öffnen und umsetzen. Achte zwingend auf die "Definition of Done" (Checkliste) am Ende der Prompt-Datei. Erstelle den PR erst, wenn alle Punkte erfüllt sind!
-* **Wenn Mario sagt "was ist offen":**
-  → Alle `_Prompts/*.md` auf offene `- [ ]` Checkboxen prüfen.
 
-## 5. Wichtige Dateipfade
+Alle Aufgaben liegen als Markdown-Dateien in `_Prompts/`.
+
+**Wenn Mario sagt "lies [Dateiname]":**
+→ `_Prompts/[Dateiname].md` öffnen, alle Punkte umsetzen, Definition of Done beachten.
+
+**Wenn Mario sagt "was ist offen":**
+→ Alle `_Prompts/*.md` auf offene `- [ ]` Checkboxen prüfen.
+
+## 5. Notion Auto-Dokumentation (Pflicht nach jeder Aufgabe)
+
+Nach dem letzten Commit — VOR dem Branch-Push — Notion aktualisieren:
+
+**Notion Page IDs für dieses Projekt:**
+- Swing Scanner Roadmap: `32a765e5-dc96-80b8-8106-c5a397879094`
+- KI Fabrik Playbook: `332765e5-dc96-819a-94b7-d98a888d4430`
+
+**Was zu tun ist:**
+1. Roadmap-Seite lesen via Notion MCP
+2. Erledigte Checkboxen auf `[x]` setzen
+3. Changelog-Eintrag hinzufügen:
+   `- **[DATUM]:** [Was wurde umgesetzt, kurz] (PR #[NUMMER])`
+
+**Nur updaten wenn Notion MCP verfügbar** (NOTION_TOKEN gesetzt) — sonst überspringen.
+
+## 6. Wichtige Dateipfade
 
 ### Backend (Python/FastAPI)
 - `backend/scanner/screener.py` — Haupt-Scanner-Pipeline
@@ -48,14 +63,23 @@ Alle Aufgaben liegen als Markdown-Dateien in `_Prompts/`.
 - `backend/scanner/setup_classifier.py` — Stage 2: Regelbasierte Setup-Ableitung
 - `backend/scanner/indicators.py` — Technische Indikatoren (RSI, SMA, ATR etc.)
 - `backend/scanner/universe.py` — Dynamic Universe Management
-- `backend/models.py` — SQLite DB-Modelle (ScanResult, TradePlan, ScanUniverse etc.)
-- `backend/scheduler.py` — ARQ Jobs (daily_scan, ghost_portfolio_resolve etc.)
+- `backend/models.py` — SQLite DB-Modelle
+- `backend/scheduler.py` — ARQ Jobs
+- `backend/database.py` — DB-Hilfsfunktionen
 - `backend/brokers/alpaca.py` — AlpacaConnector
-- `backend/brokers/tr.py` — TRConnector (manuell + pytr)
-- `backend/brokers/ibkr.py` — IBKRConnector (CP Gateway REST)
+- `backend/brokers/tr.py` — TRConnector
+- `backend/brokers/ibkr.py` — IBKRConnector
+- `backend/main.py` — FastAPI App, alle API-Routen
+
+### Frontend (React/Vite)
+- `frontend/src/App.jsx` — Haupt-App, Routing
+- `frontend/src/components/TradingCockpit.jsx` — Trading Cockpit
+- `frontend/src/components/CandidateCard.jsx` — Kandidaten-Kachel
+- `frontend/src/components/PlanModal.jsx` — Trade-Plan erstellen
 
 ## Nicht verändern ohne explizite Anweisung
-- `fact_extractor.py` und `setup_classifier.py` — Zwei-Stufen-Analyse-Kern
+
+- `fact_extractor.py` + `setup_classifier.py` — Zwei-Stufen-Analyse-Kern
 - `prediction_archive` DB-Tabelle — Ghost Portfolio Daten
 - Bestehende Strategie-Modul-DB-Einträge
 - `docker-compose.yml` ohne Deploy-Test
