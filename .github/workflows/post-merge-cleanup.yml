@@ -23,23 +23,51 @@ jobs:
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Close linked Issue
+      - name: Close linked Issue(s)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
           REPO: ${{ github.repository }}
         run: |
-          # Issue-Nummer aus PR-Body extrahieren (sucht nach "Fixes #123" oder "Closes #123")
-          ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oE '(Fixes|Closes|Resolves) #[0-9]+' | grep -oE '[0-9]+' | head -1)
+          set -euo pipefail
 
-          if [ -n "$ISSUE_NUMBER" ]; then
-            echo "Closing issue #$ISSUE_NUMBER..."
-            gh issue close "$ISSUE_NUMBER" \
-              --repo "$REPO" \
-              --comment "✅ Automatisch geschlossen durch Merge von PR #${{ github.event.pull_request.number }}"
-            echo "Issue #$ISSUE_NUMBER closed."
+          # Guard: nur lokale "#123" Patterns schließen, keine Cross-Repo Referenzen wie "owner/repo#123".
+          # Daher: wir matchen ausschließlich Closing-Keywords + optional ':' + Whitespace + '#' + Ziffern.
+          # (kein Slash erlaubt)
+
+          # 1) Alle Issue-Nummern aus PR-Body extrahieren (Fixes/Closes/Resolves, case-insensitive, optional ':')
+          #    Beispiele die matchen: "Fixes #123", "fixes: #123", "Resolves:#123"
+          ISSUE_NUMBERS=$(
+            printf "%s" "${PR_BODY:-}" \
+              | grep -oiE '(fixes|closes|resolves)[[:space:]]*:?[[:space:]]*#[0-9]+' \
+              | grep -oE '[0-9]+' \
+              | sort -u \
+              || true
+          )
+
+          # 2) Fallback: issue-123 aus Branch-Namen ziehen (z.B. claude/issue-16-20260405-1958)
+          if [ -z "${ISSUE_NUMBERS:-}" ] && printf "%s" "${PR_BRANCH:-}" | grep -qiE 'issue-[0-9]+'; then
+            ISSUE_NUMBERS=$(
+              printf "%s" "${PR_BRANCH:-}" \
+                | grep -oiE 'issue-[0-9]+' \
+                | grep -oE '[0-9]+' \
+                | sort -u \
+                || true
+            )
+          fi
+
+          if [ -n "${ISSUE_NUMBERS:-}" ]; then
+            echo "Closing linked issue(s): ${ISSUE_NUMBERS}"
+            for ISSUE_NUMBER in $ISSUE_NUMBERS; do
+              echo "Closing issue #${ISSUE_NUMBER}..."
+              gh issue close "${ISSUE_NUMBER}" \
+                --repo "${REPO}" \
+                --comment "✅ Automatisch geschlossen durch Merge von PR #${{ github.event.pull_request.number }}"
+            done
+            echo "Done."
           else
-            echo "Kein verknüpftes Issue im PR-Body gefunden (kein 'Fixes #N' Pattern)."
+            echo "Kein verknüpftes Issue gefunden (weder Fixes/Closes/Resolves im PR-Body noch issue-<N> im Branch)."
           fi
 
       - name: Remove merged Prompt file from _Prompts/
@@ -66,7 +94,7 @@ jobs:
 
           # Prompt-Dateien löschen die im PR verwendet wurden
           # Suche nach Prompt-Referenzen im PR-Body oder Branch-Name
-          PROMPT_HINT=$(echo "$PR_BRANCH" | sed 's/claude\/issue-[0-9]*-[0-9]*-[0-9]*//' | tr '-' '_')
+          PROMPT_HINT=$(echo "$PR_BRANCH" | sed 's/claude\/issue-[0-9]*-[0-9]*-[0-9]*//g' | tr '-' '_')
 
           DELETED=0
           for PROMPT_FILE in _Prompts/*.md; do
