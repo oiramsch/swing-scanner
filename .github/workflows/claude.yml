@@ -25,25 +25,50 @@ jobs:
       (github.event_name == 'issues' && 
        (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && 
        github.event.issue.user.login == github.repository_owner)
+
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
       pull-requests: write
       issues: write
-      id-token: write
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
+      # Notion MCP Config – nur wenn NOTION_TOKEN Secret gesetzt ist
+      # Ohne diesen Step laeuft Claude Code ohne Notion-Zugriff weiter
+      - name: Write Notion MCP Config
+        if: env.NOTION_TOKEN != ''
+        run: |
+          cat > /tmp/mcp-notion.json << EOF
+          {
+            "mcpServers": {
+              "notion": {
+                "type": "url",
+                "url": "https://mcp.notion.com/mcp",
+                "headers": {
+                  "Authorization": "Bearer $NOTION_TOKEN"
+                }
+              }
+            }
+          }
+          EOF
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+
+      # Mit Notion (wenn NOTION_TOKEN gesetzt)
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: ${{ env.NOTION_TOKEN != '' && '--mcp-config /tmp/mcp-notion.json --allowedTools "mcp__notion__notion-fetch,mcp__notion__notion-update-page,mcp__notion__notion-create-pages,mcp__notion__notion-search,mcp__notion__notion-get-users,mcp__notion__notion-get-teams"' || '' }}
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
 
       - name: Create Pull Request
         if: steps.claude.outputs.branch_name != ''
@@ -52,30 +77,22 @@ jobs:
         run: |
           BRANCH="${{ steps.claude.outputs.branch_name }}"
           REPO="${{ github.repository }}"
-
-          # Check if branch exists on remote and has commits compared to main
           AHEAD=$(gh api "repos/$REPO/compare/main...$BRANCH" --jq '.ahead_by' 2>/dev/null) || {
-            echo "GitHub API call failed (branch may not exist remotely, or auth/network issue). Skipping PR creation."
+            echo "GitHub API call failed. Skipping PR creation."
             exit 0
           }
-
           if [ "${AHEAD:-0}" -eq 0 ]; then
-            echo "No new commits on branch '$BRANCH' compared to main. Skipping PR creation."
+            echo "No new commits on branch '$BRANCH'. Skipping PR creation."
             exit 0
           fi
           echo "$AHEAD new commit(s) found on branch '$BRANCH'."
-
-          # Check if a PR already exists for this branch (idempotent)
           EXISTING=$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number' 2>/dev/null)
           if [ -n "$EXISTING" ]; then
             echo "PR #$EXISTING already exists for branch '$BRANCH'. Skipping."
             exit 0
           fi
-
-          # Build PR title and body from triggering issue (if available)
           ISSUE_NUMBER="${{ github.event.issue.number }}"
           ISSUE_TITLE="${{ github.event.issue.title }}"
-
           if [ -n "$ISSUE_NUMBER" ]; then
             PR_TITLE="$ISSUE_TITLE"
             PR_BODY=$(printf "Automatisch erstellt durch Claude Code 🤖\n\nFixes #%s" "$ISSUE_NUMBER")
@@ -83,10 +100,7 @@ jobs:
             PR_TITLE="Claude Code: Changes on $BRANCH"
             PR_BODY="Automatisch erstellt durch Claude Code 🤖"
           fi
-
           echo "Creating PR: '$PR_TITLE'"
-
-          # Create PR – add 'Ready for Review' label if it exists in the repo
           if gh label list --json name -q '.[].name' | grep -qx "Ready for Review"; then
             gh pr create \
               --head "$BRANCH" \
@@ -101,5 +115,4 @@ jobs:
               --title "$PR_TITLE" \
               --body "$PR_BODY"
           fi
-
           echo "PR created successfully."
