@@ -1,0 +1,97 @@
+name: Post-Merge Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  cleanup:
+    # Nur bei echtem Merge, nicht bei geschlossenem PR ohne Merge
+    if: github.event.pull_request.merged == true
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Close linked Issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Issue-Nummer aus PR-Body extrahieren (sucht nach "Fixes #123" oder "Closes #123")
+          ISSUE_NUMBER=$(echo "$PR_BODY" | grep -oE '(Fixes|Closes|Resolves) #[0-9]+' | grep -oE '[0-9]+' | head -1)
+
+          if [ -n "$ISSUE_NUMBER" ]; then
+            echo "Closing issue #$ISSUE_NUMBER..."
+            gh issue close "$ISSUE_NUMBER" \
+              --repo "$REPO" \
+              --comment "✅ Automatisch geschlossen durch Merge von PR #${{ github.event.pull_request.number }}"
+            echo "Issue #$ISSUE_NUMBER closed."
+          else
+            echo "Kein verknüpftes Issue im PR-Body gefunden (kein 'Fixes #N' Pattern)."
+          fi
+
+      - name: Remove merged Prompt file from _Prompts/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          # Branch-Name → Prompt-Dateiname ableiten
+          # Konvention: claude/issue-16-20260405-1958 → kein direkter Match
+          # Daher: alle Prompt-Dateien prüfen die im PR geändert wurden
+
+          # Geänderte Dateien im PR ermitteln
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          CHANGED_PROMPTS=$(gh pr view "$PR_NUMBER" \
+            --repo "${{ github.repository }}" \
+            --json files \
+            --jq '.files[].path | select(startswith("_Prompts/")) | select(endswith(".md")) | select(. != "_Prompts/Template.md")' \
+            2>/dev/null || echo "")
+
+          if [ -n "$CHANGED_PROMPTS" ]; then
+            echo "Keine Prompt-Dateien im PR geändert — kein Cleanup nötig."
+            exit 0
+          fi
+
+          # Prompt-Dateien löschen die im PR verwendet wurden
+          # Suche nach Prompt-Referenzen im PR-Body oder Branch-Name
+          PROMPT_HINT=$(echo "$PR_BRANCH" | sed 's/claude\/issue-[0-9]*-[0-9]*-[0-9]*//' | tr '-' '_')
+
+          DELETED=0
+          for PROMPT_FILE in _Prompts/*.md; do
+            # Template nie löschen
+            [ "$PROMPT_FILE" = "_Prompts/Template.md" ] && continue
+            [ "$PROMPT_FILE" = "_Prompts/.gitkeep" ] && continue
+
+            # Prüfen ob Datei im PR-Branch geändert oder genutzt wurde
+            FILENAME=$(basename "$PROMPT_FILE" .md)
+            PR_BODY_LOWER=$(echo "${{ github.event.pull_request.body }}" | tr '[:upper:]' '[:lower:]')
+            FILENAME_LOWER=$(echo "$FILENAME" | tr '[:upper:]' '[:lower:]')
+
+            if echo "$PR_BODY_LOWER" | grep -q "$FILENAME_LOWER"; then
+              echo "Lösche $PROMPT_FILE (in PR-Body referenziert)..."
+              git rm "$PROMPT_FILE"
+              DELETED=1
+            fi
+          done
+
+          if [ "$DELETED" -eq 1 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: remove merged prompt file(s) after PR #${{ github.event.pull_request.number }}"
+            git push
+            echo "Prompt-Dateien bereinigt."
+          else
+            echo "Keine Prompt-Dateien zum Bereinigen gefunden."
+          fi
