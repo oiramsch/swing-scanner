@@ -28,6 +28,10 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    # NOTION_TOKEN auf Job-Ebene: damit if: env.NOTION_TOKEN != '' funktioniert
+    env:
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+
     permissions:
       contents: write
       pull-requests: write
@@ -40,7 +44,7 @@ jobs:
           fetch-depth: 1
 
       # Notion MCP Config – nur wenn NOTION_TOKEN Secret gesetzt ist
-      # Ohne diesen Step laeuft Claude Code ohne Notion-Zugriff weiter
+      # env.NOTION_TOKEN ist durch den Job-Level-env-Block verfuegbar
       - name: Write Notion MCP Config
         if: env.NOTION_TOKEN != ''
         run: |
@@ -57,18 +61,13 @@ jobs:
             }
           }
           EOF
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
 
-      # Mit Notion (wenn NOTION_TOKEN gesetzt)
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: ${{ env.NOTION_TOKEN != '' && '--mcp-config /tmp/mcp-notion.json --allowedTools "mcp__notion__notion-fetch,mcp__notion__notion-update-page,mcp__notion__notion-create-pages,mcp__notion__notion-search,mcp__notion__notion-get-users,mcp__notion__notion-get-teams"' || '' }}
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
 
       - name: Create Pull Request
         if: steps.claude.outputs.branch_name != ''
@@ -88,7 +87,7 @@ jobs:
           echo "$AHEAD new commit(s) found on branch '$BRANCH'."
           EXISTING=$(gh pr list --head "$BRANCH" --state open --json number -q '.[0].number' 2>/dev/null)
           if [ -n "$EXISTING" ]; then
-            echo "PR #$EXISTING already exists for branch '$BRANCH'. Skipping."
+            echo "PR #$EXISTING already exists. Skipping."
             exit 0
           fi
           ISSUE_NUMBER="${{ github.event.issue.number }}"
@@ -102,17 +101,8 @@ jobs:
           fi
           echo "Creating PR: '$PR_TITLE'"
           if gh label list --json name -q '.[].name' | grep -qx "Ready for Review"; then
-            gh pr create \
-              --head "$BRANCH" \
-              --base main \
-              --title "$PR_TITLE" \
-              --body "$PR_BODY" \
-              --label "Ready for Review"
+            gh pr create --head "$BRANCH" --base main --title "$PR_TITLE" --body "$PR_BODY" --label "Ready for Review"
           else
-            gh pr create \
-              --head "$BRANCH" \
-              --base main \
-              --title "$PR_TITLE" \
-              --body "$PR_BODY"
+            gh pr create --head "$BRANCH" --base main --title "$PR_TITLE" --body "$PR_BODY"
           fi
           echo "PR created successfully."
