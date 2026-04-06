@@ -555,7 +555,7 @@ async def scan_status():
     last_scan_date = None
     last_scan_time = None
     hours_since_last_scan = None
-    scan_missing = False
+    scan_missing = True  # True until proven otherwise (no data = scan missing)
 
     row = get_last_scan_datetime()
     if row:
