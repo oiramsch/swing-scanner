@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import axios from "axios";
 import JustageModal from "./JustageModal.jsx";
+import { useAlpacaWebSocket } from "../../hooks/useAlpacaWebSocket.js";
 
 // ---------------------------------------------------------------------------
 // Market clock helper (DST-aware, US Eastern Time)
@@ -238,6 +239,12 @@ function OpenOrdersSection({ visible }) {
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
+const WS_STATUS = {
+  live: { dot: "bg-green-400 animate-pulse", text: "text-green-400",  border: "border-green-700/50 bg-green-900/20",   label: "🟢 Live" },
+  mock: { dot: "bg-yellow-400",              text: "text-yellow-400", border: "border-yellow-700/50 bg-yellow-900/20", label: "🟡 Mock" },
+  off:  { dot: "bg-red-500",                 text: "text-red-400",    border: "border-red-700/50 bg-red-900/20",       label: "🔴 Offline" },
+};
+
 export default function TradingCockpit({ setActiveTab }) {
   const [plans,    setPlans]    = useState([]);
   const [brokers,  setBrokers]  = useState([]);
@@ -248,14 +255,36 @@ export default function TradingCockpit({ setActiveTab }) {
   const [lastUpdate, setLastUpdate] = useState(null);
   const pollRef = useRef(null);
 
+  // WebSocket live prices
+  const pendingTickers = useMemo(
+    () => plans.map(p => p.ticker).slice(0, 30),
+    [plans]
+  );
+  const { prices: wsPrices, connected: wsConnected, isMock: wsMock } = useAlpacaWebSocket(pendingTickers);
+
+  const wsStatus = wsConnected ? "live" : wsMock ? "mock" : "off";
+
   useEffect(() => {
     loadAll();
-    pollRef.current = setInterval(refreshQuotes, 5000);
     const clockRef = setInterval(() => setMarket(getMarketInfo()), 30000);
-    return () => { clearInterval(pollRef.current); clearInterval(clockRef); };
+    return () => { clearInterval(clockRef); };
   }, []);
 
-  // refresh quote polling when plans change
+  // Fallback polling: only when WebSocket is neither connected nor in mock mode
+  useEffect(() => {
+    if (wsConnected || wsMock) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+      // Still poll volume_ratio at low frequency
+      pollRef.current = setInterval(refreshQuotes, 30000);
+    } else {
+      clearInterval(pollRef.current);
+      pollRef.current = setInterval(refreshQuotes, 5000);
+    }
+    return () => clearInterval(pollRef.current);
+  }, [wsConnected, wsMock, plans]);
+
+  // Initial quote load when plans are ready
   useEffect(() => {
     if (plans.length > 0) refreshQuotes();
   }, [plans]);
@@ -288,6 +317,12 @@ export default function TradingCockpit({ setActiveTab }) {
       setQuotes(res.data);
       setLastUpdate(new Date());
     } catch {}
+  }
+
+  // Merge live prices: WS price takes priority, fallback to polling quote
+  function getLivePrice(ticker) {
+    if (wsPrices[ticker] != null) return wsPrices[ticker];
+    return quotes[ticker]?.price ?? null;
   }
 
   // Alpaca broker for PDT + balance
@@ -335,6 +370,11 @@ export default function TradingCockpit({ setActiveTab }) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* WebSocket connection status */}
+          <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs ${WS_STATUS[wsStatus].border}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${WS_STATUS[wsStatus].dot}`} />
+            <span className={WS_STATUS[wsStatus].text}>{WS_STATUS[wsStatus].label}</span>
+          </div>
           {lastUpdate && (
             <span className="text-[10px] text-gray-600">
               {lastUpdate.toLocaleTimeString("de", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -355,7 +395,9 @@ export default function TradingCockpit({ setActiveTab }) {
           <h2 className="text-sm font-semibold text-gray-200">
             Pending Pläne ({plans.length})
           </h2>
-          <span className="text-xs text-gray-600">Live-Kurse alle 5s</span>
+          <span className="text-xs text-gray-600">
+            {wsConnected ? "WebSocket Live" : wsMock ? "Mock-Modus" : "Polling-Fallback"}
+          </span>
         </div>
 
         {loading ? (
@@ -379,7 +421,7 @@ export default function TradingCockpit({ setActiveTab }) {
                 key={plan.id}
                 plan={plan}
                 brokers={brokers}
-                livePrice={quotes[plan.ticker]?.price ?? null}
+                livePrice={getLivePrice(plan.ticker)}
                 volumeRatio={quotes[plan.ticker]?.volume_ratio ?? null}
                 onExecute={(p, b) => setJustageTarget({ plan: p, broker: b })}
               />
@@ -396,7 +438,7 @@ export default function TradingCockpit({ setActiveTab }) {
         <JustageModal
           plan={justageTarget.plan}
           broker={justageTarget.broker}
-          livePrice={quotes[justageTarget.plan.ticker]?.price ?? null}
+          livePrice={getLivePrice(justageTarget.plan.ticker)}
           onClose={() => setJustageTarget(null)}
           onSuccess={() => { setJustageTarget(null); loadPlans(); }}
         />
