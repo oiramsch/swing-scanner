@@ -46,6 +46,7 @@ if [ -n "$NOTION_TOKEN" ]; then
     -H "Notion-Version: 2022-06-28" \
     -d "{\"children\":[{\"object\":\"block\",\"type\":\"bulleted_list_item\",\"bulleted_list_item\":{\"rich_text\":[{\"type\":\"text\",\"text\":{\"content\":\"${TODAY}: [Was umgesetzt] (PR #${PR_NUM})\"}}]}}]}"
 fi
+```
 
 ## 5. Wie du mit Prompts arbeitest
 
