@@ -28,10 +28,6 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    # NOTION_TOKEN auf Job-Ebene: damit if: env.NOTION_TOKEN != '' funktioniert
-    env:
-      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-
     permissions:
       contents: write
       pull-requests: write
@@ -43,31 +39,11 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Notion MCP Config – nur wenn NOTION_TOKEN Secret gesetzt ist
-      # env.NOTION_TOKEN ist durch den Job-Level-env-Block verfuegbar
-      - name: Write Notion MCP Config
-        if: env.NOTION_TOKEN != ''
-        run: |
-          cat > /tmp/mcp-notion.json << EOF
-          {
-            "mcpServers": {
-              "notion": {
-                "type": "url",
-                "url": "https://mcp.notion.com/mcp",
-                "headers": {
-                  "Authorization": "Bearer $NOTION_TOKEN"
-                }
-              }
-            }
-          }
-          EOF
-
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: ${{ env.NOTION_TOKEN != '' && '--mcp-config /tmp/mcp-notion.json --allowedTools "mcp__notion__notion-fetch,mcp__notion__notion-update-page,mcp__notion__notion-create-pages,mcp__notion__notion-search,mcp__notion__notion-get-users,mcp__notion__notion-get-teams"' || '' }}
 
       - name: Create Pull Request
         if: steps.claude.outputs.branch_name != ''
@@ -94,10 +70,10 @@ jobs:
           ISSUE_TITLE="${{ github.event.issue.title }}"
           if [ -n "$ISSUE_NUMBER" ]; then
             PR_TITLE="$ISSUE_TITLE"
-            PR_BODY=$(printf "Automatisch erstellt durch Claude Code 🤖\n\nFixes #%s" "$ISSUE_NUMBER")
+            PR_BODY=$(printf "Automatisch erstellt durch Claude Code \U0001F916\n\nFixes #%s" "$ISSUE_NUMBER")
           else
             PR_TITLE="Claude Code: Changes on $BRANCH"
-            PR_BODY="Automatisch erstellt durch Claude Code 🤖"
+            PR_BODY="Automatisch erstellt durch Claude Code \U0001F916"
           fi
           echo "Creating PR: '$PR_TITLE'"
           if gh label list --json name -q '.[].name' | grep -qx "Ready for Review"; then

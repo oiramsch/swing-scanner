@@ -1,4 +1,4 @@
-# 🏭 Swing Scanner – Claude Code Anweisungen
+# 🏗️ Swing Scanner – Claude Code Anweisungen
 
 Du bist der ausführende Lead Developer für den "Swing Scanner".
 Copilot wird deinen Code strengstens prüfen — halte dich an diese Regeln.
@@ -28,6 +28,7 @@ Stock Screening App für Swing Trading. Täglich ~500 S&P 500 Aktien + ETFs gesc
 - Branch erstellen: `git checkout -b task/<name-der-prompt-datei>` (ohne .md)
 - Änderungen committen → Branch pushen
 - **KEIN `gh pr create` aufrufen** — PR wird automatisch vom GitHub Actions Workflow erstellt
+- Notion-Dokumentation erfolgt separat via Claude Desktop + Notion MCP — kein NOTION_TOKEN nötig
 
 ## 4. Wie du mit Prompts arbeitest
 
@@ -39,23 +40,7 @@ Alle Aufgaben liegen als Markdown-Dateien in `_Prompts/`.
 **Wenn Mario sagt "was ist offen":**
 → Alle `_Prompts/*.md` auf offene `- [ ]` Checkboxen prüfen.
 
-## 5. Notion Auto-Dokumentation (Pflicht nach jeder Aufgabe)
-
-Nach dem letzten Commit — VOR dem Branch-Push — Notion aktualisieren:
-
-**Notion Page IDs für dieses Projekt:**
-- Swing Scanner Roadmap: `32a765e5-dc96-80b8-8106-c5a397879094`
-- KI Fabrik Playbook: `332765e5-dc96-819a-94b7-d98a888d4430`
-
-**Was zu tun ist:**
-1. Roadmap-Seite lesen via Notion MCP
-2. Erledigte Checkboxen auf `[x]` setzen
-3. Changelog-Eintrag hinzufügen:
-   `- **[DATUM]:** [Was wurde umgesetzt, kurz] (PR #[NUMMER])`
-
-**Nur updaten wenn Notion MCP verfügbar** (NOTION_TOKEN gesetzt) — sonst überspringen.
-
-## 6. Wichtige Dateipfade
+## 5. Wichtige Dateipfade
 
 ### Backend (Python/FastAPI)
 - `backend/scanner/screener.py` — Haupt-Scanner-Pipeline
