@@ -45,6 +45,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_tools: "Bash(curl:*)"   # ← ergänzen
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           
