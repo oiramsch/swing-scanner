@@ -28,9 +28,26 @@ Stock Screening App für Swing Trading. Täglich ~500 S&P 500 Aktien + ETFs gesc
 - Branch erstellen: `git checkout -b task/<name-der-prompt-datei>` (ohne .md)
 - Änderungen committen → Branch pushen
 - **KEIN `gh pr create` aufrufen** — PR wird automatisch vom GitHub Actions Workflow erstellt
-- Notion-Dokumentation erfolgt separat via Claude Desktop + Notion MCP — kein NOTION_TOKEN nötig
 
-## 4. Wie du mit Prompts arbeitest
+## 4. Notion Auto-Dokumentation (nach jeder Aufgabe)
+
+Notion MCP funktioniert nicht in GitHub Actions. Stattdessen: direkter REST API Call.
+
+**Notion Page ID Swing Scanner Roadmap:** `32a765e5dc9680b88106c5a397879094`
+
+Nach dem letzten Commit ausführen (wenn NOTION_TOKEN gesetzt):
+
+```bash
+if [ -n "$NOTION_TOKEN" ]; then
+  TODAY=$(date +%Y-%m-%d)
+  curl -s -X POST https://api.notion.com/v1/blocks/32a765e5dc9680b88106c5a397879094/children \
+    -H "Authorization: Bearer $NOTION_TOKEN" \
+    -H "Content-Type: application/json" \
+    -H "Notion-Version: 2022-06-28" \
+    -d "{\"children\":[{\"object\":\"block\",\"type\":\"bulleted_list_item\",\"bulleted_list_item\":{\"rich_text\":[{\"type\":\"text\",\"text\":{\"content\":\"${TODAY}: [Was umgesetzt] (PR #${PR_NUM})\"}}]}}]}"
+fi
+
+## 5. Wie du mit Prompts arbeitest
 
 Alle Aufgaben liegen als Markdown-Dateien in `_Prompts/`.
 
@@ -40,7 +57,7 @@ Alle Aufgaben liegen als Markdown-Dateien in `_Prompts/`.
 **Wenn Mario sagt "was ist offen":**
 → Alle `_Prompts/*.md` auf offene `- [ ]` Checkboxen prüfen.
 
-## 5. Wichtige Dateipfade
+## 6. Wichtige Dateipfade
 
 ### Backend (Python/FastAPI)
 - `backend/scanner/screener.py` — Haupt-Scanner-Pipeline
