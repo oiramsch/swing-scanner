@@ -42,8 +42,10 @@ export default function CandidateCard({ candidate }) {
     stop_loss,
     target,
     reasoning,
+    direction,
   } = candidate;
 
+  const isShort = direction === "short";
   const badgeClass = SETUP_BADGE[setup_type] ?? SETUP_BADGE.none;
 
   return (
@@ -80,9 +82,16 @@ export default function CandidateCard({ candidate }) {
       <div className="p-4 flex flex-col gap-3 flex-1">
         {/* Ticker + badge */}
         <div className="flex items-center justify-between">
-          <span className="text-xl font-bold text-white tracking-wide">
-            {ticker}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xl font-bold text-white tracking-wide">
+              {ticker}
+            </span>
+            {isShort && (
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-red-900/40 text-red-400 border border-red-700/50">
+                SHORT ↓
+              </span>
+            )}
+          </div>
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${badgeClass}`}>
             {pattern_name ?? setup_type}
           </span>
@@ -100,14 +109,14 @@ export default function CandidateCard({ candidate }) {
         {/* Trade levels */}
         <div className="grid grid-cols-3 gap-2 text-xs">
           <div className="bg-gray-800 rounded-lg p-2">
-            <div className="text-gray-500 mb-0.5">Entry</div>
-            <div className="text-green-400 font-medium truncate">
+            <div className="text-gray-500 mb-0.5">{isShort ? "Short Entry" : "Entry"}</div>
+            <div className="text-red-400 font-medium truncate">
               {entry_zone ?? "—"}
             </div>
           </div>
           <div className="bg-gray-800 rounded-lg p-2">
             <div className="text-gray-500 mb-0.5">Stop</div>
-            <div className="text-red-400 font-medium truncate">
+            <div className={`${isShort ? "text-orange-400" : "text-red-400"} font-medium truncate`}>
               {stop_loss ?? "—"}
             </div>
           </div>

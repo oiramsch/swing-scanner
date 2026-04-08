@@ -21,6 +21,19 @@ class AlpacaConnector(BrokerConnector):
         return info
 
     def place_order(self, plan: dict) -> dict:
+        direction = plan.get("direction", "long")
+        if direction == "short":
+            if not self.connection.get("is_paper", True):
+                raise ValueError("Short selling nur auf Paper-Konto erlaubt.")
+            from backend.trading import place_short_bracket_order
+            return place_short_bracket_order(
+                self.connection,
+                ticker=plan["ticker"],
+                qty=float(plan["qty"]),
+                limit_price=float(plan["entry_high"]),
+                take_profit_price=float(plan["target"]),
+                stop_loss_price=float(plan["stop_loss"]),
+            )
         from backend.trading import place_bracket_order
         return place_bracket_order(
             self.connection,

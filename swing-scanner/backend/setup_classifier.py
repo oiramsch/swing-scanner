@@ -330,6 +330,59 @@ def classify_setup(
                 ),
             })
 
+    # ════════════════════════════════════════════════════════════════════════
+    # BEAR BOUNCE SHORT (Dead Cat Bounce)
+    # Short entry when a stock in a confirmed downtrend bounces temporarily.
+    # Screener pre-filter: RSI > 55, no SMA constraints (classifier is strict).
+    # Signal: RSI > 60 (short-term overbought) + close < SMA50 < SMA200 + bearish reversal
+    # ════════════════════════════════════════════════════════════════════════
+    elif module == "Bear Bounce Short":
+        price_below_sma50  = sma50 > 0 and close < sma50
+        price_below_sma200 = sma200 > 0 and close < sma200
+        # "Near resistance" = within 2% of SMA50 or SMA200
+        near_sma50  = sma50  > 0 and abs(close - sma50)  / sma50  < 0.02
+        near_sma200 = sma200 > 0 and abs(close - sma200) / sma200 < 0.02
+        near_resistance_level = near_sma50 or near_sma200
+
+        if rsi > 60 and price_below_sma50 and price_below_sma200:
+            if bearish_candle or near_resistance_level:
+                # Stop ABOVE entry (short geometry); target BELOW entry
+                stop_price = close + 1.5 * atr
+                tgt_price  = close - 2.5 * atr
+                resistance_label = (
+                    "SMA50" if near_sma50 else "SMA200" if near_sma200 else ""
+                )
+                result.update({
+                    "direction": "short",
+                    "setup_type": "reversal",
+                    "entry_zone": f"{close:.2f}",
+                    "stop_loss": f"{min(stop_price, close * 1.15):.2f}",
+                    "target":    f"{max(tgt_price, close * 0.70):.2f}",
+                    "reasoning": (
+                        f"Bear Bounce Short: RSI {rsi:.0f} kurzfristig überkauft im Abwärtstrend. "
+                        f"Preis ${close:.2f} unter SMA50 ({sma50:.2f}) und SMA200 ({sma200:.2f}). "
+                        + (f"Bearish Kerze: {candle}. " if bearish_candle else "")
+                        + (f"Nahe Widerstand ({resistance_label}). " if resistance_label else "")
+                        + "Short-Entry — Dead Cat Bounce Korrektur erwartet."
+                    ),
+                })
+                n = _count_signals([
+                    bearish_candle, bearish_pattern, downtrend,
+                    near_resistance_level, rsi > 65,
+                ])
+                result["confidence_adjustment"]    = 1 if n >= 3 else 0
+                result["signal_convergence_bonus"] = min(2, n // 2)
+        else:
+            result.update({
+                "setup_type": "reversal",
+                "reasoning": (
+                    f"Bear Bounce Short: Bedingungen nicht erfüllt — "
+                    f"RSI {rsi:.0f} (>60 nötig), "
+                    f"close_below_sma50={price_below_sma50}, "
+                    f"close_below_sma200={price_below_sma200}."
+                ),
+            })
+
     result = _validate_geometry(result)
     logger.info(
         "Classifier [%s] %s: dir=%s setup=%s adj=%+d conv=%+d",

@@ -105,8 +105,11 @@ def _is_direction_mismatch(analysis: dict) -> bool:
     """
     Fix C: Detect hidden short setups in long-only modules.
     stop_loss > entry_mid means the stop is ABOVE the entry → short logic.
-    All current modules are long-only, so this is always a mismatch.
+    Exception: explicit short direction from the classifier is NOT a mismatch.
     """
+    # Explicit short direction from classifier = intentional, not a mismatch
+    if analysis.get("_classifier_direction") == "short":
+        return False
     from backend.news_checker import _parse_entry_mid, _parse_price
     entry_mid = _parse_entry_mid(analysis.get("entry_zone"))
     stop      = _parse_price(analysis.get("stop_loss"))
@@ -386,11 +389,22 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
                 # v3.2 — Trigger-Preis: upper bound of entry zone
                 trigger_price=_parse_entry_upper(analysis.get("entry_zone")),
                 trigger_reached=False,
+                # v4.0 — direction from classifier ("long" or "short")
+                direction=analysis.get("_classifier_direction") or "long",
             )
             saved_result = save_scan_result(result)
             # Only queue for deep analysis if the candidate is active
             if candidate_status == "active":
                 saved_results.append((saved_result, indicators, candidate.get("df")))
+                # v4.0 — Push notification for new short signal
+                if (analysis.get("_classifier_direction") == "short"
+                        and analysis.get("crv_calculated")):
+                    from backend.notifier import notify_short_signal
+                    notify_short_signal(
+                        ticker=ticker,
+                        rsi=float(indicators.get("rsi14") or 0),
+                        crv=float(analysis["crv_calculated"]),
+                    )
             saved += 1
         except Exception as exc:
             logger.warning("DB save failed for %s: %s", ticker, exc)

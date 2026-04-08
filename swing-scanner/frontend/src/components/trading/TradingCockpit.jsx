@@ -57,6 +57,15 @@ const ZONE_STYLES = {
   unknown: { border: "border-l-gray-700",   bg: "",                 badge: "text-gray-500",   label: "—" },
 };
 
+// Zone styles for SHORT plans (inverted logic)
+const SHORT_ZONE_STYLES = {
+  in:      { border: "border-l-red-500",    bg: "bg-red-900/10",    badge: "text-red-400",    label: "🔴 In Short-Zone" },
+  near:    { border: "border-l-yellow-500", bg: "bg-yellow-900/10", badge: "text-yellow-400", label: "🟡 Nah dran" },
+  below:   { border: "border-l-red-500",    bg: "bg-red-900/10",    badge: "text-red-400",    label: "🔴 Stop gefährdet" },
+  above:   { border: "border-l-green-500",  bg: "bg-green-900/10",  badge: "text-green-400",  label: "🟢 Short-Trigger" },
+  unknown: { border: "border-l-gray-700",   bg: "",                 badge: "text-gray-500",   label: "—" },
+};
+
 // ---------------------------------------------------------------------------
 // Volume badge
 // ---------------------------------------------------------------------------
@@ -93,11 +102,16 @@ function PdtBadge({ count }) {
 // Plan tile
 // ---------------------------------------------------------------------------
 function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute }) {
+  const isShort = plan.direction === "short";
   const status = zoneStatus(livePrice, plan.entry_low, plan.entry_high);
-  const { border, bg, badge, label } = ZONE_STYLES[status];
+  const styles = isShort ? SHORT_ZONE_STYLES : ZONE_STYLES;
+  const { border, bg, badge, label } = styles[status];
 
+  // CRV: for longs (target - entry) / (entry - stop); for shorts (entry - target) / (stop - entry)
   const crv = plan.target && plan.entry_high && plan.stop_loss
-    ? ((plan.target - plan.entry_high) / (plan.entry_high - plan.stop_loss))
+    ? isShort
+      ? ((plan.entry_high - plan.target) / (plan.stop_loss - plan.entry_high))
+      : ((plan.target - plan.entry_high) / (plan.entry_high - plan.stop_loss))
     : null;
 
   return (
@@ -106,6 +120,11 @@ function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-white font-bold">{plan.ticker}</span>
+          {isShort && (
+            <span className="text-[10px] px-1.5 py-0.5 border border-red-700/50 rounded text-red-400 font-semibold">
+              SHORT ↓
+            </span>
+          )}
           {plan.strategy_module && (
             <span className="text-[10px] px-1.5 py-0.5 border border-gray-700 rounded text-gray-500">
               {plan.strategy_module}
@@ -139,23 +158,34 @@ function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute }) {
 
       {/* Right: execute buttons per broker */}
       <div className="flex gap-1.5 shrink-0">
-        {brokers.map(broker => (
-          <button
-            key={broker.id}
-            onClick={() => onExecute(plan, broker)}
-            disabled={status === "above"}
-            title={status === "above" ? "Preis über Entry-Zone" : `${broker.label} — Ausführen`}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
-              status === "in"
-                ? "bg-green-700 hover:bg-green-600 border-green-600 text-white"
-                : status === "above"
-                ? "opacity-40 cursor-not-allowed bg-gray-800 border-gray-700 text-gray-500"
-                : "bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-300"
-            }`}
-          >
-            {broker.label}
-          </button>
-        ))}
+        {brokers.map(broker => {
+          // For longs: disabled when price is above zone (missed entry)
+          // For shorts: disabled when price is below zone (stop threatened)
+          const isDisabled = isShort ? status === "below" : status === "above";
+          const isActive   = isShort ? status === "above" || status === "in" : status === "in";
+          const disabledTitle = isShort
+            ? "Preis unter Entry-Zone — Stop gefährdet"
+            : "Preis über Entry-Zone";
+          return (
+            <button
+              key={broker.id}
+              onClick={() => onExecute(plan, broker)}
+              disabled={isDisabled}
+              title={isDisabled ? disabledTitle : `${broker.label} — Ausführen`}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
+                isActive
+                  ? isShort
+                    ? "bg-red-700 hover:bg-red-600 border-red-600 text-white"
+                    : "bg-green-700 hover:bg-green-600 border-green-600 text-white"
+                  : isDisabled
+                  ? "opacity-40 cursor-not-allowed bg-gray-800 border-gray-700 text-gray-500"
+                  : "bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-300"
+              }`}
+            >
+              {broker.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
