@@ -204,6 +204,19 @@ def notify_entry_zone(
     set_ntfy_entry_sent(ticker)
 
 
+def notify_short_signal(ticker: str, rsi: float, crv: float):
+    """Push notification when a new Bear Bounce Short signal is detected."""
+    from backend.database import get_ntfy_alerts
+    if not get_ntfy_alerts().get("alerts_scan", True):
+        return
+    send_push(
+        title=f"🔴 Short-Signal: {ticker}",
+        message=f"RSI: {rsi:.0f} | CRV: {crv:.1f}\nDead Cat Bounce — Short-Entry prüfen.",
+        priority="high",
+        tags="chart_with_downwards_trend",
+    )
+
+
 def notify_market_update_critical(ticker: str, alert_msg: str, market_change: float):
     """🔴 Critical alert — immediate push for stop-loss proximity or major risk."""
     change_str = f"{market_change:+.1f}%" if market_change else ""

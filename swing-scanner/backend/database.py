@@ -32,6 +32,7 @@ def init_db():
     _migrate_filter_defaults()
     _seed_strategy_modules()
     _seed_connors_rsi2_module()
+    _seed_bear_bounce_short_module()
     _seed_default_universes()
     _seed_admin_user()
     logger.info("Database initialized.")
@@ -106,6 +107,9 @@ def _apply_migrations():
         # v3.2 — Trigger-Preis: breakout confirmation tracking on ScanResult
         ("scanresult", "trigger_price",    "REAL"),
         ("scanresult", "trigger_reached",  "INTEGER DEFAULT 0"),
+        # v4.0 — Bear Bounce Short: direction field on ScanResult and TradePlan
+        ("scanresult", "direction", "TEXT DEFAULT 'long'"),
+        ("tradeplan",  "direction", "TEXT DEFAULT 'long'"),
         # v3.1 — Dynamic Universe Management
         ("scanuniverse", "tickers_json",       "TEXT"),
         ("scanuniverse", "regime_default",     "TEXT DEFAULT 'any'"),
@@ -378,6 +382,43 @@ def _seed_connors_rsi2_module():
         logger.info("Seeded strategy module: Connors RSI-2")
 
 
+def _seed_bear_bounce_short_module():
+    """Add Bear Bounce Short strategy module if it doesn't exist yet (safe to run on existing DBs)."""
+    with Session(get_engine()) as session:
+        existing = session.exec(
+            select(StrategyModule).where(StrategyModule.name == "Bear Bounce Short")
+        ).first()
+        if existing:
+            return
+        session.add(StrategyModule(
+            name="Bear Bounce Short",
+            description=(
+                "Dead Cat Bounce — Short-Einstieg bei überkauftem Bounce im bestätigten Abwärtstrend. "
+                "RSI > 60 (kurzfristig überkauft) + Preis unter SMA50 und SMA200 + Bearish Reversal-Kerze "
+                "nahe Widerstand. Nur auf Paper-Konto ausführbar. Nur aktiv wenn Regime = BEAR."
+            ),
+            regime="bear",
+            direction="short",
+            is_active=True,
+            auto_activate=True,
+            price_min=10.0,
+            price_max=500.0,
+            avg_volume_min=500_000,
+            rsi_min=55.0,        # pre-filter: RSI > 55 (classifier enforces > 60)
+            rsi_max=90.0,        # allow high RSI — we WANT overbought bounces
+            price_above_sma50=None,    # skip — classifier enforces close < SMA50
+            price_above_sma20=None,    # skip
+            close_above_sma200=None,   # skip — classifier enforces close < SMA200
+            rsi_bear_cap=None,         # disable default 60-cap — we need RSI > 60
+            volume_multiplier=1.0,
+            relative_strength_vs_spy=False,
+            confidence_min=5,
+            setup_types='["reversal"]',
+        ))
+        session.commit()
+        logger.info("Seeded strategy module: Bear Bounce Short")
+
+
 def _seed_default_universes():
     """Seed default scan universes (v3.1). Safe to run on existing DBs."""
     with Session(get_engine()) as session:
@@ -490,6 +531,8 @@ class ScanResult(SQLModel, table=True):
     extracted_facts_json: Optional[str] = None
     # v3.2 — Trigger-Preis: breakout confirmation level (upper bound of entry_zone)
     trigger_price: Optional[float] = None     # e.g. 148.00 = upper edge of entry zone
+    # v4.0 — Trade direction: "long" | "short"
+    direction: str = "long"
     trigger_reached: bool = False             # True once price >= trigger_price → alert sent
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -915,6 +958,9 @@ class TradePlan(SQLModel, table=True):
 
     # Slippage tracking — actual fill price recorded after execution
     actual_entry_price: Optional[float] = None
+
+    # v4.0 — Trade direction: "long" | "short"
+    direction: str = "long"
 
 
 # ---------------------------------------------------------------------------

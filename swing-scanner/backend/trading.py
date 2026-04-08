@@ -4,7 +4,8 @@ Phase 3 — Alpaca order execution (bracket orders, order management).
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from decimal import Decimal
+from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,9 @@ def place_bracket_order(
     *,
     ticker: str,
     qty: float,
-    limit_price: float,
-    take_profit_price: float,
-    stop_loss_price: float,
+    limit_price: Union[Decimal, float],
+    take_profit_price: Union[Decimal, float],
+    stop_loss_price: Union[Decimal, float],
 ) -> dict:
     """
     Place a DAY bracket limit order: entry limit + take-profit limit + stop-loss stop.
@@ -61,6 +62,44 @@ def place_bracket_order(
     order = client.submit_order(req)
     logger.info("Bracket order placed: %s × %s @ %s SL=%s TP=%s",
                 ticker, qty, limit_price, stop_loss_price, take_profit_price)
+    return _order_to_dict(order)
+
+
+def place_short_bracket_order(
+    creds: dict,
+    *,
+    ticker: str,
+    qty: float,
+    limit_price: Union[Decimal, float],
+    take_profit_price: Union[Decimal, float],
+    stop_loss_price: Union[Decimal, float],
+) -> dict:
+    """
+    Place a short sell bracket order: sell-short entry + buy-to-cover stop + buy-to-cover limit.
+    Only executes on paper accounts (guard enforced here and in AlpacaConnector).
+    """
+    if not creds.get("is_paper", True):
+        raise ValueError("Short selling nur auf Paper-Konto erlaubt.")
+
+    from alpaca.trading.requests import LimitOrderRequest, TakeProfitRequest, StopLossRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+
+    client = _get_trading_client(creds)
+    req = LimitOrderRequest(
+        symbol=ticker.upper(),
+        qty=qty,
+        side=OrderSide.SELL,                                     # sell short
+        limit_price=round(limit_price, 2),
+        time_in_force=TimeInForce.DAY,
+        order_class=OrderClass.BRACKET,
+        take_profit=TakeProfitRequest(limit_price=round(take_profit_price, 2)),  # buy to cover
+        stop_loss=StopLossRequest(stop_price=round(stop_loss_price, 2)),         # buy to cover
+    )
+    order = client.submit_order(req)
+    logger.info(
+        "Short bracket order placed: %s × %s @ %s SL=%s TP=%s",
+        ticker, qty, limit_price, stop_loss_price, take_profit_price,
+    )
     return _order_to_dict(order)
 
 
