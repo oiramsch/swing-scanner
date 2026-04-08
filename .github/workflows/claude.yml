@@ -43,7 +43,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: "--allowedTools Bash(curl:*)"
+          additional_permissions: "allow-bash"   # ← kein claude_args
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           
