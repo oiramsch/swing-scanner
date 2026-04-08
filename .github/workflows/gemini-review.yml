@@ -1,13 +1,11 @@
 name: 🏗️ Gemini Architect Review
 
-# 1. DER TRIGGER: Feuert nur noch bei Labels oder wenn Code im gelabelten PR aktualisiert wird
 on:
   pull_request:
     types: [labeled, synchronize]
 
 jobs:
   code-review:
-    # 2. DER KOSTEN-FILTER: Bricht sofort ab, wenn das Label "Ready for Review" fehlt
     if: contains(github.event.pull_request.labels.*.name, 'Ready for Review')
     runs-on: ubuntu-latest
     permissions:
@@ -16,7 +14,7 @@ jobs:
 
     steps:
       - name: 📦 Code vom Fließband holen
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -51,7 +49,6 @@ jobs:
           import os
           from google import genai
           
-          # Dateien einlesen
           try:
               with open("pr_diff.txt", "r") as f: diff = f.read()
               with open("arch_rules.txt", "r") as f: arch_rules = f.read()
@@ -62,7 +59,6 @@ jobs:
           
           client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
           
-          # DEIN FINALER FABRIK-PROMPT (Kombiniert Regeln + Diff)
           prompt = f"""Du bist der Lead FinTech Architect in unserer Softwarefabrik.
           Prüfe diesen Pull Request für unseren Swing Scanner extrem streng.
           
@@ -78,7 +74,6 @@ jobs:
           - Sei direkt, professionell und wie ein strenger Risiko-Manager. Tolerier keine Verstöße gegen die Regeln.
           """
           
-          # API Aufruf
           response = client.models.generate_content(
               model="gemini-2.5-pro",
               contents=prompt
