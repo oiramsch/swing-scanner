@@ -3,6 +3,8 @@ Alpaca broker connector — wraps existing trading.py functions.
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
 from backend.brokers.base import BrokerConnector
 
 
@@ -30,18 +32,18 @@ class AlpacaConnector(BrokerConnector):
                 self.connection,
                 ticker=plan["ticker"],
                 qty=float(plan["qty"]),
-                limit_price=float(plan["entry_high"]),
-                take_profit_price=float(plan["target"]),
-                stop_loss_price=float(plan["stop_loss"]),
+                limit_price=Decimal(str(plan["entry_high"])),
+                take_profit_price=Decimal(str(plan["target"])),
+                stop_loss_price=Decimal(str(plan["stop_loss"])),
             )
         from backend.trading import place_bracket_order
         return place_bracket_order(
             self.connection,
             ticker=plan["ticker"],
             qty=float(plan["qty"]),
-            limit_price=float(plan["entry_high"]),
-            take_profit_price=float(plan["target"]),
-            stop_loss_price=float(plan["stop_loss"]),
+            limit_price=Decimal(str(plan["entry_high"])),
+            take_profit_price=Decimal(str(plan["target"])),
+            stop_loss_price=Decimal(str(plan["stop_loss"])),
         )
 
     def get_portfolio(self) -> list[dict]:

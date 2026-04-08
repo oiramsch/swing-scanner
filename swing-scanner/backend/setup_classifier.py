@@ -263,6 +263,7 @@ def classify_setup(
                 # no reversal — will show as direction_mismatch for long-only brokers
                 result.update({
                     "direction": "short",
+                    "_classifier_direction": "short",
                     "setup_type": "reversal",
                     "entry_zone": f"{close:.2f}",
                     "stop_loss": _short_stop(close, atr, resistance),
@@ -354,6 +355,7 @@ def classify_setup(
                 )
                 result.update({
                     "direction": "short",
+                    "_classifier_direction": "short",
                     "setup_type": "reversal",
                     "entry_zone": f"{close:.2f}",
                     "stop_loss": f"{min(stop_price, close * 1.15):.2f}",

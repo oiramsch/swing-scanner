@@ -4,7 +4,8 @@ Phase 3 — Alpaca order execution (bracket orders, order management).
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from decimal import Decimal
+from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,9 @@ def place_bracket_order(
     *,
     ticker: str,
     qty: float,
-    limit_price: float,
-    take_profit_price: float,
-    stop_loss_price: float,
+    limit_price: Union[Decimal, float],
+    take_profit_price: Union[Decimal, float],
+    stop_loss_price: Union[Decimal, float],
 ) -> dict:
     """
     Place a DAY bracket limit order: entry limit + take-profit limit + stop-loss stop.
@@ -69,9 +70,9 @@ def place_short_bracket_order(
     *,
     ticker: str,
     qty: float,
-    limit_price: float,
-    take_profit_price: float,
-    stop_loss_price: float,
+    limit_price: Union[Decimal, float],
+    take_profit_price: Union[Decimal, float],
+    stop_loss_price: Union[Decimal, float],
 ) -> dict:
     """
     Place a short sell bracket order: sell-short entry + buy-to-cover stop + buy-to-cover limit.
