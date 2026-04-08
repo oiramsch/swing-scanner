@@ -243,7 +243,7 @@ def classify_setup(
                 # Assign ATR-based levels so the candidate stays active instead of watchlist_pending.
                 result.update({
                     "direction": "long",
-                    "setup_type": "relative_strength",
+                    "setup_type": "bear_rs",
                     "entry_zone": f"{close:.2f}",
                     "stop_loss": _long_stop(close, atr, support),
                     "target": _long_target(close, atr, resistance),

@@ -6,6 +6,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import text
 from sqlmodel import Field, Session, SQLModel, create_engine, delete, select
 
 from backend.config import settings
@@ -34,7 +35,6 @@ def init_db():
     _seed_connors_rsi2_module()
     _seed_default_universes()
     _seed_admin_user()
-    _repair_bear_rs_watchlist_pending()
     logger.info("Database initialized.")
 
 
@@ -120,7 +120,7 @@ def _apply_migrations():
         for table, col, col_type in new_cols:
             try:
                 conn.execute(
-                    __import__("sqlalchemy").text(
+                    text(
                         f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"
                     )
                 )
@@ -141,7 +141,6 @@ def _migrate_filter_defaults():
     Runs on every startup; only touches rows whose name matches exactly.
     User-created custom filters are never modified.
     """
-    import sqlalchemy
     engine = get_engine()
     updates = [
         # name, column, value
@@ -180,7 +179,7 @@ def _migrate_filter_defaults():
         for name, col, val in updates:
             try:
                 conn.execute(
-                    sqlalchemy.text(
+                    text(
                         f"UPDATE filterprofile SET {col} = :val WHERE name = :name"
                     ),
                     {"val": val, "name": name},
@@ -434,40 +433,6 @@ def _seed_default_universes():
             session.add(u)
         session.commit()
         logger.info("Seeded 4 default scan universes.")
-
-
-def _repair_bear_rs_watchlist_pending():
-    """
-    One-time repair: Bear RS candidates saved with entry_zone=NULL become watchlist_pending.
-    This happened because setup_classifier had no fallback for deep-bear markets where all
-    stocks are in confirmed downtrend. Re-mark them as active with a generic RS label so
-    they appear in /api/candidates. Safe to run on every startup (idempotent).
-    """
-    from sqlalchemy import text
-    engine = get_engine()
-    with engine.connect() as conn:
-        result = conn.execute(text(
-            "SELECT COUNT(*) FROM scanresult "
-            "WHERE candidate_status = 'watchlist_pending' "
-            "AND entry_zone IS NULL "
-            "AND strategy_module = 'Bear Relative Strength'"
-        ))
-        broken = result.scalar()
-        if not broken:
-            return
-        conn.execute(text(
-            "UPDATE scanresult "
-            "SET candidate_status = 'active', "
-            "    setup_type       = 'relative_strength', "
-            "    reasoning        = 'Bear RS: above SMA200, no trend confirmation (repaired)' "
-            "WHERE candidate_status = 'watchlist_pending' "
-            "AND entry_zone IS NULL "
-            "AND strategy_module = 'Bear Relative Strength'"
-        ))
-        conn.commit()
-    logger.info(
-        "Repaired %d Bear RS watchlist_pending records with NULL entry_zone → active.", broken
-    )
 
 
 # ---------------------------------------------------------------------------
