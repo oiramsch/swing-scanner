@@ -34,6 +34,7 @@ def init_db():
     _seed_connors_rsi2_module()
     _seed_default_universes()
     _seed_admin_user()
+    _repair_bear_rs_watchlist_pending()
     logger.info("Database initialized.")
 
 
@@ -433,6 +434,40 @@ def _seed_default_universes():
             session.add(u)
         session.commit()
         logger.info("Seeded 4 default scan universes.")
+
+
+def _repair_bear_rs_watchlist_pending():
+    """
+    One-time repair: Bear RS candidates saved with entry_zone=NULL become watchlist_pending.
+    This happened because setup_classifier had no fallback for deep-bear markets where all
+    stocks are in confirmed downtrend. Re-mark them as active with a generic RS label so
+    they appear in /api/candidates. Safe to run on every startup (idempotent).
+    """
+    from sqlalchemy import text
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT COUNT(*) FROM scanresult "
+            "WHERE candidate_status = 'watchlist_pending' "
+            "AND entry_zone IS NULL "
+            "AND strategy_module = 'Bear Relative Strength'"
+        ))
+        broken = result.scalar()
+        if not broken:
+            return
+        conn.execute(text(
+            "UPDATE scanresult "
+            "SET candidate_status = 'active', "
+            "    setup_type       = 'relative_strength', "
+            "    reasoning        = 'Bear RS: above SMA200, no trend confirmation (repaired)' "
+            "WHERE candidate_status = 'watchlist_pending' "
+            "AND entry_zone IS NULL "
+            "AND strategy_module = 'Bear Relative Strength'"
+        ))
+        conn.commit()
+    logger.info(
+        "Repaired %d Bear RS watchlist_pending records with NULL entry_zone → active.", broken
+    )
 
 
 # ---------------------------------------------------------------------------
