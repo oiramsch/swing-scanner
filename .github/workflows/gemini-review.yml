@@ -1,4 +1,4 @@
-name: 🏭 Gemini Architect Review
+name: 🏗️ Gemini Architect Review
 
 # 1. DER TRIGGER: Feuert nur noch bei Labels oder wenn Code im gelabelten PR aktualisiert wird
 on:
@@ -43,7 +43,7 @@ jobs:
       - name: ⚙️ Abhängigkeiten installieren
         run: pip install google-genai
 
-      - name: 🧠 Gemini 3.1 Pro den Code analysieren lassen
+      - name: 🧠 Gemini Pro den Code analysieren lassen
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -80,7 +80,7 @@ jobs:
           
           # API Aufruf
           response = client.models.generate_content(
-              model="gemini-3.1-pro", 
+              model="gemini-2.5-pro",
               contents=prompt
           )
           
