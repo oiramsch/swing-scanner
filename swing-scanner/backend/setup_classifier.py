@@ -237,6 +237,23 @@ def classify_setup(
                 n = _count_signals([vol_surge, rsi < 50, price_above_sma50])
                 result["signal_convergence_bonus"] = min(1, n)
 
+            else:
+                # Fallback: passes Bear RS screener (above SMA200, RSI in range) but no
+                # trend confirmation yet (deep bear — all stocks in downtrend, no reversals).
+                # Assign ATR-based levels so the candidate stays active instead of watchlist_pending.
+                result.update({
+                    "direction": "long",
+                    "setup_type": "bear_rs",
+                    "entry_zone": f"{close:.2f}",
+                    "stop_loss": _long_stop(close, atr, support),
+                    "target": _long_target(close, atr, resistance),
+                    "reasoning": (
+                        f"Bear RS: above SMA200 with RSI {rsi:.0f}, no trend confirmation "
+                        f"(deep bear market) — watch for reversal signal"
+                    ),
+                })
+                result["signal_convergence_bonus"] = 0
+
     # ════════════════════════════════════════════════════════════════════════
     # MEAN REVERSION
     # Screener: price < SMA20, price < SMA50, RSI 20–40, vol × 0.8

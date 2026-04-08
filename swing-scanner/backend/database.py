@@ -6,6 +6,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import text
 from sqlmodel import Field, Session, SQLModel, create_engine, delete, select
 
 from backend.config import settings
@@ -123,7 +124,7 @@ def _apply_migrations():
         for table, col, col_type in new_cols:
             try:
                 conn.execute(
-                    __import__("sqlalchemy").text(
+                    text(
                         f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"
                     )
                 )
@@ -144,7 +145,6 @@ def _migrate_filter_defaults():
     Runs on every startup; only touches rows whose name matches exactly.
     User-created custom filters are never modified.
     """
-    import sqlalchemy
     engine = get_engine()
     updates = [
         # name, column, value
@@ -183,7 +183,7 @@ def _migrate_filter_defaults():
         for name, col, val in updates:
             try:
                 conn.execute(
-                    sqlalchemy.text(
+                    text(
                         f"UPDATE filterprofile SET {col} = :val WHERE name = :name"
                     ),
                     {"val": val, "name": name},
