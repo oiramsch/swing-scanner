@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pytest
+from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 # --- Patch the database engine BEFORE importing anything from backend ---
@@ -17,6 +18,7 @@ import backend.database as _db
 _TEST_ENGINE = create_engine(
     "sqlite:///:memory:",
     connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
 _db._engine = _TEST_ENGINE
 SQLModel.metadata.create_all(_TEST_ENGINE)
