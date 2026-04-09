@@ -952,6 +952,68 @@ function ClaudeApiSection() {
 // v3.1 — Scan Universe Management
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Feature Flags — Paper Auto-Trading toggle
+// ---------------------------------------------------------------------------
+function FeatureFlagsSection() {
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [saved,   setSaved]   = useState(false);
+
+  useEffect(() => {
+    axios.get("/api/settings/feature-flags")
+      .then(r => setEnabled(!!r.data.paper_auto_trading))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function toggle() {
+    setSaving(true);
+    setSaved(false);
+    try {
+      const next = !enabled;
+      await axios.put("/api/settings/feature-flags", { paper_auto_trading: next });
+      setEnabled(next);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch {}
+    setSaving(false);
+  }
+
+  return (
+    <Section title="Feature Flags">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-sm text-gray-200 font-medium flex items-center gap-2">
+            🤖 Paper Auto-Trading
+            <span className="text-[10px] px-1.5 py-0.5 border border-yellow-700/50 rounded text-yellow-400">PAPER ONLY</span>
+          </div>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            Täglich 15:35 UTC werden aktive Kandidaten automatisch als Bracket Orders platziert.<br />
+            Max 3 Trades · Max 5 % Kapital · Nur Paper-Konto · PDT-Schutz.
+          </p>
+        </div>
+        <button
+          onClick={toggle}
+          disabled={loading || saving}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
+            enabled ? "bg-indigo-600" : "bg-gray-700"
+          }`}
+        >
+          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? "translate-x-6" : "translate-x-1"}`} />
+        </button>
+      </div>
+      {saved && <p className="text-xs text-green-400">✓ Gespeichert</p>}
+      {enabled && (
+        <div className="text-[11px] text-yellow-400 bg-yellow-900/20 border border-yellow-700/30 rounded-lg px-3 py-2">
+          ⚠️ Nur aktivieren wenn Phase 2 (Bear Bounce Short) deployed und getestet ist.
+        </div>
+      )}
+    </Section>
+  );
+}
+
 function UniverseSection() {
   const [universes, setUniverses] = useState([]);
   const [saving, setSaving] = useState(null);
@@ -1048,6 +1110,7 @@ export default function SettingsTab({ currentUser, onLogout }) {
       <ErrorBoundary><NtfySection /></ErrorBoundary>
       <ErrorBoundary><ClaudeApiSection /></ErrorBoundary>
       <ErrorBoundary><BrokerManagementSection /></ErrorBoundary>
+      <ErrorBoundary><FeatureFlagsSection /></ErrorBoundary>
       <ErrorBoundary><ModulesSection /></ErrorBoundary>
       <ErrorBoundary><UniverseSection /></ErrorBoundary>
       <ErrorBoundary><ScannerSection /></ErrorBoundary>

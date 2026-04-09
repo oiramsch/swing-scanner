@@ -111,6 +111,9 @@ def _apply_migrations():
         # v4.0 — Bear Bounce Short: direction field on ScanResult and TradePlan
         ("scanresult", "direction", "TEXT DEFAULT 'long'"),
         ("tradeplan",  "direction", "TEXT DEFAULT 'long'"),
+        # Phase 3 — Paper Auto-Trading
+        ("tradeplan",    "auto_trade", "INTEGER DEFAULT 0"),
+        ("journalentry", "source",     "TEXT DEFAULT 'manual'"),
         # v3.1 — Dynamic Universe Management
         ("scanuniverse", "tickers_json",       "TEXT"),
         ("scanuniverse", "regime_default",     "TEXT DEFAULT 'any'"),
@@ -711,6 +714,8 @@ class JournalEntry(SQLModel, table=True):
     followed_rules: Optional[bool] = None
     lesson: Optional[str] = None
     mistakes: Optional[str] = None
+    # Phase 3 — source: "manual" | "auto" (auto = placed by auto_paper_trade job)
+    source: str = "manual"
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -961,6 +966,9 @@ class TradePlan(SQLModel, table=True):
 
     # v4.0 — Trade direction: "long" | "short"
     direction: str = "long"
+
+    # Phase 3 — Paper Auto-Trading: True if placed automatically by auto_paper_trade job
+    auto_trade: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -2063,6 +2071,40 @@ def set_ntfy_entry_sent(ticker: str) -> None:
         row.value = "1"
         session.add(row)
         session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Paper Auto-Trading Feature-Flag
+# ---------------------------------------------------------------------------
+
+_PAPER_AUTO_TRADING_KEY = "feature_paper_auto_trading"
+
+
+def get_paper_auto_trading() -> bool:
+    """Return True if PAPER_AUTO_TRADING feature flag is enabled (default: False)."""
+    with Session(get_engine()) as session:
+        row = session.get(AppSetting, _PAPER_AUTO_TRADING_KEY)
+        return row.value.lower() == "true" if row else False
+
+
+def set_paper_auto_trading(enabled: bool) -> None:
+    """Enable or disable the PAPER_AUTO_TRADING feature flag."""
+    with Session(get_engine()) as session:
+        row = session.get(AppSetting, _PAPER_AUTO_TRADING_KEY) or AppSetting(key=_PAPER_AUTO_TRADING_KEY)
+        row.value = "true" if enabled else "false"
+        session.add(row)
+        session.commit()
+
+
+def count_active_auto_trades(tenant_id: int = 1) -> int:
+    """Count open TradePlans that were placed automatically (for the 3-trade safety limit)."""
+    with Session(get_engine()) as session:
+        return session.exec(
+            select(TradePlan)
+            .where(TradePlan.tenant_id == tenant_id)
+            .where(TradePlan.auto_trade == True)  # noqa: E712
+            .where(TradePlan.status.in_(["pending", "active", "partial"]))
+        ).all().__len__()
 
 
 _SUMMARY_NOTIFIED_KEY = "ntfy_summary_last_notified_date"

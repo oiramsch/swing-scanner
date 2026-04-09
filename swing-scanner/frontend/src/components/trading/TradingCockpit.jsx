@@ -125,6 +125,14 @@ function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute }) {
               SHORT ↓
             </span>
           )}
+          {plan.auto_trade && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 border border-indigo-700/50 rounded text-indigo-400 font-semibold"
+              title="Automatisch um 15:35 UTC platziert"
+            >
+              🤖 Auto
+            </span>
+          )}
           {plan.strategy_module && (
             <span className="text-[10px] px-1.5 py-0.5 border border-gray-700 rounded text-gray-500">
               {plan.strategy_module}
