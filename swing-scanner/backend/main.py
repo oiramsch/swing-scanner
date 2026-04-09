@@ -506,6 +506,63 @@ async def get_chart(filename: str):
     return FileResponse(str(chart_path), media_type="image/png")
 
 
+@app.get("/api/chart/{symbol}/intraday")
+async def get_chart_intraday(
+    symbol: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Return 15-min OHLCV bars for last 5 trading days + active trade plan data (Phase B)."""
+    from decimal import Decimal
+    import yfinance as yf
+
+    try:
+        hist = yf.Ticker(symbol.upper()).history(period="5d", interval="15m")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"yfinance error: {exc}")
+
+    if hist is None or hist.empty:
+        raise HTTPException(status_code=404, detail=f"No intraday data for {symbol}")
+
+    def _round(v) -> float:
+        return float(Decimal(str(v)).quantize(Decimal("0.01")))
+
+    bars = []
+    for idx, row in hist.iterrows():
+        # Convert tz-aware DatetimeIndex to UTC UNIX timestamp (seconds)
+        try:
+            import pytz
+            ts = int(idx.astimezone(pytz.utc).timestamp())
+        except Exception:
+            ts = int(idx.timestamp())
+        bars.append({
+            "time": ts,
+            "open": _round(row["Open"]),
+            "high": _round(row["High"]),
+            "low": _round(row["Low"]),
+            "close": _round(row["Close"]),
+            "volume": int(row["Volume"]),
+        })
+
+    # Look up active trade plan for this symbol
+    plan_data = None
+    plans = get_active_trade_plans(current_user.tenant_id)
+    for plan in plans:
+        if plan.ticker.upper() == symbol.upper():
+            plan_data = {
+                "entry_low": float(plan.entry_low) if plan.entry_low is not None else None,
+                "entry_high": float(plan.entry_high) if plan.entry_high is not None else None,
+                "stop_loss": float(plan.stop_loss) if plan.stop_loss is not None else None,
+                "target": float(plan.target) if plan.target is not None else None,
+            }
+            break
+
+    return {
+        "symbol": symbol.upper(),
+        "bars": bars,
+        "plan": plan_data,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Scan trigger + status
 # ---------------------------------------------------------------------------

@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import axios from "axios";
 import JustageModal from "./JustageModal.jsx";
+
+const DealCockpitCharts = lazy(() => import("../chart/DealCockpitCharts.jsx"));
 
 function parseEntryZone(low, high) {
   if (!low || !high) return null;
@@ -234,6 +236,7 @@ export default function DealCockpit() {
   const [loading,   setLoading]   = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [justageTarget, setJustageTarget] = useState(null); // { plan, broker }
+  const [chartsVisible, setChartsVisible] = useState(false);
   const pollRef = useRef(null);
 
   useEffect(() => {
@@ -351,6 +354,32 @@ export default function DealCockpit() {
           ))
         )}
       </div>
+
+      {/* Mini-Charts Toggle */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => setChartsVisible(v => !v)}
+          className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 rounded transition"
+        >
+          {chartsVisible ? "Charts ausblenden ▲" : "Charts einblenden ▼"}
+        </button>
+        {chartsVisible && (
+          <span className="text-xs text-gray-600">Intraday 15min · Live-Update alle 60s</span>
+        )}
+      </div>
+
+      {/* Multi-Chart Grid */}
+      {chartsVisible && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <Suspense fallback={
+            <div className="flex items-center justify-center py-8">
+              <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          }>
+            <DealCockpitCharts plans={activePlans} />
+          </Suspense>
+        </div>
+      )}
 
       {/* Finale Justage Modal — einheitlich für Alpaca + TR */}
       {justageTarget && (

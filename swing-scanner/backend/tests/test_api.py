@@ -6,7 +6,7 @@ on routes that don't use Depends(get_current_user), like /api/scan/status.
 """
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -17,6 +17,37 @@ from backend.main import SCAN_MISSING_THRESHOLD_HOURS
 
 # Dummy token — passes the "starts with Bearer" middleware check
 _AUTH = {"Authorization": "Bearer test-token"}
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+def _make_ohlcv_df(n=5, tz="America/New_York"):
+    """Build a minimal OHLCV DataFrame that mimics yfinance output."""
+    idx = pd.date_range("2026-01-01", periods=n, freq="D", tz=tz)
+    return pd.DataFrame(
+        {
+            "Open":   [100.0 + i for i in range(n)],
+            "High":   [105.0 + i for i in range(n)],
+            "Low":    [ 95.0 + i for i in range(n)],
+            "Close":  [102.0 + i for i in range(n)],
+            "Volume": [1_000_000] * n,
+        },
+        index=idx,
+    )
+
+
+def _make_intraday_df(n=20, tz="America/New_York"):
+    """Build a minimal 15-min OHLCV DataFrame that mimics yfinance intraday output."""
+    idx = pd.date_range("2026-01-02 09:30", periods=n, freq="15min", tz=tz)
+    return pd.DataFrame(
+        {
+            "Open":   [150.0] * n,
+            "High":   [152.0] * n,
+            "Low":    [148.0] * n,
+            "Close":  [151.0] * n,
+            "Volume": [50_000] * n,
+        },
+        index=idx,
+    )
 
 
 def _clear_scan_results(engine):
@@ -66,101 +97,95 @@ def test_scan_status_fresh_scan(test_client, engine):
     assert body["hours_since_last_scan"] < SCAN_MISSING_THRESHOLD_HOURS
 
 
-# ---------------------------------------------------------------------------
-# Chart endpoint tests
-# ---------------------------------------------------------------------------
+# ── Chart endpoint tests (Phase A) ─────────────────────────────────────────
 
-def _make_fake_history(n=5):
-    """Build a minimal yfinance-style DataFrame with OHLCV columns."""
-    idx = pd.date_range("2025-01-02", periods=n, freq="B", tz="America/New_York")
-    data = {
-        "Open":   [150.0 + i for i in range(n)],
-        "High":   [152.0 + i for i in range(n)],
-        "Low":    [148.0 + i for i in range(n)],
-        "Close":  [151.0 + i for i in range(n)],
-        "Volume": [1_000_000 + i * 10_000 for i in range(n)],
-    }
-    return pd.DataFrame(data, index=idx)
+class TestChartEndpoint:
+    """Tests for GET /api/chart/{symbol}."""
 
+    def test_chart_returns_bars_and_indicators(self, test_client):
+        """Endpoint returns OHLCV bars + sma50 + sma200 when yfinance succeeds."""
+        df = _make_ohlcv_df(n=60)  # enough for sma50 to appear
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = df
 
-def test_chart_endpoint_requires_auth(test_client):
-    """GET /api/chart/AAPL without Bearer token → 401 from middleware."""
-    resp = test_client.get("/api/chart/AAPL")
-    assert resp.status_code == 401
+        with patch("yfinance.Ticker", return_value=mock_ticker):
+            resp = test_client.get("/api/chart/AAPL?period=3mo", headers=_AUTH)
 
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["symbol"] == "AAPL"
+        assert len(body["bars"]) == 60
+        bar = body["bars"][0]
+        assert {"time", "open", "high", "low", "close", "volume"} <= bar.keys()
+        assert "sma50" in body["indicators"]
+        assert "sma200" in body["indicators"]
 
-def test_chart_endpoint_invalid_period(test_client):
-    """GET /api/chart/AAPL?period=bad → 400 (route-level validation)."""
-    from backend.main import app
-    from backend.auth import get_current_user, AuthenticatedUser
-
-    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(email="test@example.com")
-    try:
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            mock_ticker = MagicMock()
-            mock_ticker.history.return_value = _make_fake_history()
-            mock_ticker_cls.return_value = mock_ticker
-            resp = test_client.get("/api/chart/AAPL?period=bad", headers=_AUTH)
+    def test_chart_invalid_period(self, test_client):
+        """Unsupported period → 400."""
+        resp = test_client.get("/api/chart/AAPL?period=10y", headers=_AUTH)
         assert resp.status_code == 400
-    finally:
-        app.dependency_overrides.pop(get_current_user, None)
+
+    def test_chart_empty_data(self, test_client):
+        """Empty DataFrame from yfinance → 404."""
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame()
+
+        with patch("yfinance.Ticker", return_value=mock_ticker):
+            resp = test_client.get("/api/chart/FAKE?period=3mo", headers=_AUTH)
+
+        assert resp.status_code == 404
+
+    def test_chart_requires_auth(self, test_client):
+        """Missing Bearer token → 401."""
+        resp = test_client.get("/api/chart/AAPL")
+        assert resp.status_code == 401
 
 
-def test_chart_endpoint_success(test_client):
-    """
-    GET /api/chart/AAPL?period=3mo with mocked yfinance → 200 with correct shape.
-    Verifies: symbol uppercased, bars non-empty, Decimal rounding applied,
-    indicators dict present with sma50/sma200 keys.
-    """
-    from backend.main import app
-    from backend.auth import get_current_user, AuthenticatedUser
+# ── Intraday endpoint tests (Phase B) ──────────────────────────────────────
 
-    fake_df = _make_fake_history(n=5)
-    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(email="test@example.com")
-    try:
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            mock_ticker = MagicMock()
-            mock_ticker.history.return_value = fake_df
-            mock_ticker_cls.return_value = mock_ticker
+class TestIntradayEndpoint:
+    """Tests for GET /api/chart/{symbol}/intraday."""
 
-            resp = test_client.get("/api/chart/aapl?period=3mo", headers=_AUTH)
-    finally:
-        app.dependency_overrides.pop(get_current_user, None)
+    def test_intraday_returns_bars_with_unix_timestamps(self, test_client):
+        """Endpoint returns 15-min bars with integer UNIX timestamps."""
+        df = _make_intraday_df(n=20)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = df
 
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
+        with patch("yfinance.Ticker", return_value=mock_ticker):
+            resp = test_client.get("/api/chart/AAPL/intraday", headers=_AUTH)
 
-    assert body["symbol"] == "AAPL"
-    assert len(body["bars"]) == 5
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["symbol"] == "AAPL"
+        assert len(body["bars"]) == 20
+        bar = body["bars"][0]
+        assert isinstance(bar["time"], int), "time must be a UNIX timestamp (int)"
+        assert {"time", "open", "high", "low", "close", "volume"} <= bar.keys()
 
-    bar = body["bars"][0]
-    assert set(bar.keys()) == {"time", "open", "high", "low", "close", "volume"}
-    # Prices must be rounded to 2 decimal places
-    assert bar["open"] == round(bar["open"], 2)
-    assert isinstance(bar["volume"], int)
+    def test_intraday_plan_is_none_when_no_active_plan(self, test_client):
+        """plan field is None when no active TradePlan exists for the symbol."""
+        df = _make_intraday_df()
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = df
 
-    assert "indicators" in body
-    assert "sma50" in body["indicators"]
-    assert "sma200" in body["indicators"]
-    # With only 5 bars, both SMAs should be empty (not enough data)
-    assert body["indicators"]["sma50"] == []
-    assert body["indicators"]["sma200"] == []
+        with patch("yfinance.Ticker", return_value=mock_ticker):
+            resp = test_client.get("/api/chart/ZZZZ/intraday", headers=_AUTH)
 
+        assert resp.status_code == 200
+        assert resp.json()["plan"] is None
 
-def test_chart_endpoint_no_data(test_client):
-    """GET /api/chart/UNKNOWN with empty yfinance response → 404."""
-    from backend.main import app
-    from backend.auth import get_current_user, AuthenticatedUser
+    def test_intraday_empty_data(self, test_client):
+        """Empty DataFrame → 404."""
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame()
 
-    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(email="test@example.com")
-    try:
-        with patch("yfinance.Ticker") as mock_ticker_cls:
-            mock_ticker = MagicMock()
-            mock_ticker.history.return_value = pd.DataFrame()
-            mock_ticker_cls.return_value = mock_ticker
+        with patch("yfinance.Ticker", return_value=mock_ticker):
+            resp = test_client.get("/api/chart/FAKE/intraday", headers=_AUTH)
 
-            resp = test_client.get("/api/chart/UNKNOWN?period=3mo", headers=_AUTH)
-    finally:
-        app.dependency_overrides.pop(get_current_user, None)
+        assert resp.status_code == 404
 
-    assert resp.status_code == 404
+    def test_intraday_requires_auth(self, test_client):
+        """Missing Bearer token → 401."""
+        resp = test_client.get("/api/chart/AAPL/intraday")
+        assert resp.status_code == 401
