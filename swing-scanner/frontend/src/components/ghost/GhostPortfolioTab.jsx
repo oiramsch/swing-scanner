@@ -79,9 +79,10 @@ function StatCard({ label, value, sub, color = "text-white" }) {
 }
 
 export default function GhostPortfolioTab() {
-  const [stats,   setStats]   = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [recent,  setRecent]  = useState([]);
+  const [stats,      setStats]      = useState(null);
+  const [loading,    setLoading]    = useState(true);
+  const [recent,     setRecent]     = useState([]);
+  const [tradeStats, setTradeStats] = useState(null);
 
   useEffect(() => {
     load();
@@ -90,12 +91,14 @@ export default function GhostPortfolioTab() {
   async function load() {
     setLoading(true);
     try {
-      const [sRes, rRes] = await Promise.all([
+      const [sRes, rRes, tRes] = await Promise.all([
         axios.get("/api/predictions/stats"),
         axios.get("/api/predictions?limit=20"),
+        axios.get("/api/trade-plans/performance-stats"),
       ]);
       setStats(sRes.data);
       setRecent(rRes.data || []);
+      setTradeStats(tRes.data || null);
     } catch {}
     setLoading(false);
   }
@@ -235,6 +238,31 @@ export default function GhostPortfolioTab() {
         </div>
         <div className="text-[10px] text-gray-600">{stats.note}</div>
       </div>
+
+      {/* Auto vs Manual Trade Comparison */}
+      {tradeStats && (tradeStats.auto.total > 0 || tradeStats.manual.total > 0) && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-800">
+            <h2 className="text-sm font-semibold text-gray-200">🤖 Auto vs. Manuell — Trade-Pläne</h2>
+          </div>
+          <div className="grid grid-cols-2 divide-x divide-gray-800">
+            {[
+              { label: "🤖 Auto", data: tradeStats.auto, color: "text-indigo-400" },
+              { label: "👤 Manuell", data: tradeStats.manual, color: "text-gray-300" },
+            ].map(({ label, data, color }) => (
+              <div key={label} className="px-4 py-4 space-y-2">
+                <div className={`text-xs font-semibold ${color}`}>{label}</div>
+                <div className="text-2xl font-bold text-white">{data.total}</div>
+                <div className="text-[10px] text-gray-500 space-y-0.5">
+                  <div className="flex justify-between"><span>Offen</span><span className="text-blue-400">{data.active}</span></div>
+                  <div className="flex justify-between"><span>Abgeschlossen</span><span className="text-green-400">{data.done}</span></div>
+                  <div className="flex justify-between"><span>Storniert</span><span className="text-gray-600">{data.cancelled}</span></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Recent predictions */}
       {recent.length > 0 && (

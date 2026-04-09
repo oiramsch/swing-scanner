@@ -1116,7 +1116,7 @@ async def export_journal_csv(current_user: AuthenticatedUser = Depends(get_curre
 
     entries = get_journal_entries()
     fields = [
-        "id", "trade_date", "ticker", "setup_type", "entry_price", "stop_loss",
+        "id", "trade_date", "ticker", "setup_type", "source", "entry_price", "stop_loss",
         "target", "risk_eur", "risk_reward", "position_size", "exit_price",
         "exit_date", "pnl_eur", "pnl_pct", "followed_rules", "emotion_entry",
         "emotion_exit", "setup_reason", "lesson", "mistakes", "created_at",
@@ -1400,6 +1400,35 @@ async def test_anthropic_key(
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Feature Flags API (Phase 3)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/settings/feature-flags")
+async def get_feature_flags(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Return current feature-flag settings (stored in AppSettings/SQLite)."""
+    from backend.database import get_paper_auto_trading
+    return {
+        "paper_auto_trading": get_paper_auto_trading(),
+    }
+
+
+@app.put("/api/settings/feature-flags")
+async def update_feature_flags(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Update feature flags.
+    Body: { "paper_auto_trading": true|false }
+    Stores in AppSettings (SQLite) — survives container rebuilds.
+    """
+    from backend.database import set_paper_auto_trading
+    if "paper_auto_trading" in data:
+        set_paper_auto_trading(bool(data["paper_auto_trading"]))
+    return {"status": "saved"}
 
 
 # ---------------------------------------------------------------------------
@@ -1696,6 +1725,33 @@ async def research_ticker(
 # ---------------------------------------------------------------------------
 # Multi-Broker OMS — Trade Plans
 # ---------------------------------------------------------------------------
+
+@app.get("/api/trade-plans/performance-stats")
+async def trade_plan_performance_stats(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Return Auto vs. Manual TradePlan counts (for GhostPortfolio performance comparison).
+    Buckets: auto_trade=True vs False, grouped by status.
+    """
+    from backend.database import get_all_trade_plans
+    plans = get_all_trade_plans(current_user.tenant_id, limit=500)
+    auto_plans   = [p for p in plans if p.auto_trade]
+    manual_plans = [p for p in plans if not p.auto_trade]
+
+    def _bucket(plist):
+        return {
+            "total":     len(plist),
+            "active":    sum(1 for p in plist if p.status in ("pending", "active", "partial")),
+            "done":      sum(1 for p in plist if p.status == "done"),
+            "cancelled": sum(1 for p in plist if p.status == "cancelled"),
+        }
+
+    return {
+        "auto":   _bucket(auto_plans),
+        "manual": _bucket(manual_plans),
+    }
+
 
 @app.get("/api/trade-plans")
 async def list_trade_plans(

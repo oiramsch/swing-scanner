@@ -217,6 +217,41 @@ def notify_short_signal(ticker: str, rsi: float, crv: float):
     )
 
 
+def notify_auto_trade_success(
+    ticker: str,
+    direction: str,
+    qty: int,
+    price: float,
+):
+    """Push notification when an auto-trade is placed successfully."""
+    send_push(
+        title=f"🤖 Alpaca Paper: {direction.upper()} {ticker}",
+        message=f"{direction} {ticker} {qty} Stk @ ${price:.2f} automatisch eroeffnet",
+        priority="high",
+        tags="robot",
+    )
+
+
+def notify_auto_trade_error(ticker: str, error: str):
+    """Push notification when an auto-trade fails."""
+    send_push(
+        title=f"⚠️ Auto-Trade {ticker} fehlgeschlagen",
+        message=str(error)[:200],
+        priority="high",
+        tags="warning",
+    )
+
+
+def notify_auto_trade_summary(n_placed: int, total_risk: float):
+    """Push summary after the auto_paper_trade job completes."""
+    send_push(
+        title=f"📊 Auto-Trading: {n_placed} Trade(s) platziert",
+        message=f"Gesamt-Risiko: ${total_risk:.0f}",
+        priority="default",
+        tags="robot",
+    )
+
+
 def notify_market_update_critical(ticker: str, alert_msg: str, market_change: float):
     """🔴 Critical alert — immediate push for stop-loss proximity or major risk."""
     change_str = f"{market_change:+.1f}%" if market_change else ""

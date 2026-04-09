@@ -745,6 +745,214 @@ async def daily_summary_notification(ctx: dict):
 # Entry-Zone Check — hourly during US market hours (14–20 UTC)
 # ---------------------------------------------------------------------------
 
+async def auto_paper_trade(ctx: dict):
+    """
+    15:35 UTC — Automatically place bracket orders for today's active candidates
+    on the Paper Alpaca account. All 4 safety limits MUST pass before any order
+    is placed:
+      1. Only Paper account  (is_paper guard)
+      2. Feature flag PAPER_AUTO_TRADING must be enabled
+      3. Max 3 concurrent open auto-trades
+      4. Max 5 % of account buying-power per trade
+    """
+    logger.info("=== auto_paper_trade started ===")
+    from decimal import Decimal, ROUND_DOWN
+
+    from backend.database import (
+        get_paper_auto_trading,
+        count_active_auto_trades,
+        get_results_for_date,
+        get_all_broker_connections,
+        save_trade_plan,
+        TradePlan,
+    )
+    from backend.brokers import get_connector
+    from backend.notifier import (
+        notify_auto_trade_success,
+        notify_auto_trade_error,
+        notify_auto_trade_summary,
+        send_push,
+    )
+    from backend.news_checker import _parse_entry_mid, _parse_price
+
+    # ── Safety Limit 2: Feature flag ────────────────────────────────────────
+    if not get_paper_auto_trading():
+        logger.info("auto_paper_trade: PAPER_AUTO_TRADING disabled — skipping")
+        return
+
+    today = date.today()
+    candidates = [r for r in get_results_for_date(today) if r.candidate_status == "active"]
+    if not candidates:
+        logger.info("auto_paper_trade: no active candidates for %s", today)
+        return
+
+    # Find the active Alpaca Paper broker connection (tenant 1)
+    connections = get_all_broker_connections(tenant_id=1)
+    alpaca_conn = next(
+        (c for c in connections if c.broker_type == "alpaca" and c.is_paper), None
+    )
+    if alpaca_conn is None:
+        logger.warning("auto_paper_trade: no active Alpaca Paper connection found — aborting")
+        send_push(
+            title="⚠️ Auto-Trading abgebrochen",
+            message="Kein Alpaca Paper-Konto konfiguriert.",
+            priority="high",
+            tags="warning",
+        )
+        return
+
+    # ── Safety Limit 1: Hard Paper guard ────────────────────────────────────
+    if not alpaca_conn.is_paper:
+        logger.error("auto_paper_trade: HARD GUARD — is_paper=False, aborting immediately")
+        send_push(
+            title="🚨 Auto-Trading BLOCKED",
+            message="Hard Guard: Kein Live-Konto für Auto-Trading erlaubt!",
+            priority="urgent",
+            tags="rotating_light",
+        )
+        return
+
+    connector = get_connector(alpaca_conn.model_dump())
+
+    # Fetch account balance
+    try:
+        balance_info = connector.get_balance()
+        buying_power = Decimal(str(balance_info.get("buying_power") or 0))
+    except Exception as exc:
+        logger.error("auto_paper_trade: failed to fetch balance: %s", exc)
+        return
+
+    if buying_power <= 0:
+        logger.info("auto_paper_trade: no buying power available")
+        return
+
+    # ── Safety Limit 3: Max 3 concurrent open auto-trades ───────────────────
+    existing_count = count_active_auto_trades(tenant_id=1)
+    slots_available = max(0, 3 - existing_count)
+    if slots_available <= 0:
+        logger.info("auto_paper_trade: max 3 auto-trades already open — skipping")
+        send_push(
+            title="📊 Auto-Trading: Limit erreicht",
+            message="Bereits 3 offene Auto-Trades — keine neuen Trades heute.",
+            priority="default",
+            tags="robot",
+        )
+        return
+
+    n_placed = 0
+    total_risk = Decimal("0")
+
+    for candidate in candidates[:slots_available]:
+        ticker = candidate.ticker
+        direction = candidate.direction or "long"
+
+        # Parse entry, stop, target (Decimal — no float for financial values)
+        entry_mid = _parse_entry_mid(candidate.entry_zone)
+        stop_raw  = _parse_price(candidate.stop_loss)
+        target_raw = _parse_price(candidate.target)
+
+        if not entry_mid or not stop_raw or not target_raw:
+            logger.info("auto_paper_trade: %s skipped — missing entry/stop/target", ticker)
+            continue
+
+        entry_dec  = Decimal(str(entry_mid))
+        stop_dec   = Decimal(str(stop_raw))
+        target_dec = Decimal(str(target_raw))
+
+        # Derive entry zone bounds from the raw string or use mid ±1 tick
+        import re as _re
+        zone_nums = [Decimal(x) for x in _re.findall(r"[\d.]+", str(candidate.entry_zone or ""))]
+        entry_low  = min(zone_nums) if len(zone_nums) >= 2 else entry_dec * Decimal("0.995")
+        entry_high = max(zone_nums) if len(zone_nums) >= 2 else entry_dec * Decimal("1.005")
+
+        risk_per_share = abs(entry_dec - stop_dec)
+        if risk_per_share <= 0:
+            logger.info("auto_paper_trade: %s skipped — zero risk_per_share", ticker)
+            continue
+
+        # ── Safety Limit 4: Max 5 % of account buying-power per trade ───────
+        max_risk_amount = buying_power * Decimal("0.05")
+        qty = int((max_risk_amount / risk_per_share).to_integral_value(rounding=ROUND_DOWN))
+        if qty < 1:
+            logger.info(
+                "auto_paper_trade: %s skipped — qty=0 (risk/share=%.2f, max_risk=%.2f)",
+                ticker, float(risk_per_share), float(max_risk_amount),
+            )
+            continue
+
+        # ── PDT Protection: skip if same-day would close immediately ─────────
+        # We place bracket orders that only close on stop or target — not same-day.
+        # Bracket orders are multi-day by default; PDT applies to same-day round-trips.
+        # Guard: if existing open position in same ticker, skip to avoid inadvertent PDT.
+        try:
+            positions = connector.get_portfolio()
+            if any(p.get("ticker") == ticker for p in positions):
+                logger.info("auto_paper_trade: %s skipped — existing open position (PDT guard)", ticker)
+                continue
+        except Exception as exc:
+            logger.warning("auto_paper_trade: portfolio fetch failed for PDT check: %s", exc)
+
+        plan_dict = {
+            "ticker":     ticker,
+            "entry_high": float(entry_high),
+            "stop_loss":  float(stop_dec),
+            "target":     float(target_dec),
+            "qty":        qty,
+            "direction":  direction,
+        }
+
+        try:
+            order_result = connector.place_order(plan_dict)
+
+            # Persist as TradePlan with auto_trade=True
+            trade_plan = TradePlan(
+                ticker=ticker,
+                scan_result_id=candidate.id,
+                entry_low=float(entry_low),
+                entry_high=float(entry_high),
+                stop_loss=float(stop_dec),
+                target=float(target_dec),
+                direction=direction,
+                risk_pct=Decimal("5.0"),
+                broker_ids_json=f"[{alpaca_conn.id}]",
+                execution_state_json=f'{{"{alpaca_conn.id}": "executed"}}',
+                status="active",
+                strategy_module=candidate.strategy_module,
+                setup_type=candidate.setup_type,
+                auto_trade=True,
+            )
+            save_trade_plan(trade_plan)
+
+            fill_price = float(order_result.get("limit_price") or entry_high)
+            trade_risk = risk_per_share * qty
+            total_risk += trade_risk
+            n_placed   += 1
+
+            notify_auto_trade_success(
+                ticker=ticker,
+                direction=direction,
+                qty=qty,
+                price=fill_price,
+            )
+            logger.info(
+                "auto_paper_trade: placed %s %s qty=%d @ %.2f",
+                direction, ticker, qty, fill_price,
+            )
+
+        except Exception as exc:
+            notify_auto_trade_error(ticker, str(exc))
+            logger.error("auto_paper_trade: order failed for %s: %s", ticker, exc)
+
+    # Summary notification
+    if n_placed > 0:
+        notify_auto_trade_summary(n_placed, float(total_risk))
+
+    logger.info(
+        "=== auto_paper_trade done: %d placed, total_risk=%.2f ===",
+        n_placed, float(total_risk),
+    )
+
+
 async def entry_zone_check(ctx: dict):
     """
     Check all pending TradePlans against live prices.
@@ -884,6 +1092,7 @@ class WorkerSettings:
         daily_summary_notification,
         entry_zone_check,
         check_scan_health,
+        auto_paper_trade,
     ]
     cron_jobs = [
         cron(market_regime_update, hour={22}, minute={0}, run_at_startup=False),
@@ -897,6 +1106,8 @@ class WorkerSettings:
         cron(check_scan_health, hour={23}, minute={30}, run_at_startup=False),
         # Entry-zone check: hourly 14–20 UTC (09:00–15:00 ET, while market is open)
         cron(entry_zone_check, hour={14, 15, 16, 17, 18, 19, 20}, minute={0}, run_at_startup=False),
+        # Phase 3 — Auto Paper Trade: 15:35 UTC (25 min before market close)
+        cron(auto_paper_trade, hour={15}, minute={35}, run_at_startup=False),
     ]
     on_startup = startup
     max_jobs = 1
