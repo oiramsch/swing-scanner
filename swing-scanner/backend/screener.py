@@ -20,6 +20,7 @@ through the DataProvider interface.
 import asyncio
 import logging
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Callable, Optional
 
 import pandas as pd
@@ -60,6 +61,21 @@ async def fetch_ohlcv(ticker: str, days: int = 60):
 # ---------------------------------------------------------------------------
 # Indicator computation
 # ---------------------------------------------------------------------------
+
+def calculate_zscore(series_a: pd.Series, series_b: pd.Series, window: int = 20) -> Decimal:
+    """
+    Z-Score des Spread-Verhältnisses (ratio) über Rolling Window.
+    Gibt Decimal zurück — kein Float.
+    """
+    spread = series_a / series_b
+    mean = spread.rolling(window).mean()
+    std = spread.rolling(window).std()
+    zscore = (spread - mean) / std
+    last_val = zscore.iloc[-1]
+    if pd.isna(last_val):
+        return Decimal("0")
+    return Decimal(str(round(float(last_val), 6)))
+
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()

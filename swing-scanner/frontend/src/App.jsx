@@ -13,6 +13,7 @@ import DealCockpit from "./components/trading/DealCockpit.jsx";
 import ResearchTab from "./components/research/ResearchTab.jsx";
 import ChatTab from "./components/chat/ChatTab.jsx";
 import GhostPortfolioTab from "./components/ghost/GhostPortfolioTab.jsx";
+import PairsTab from "./components/PairsTab.jsx";
 
 // Restore token from localStorage on startup
 const storedToken = localStorage.getItem("auth_token");
@@ -28,6 +29,7 @@ const TABS = [
   { id: "history", label: "History" },
   { id: "performance", label: "Performance" },
   { id: "ghost", label: "👻 Ghost" },
+  { id: "pairs", label: "Pairs" },
   { id: "research", label: "Research" },
   { id: "chat", label: "AI Chat" },
   { id: "deals", label: "Deals" },
@@ -332,6 +334,7 @@ export default function App() {
         {activeTab === "history" && <HistoryTab />}
         {activeTab === "performance" && <PerformanceTab />}
         {activeTab === "ghost" && <GhostPortfolioTab />}
+        {activeTab === "pairs" && <PairsTab />}
         {activeTab === "research" && <ResearchTab />}
         {activeTab === "chat" && <ChatTab />}
         {activeTab === "deals" && <DealCockpit />}

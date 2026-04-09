@@ -2,11 +2,13 @@
 Unit tests for technical indicator calculations (backend/screener.py).
 Uses synthetic OHLCV DataFrames — no network calls.
 """
+from decimal import Decimal
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from backend.screener import compute_indicators
+from backend.screener import compute_indicators, calculate_zscore
 
 
 def _make_ohlcv(closes: list[float], volume: int = 1_000_000) -> pd.DataFrame:
@@ -94,3 +96,59 @@ def test_connors_rsi2():
         f"RSI-2 ({rsi2:.1f}) should be at least as overbought as RSI-14 ({rsi14:.1f}) "
         "after a sharp spike on top of a flat base"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Z-Score Berechnung
+# ---------------------------------------------------------------------------
+
+def _make_series(values: list[float]) -> pd.Series:
+    return pd.Series(values, dtype=float)
+
+
+def test_zscore_returns_decimal():
+    """calculate_zscore() muss Decimal zurückgeben — kein Float."""
+    a = _make_series([100.0 + i * 0.1 for i in range(30)])
+    b = _make_series([50.0  + i * 0.05 for i in range(30)])
+    result = calculate_zscore(a, b, window=20)
+    assert isinstance(result, Decimal), f"Expected Decimal, got {type(result)}"
+
+
+def test_zscore_neutral_series():
+    """Zwei identische Serien haben einen Z-Score nahe 0."""
+    vals = [100.0 + i * 0.5 for i in range(30)]
+    a = _make_series(vals)
+    b = _make_series(vals)
+    result = calculate_zscore(a, b, window=20)
+    # Ratio = 1.0 always → spread variance = 0 → Z = NaN → we return 0
+    assert result == Decimal("0"), f"Expected 0 for identical series, got {result}"
+
+
+def test_zscore_diverging_series():
+    """Wenn Serie A stark steigt und Serie B konstant bleibt, sollte Z-Score positiv sein."""
+    a = _make_series([100.0 + i * 2 for i in range(30)])  # stark steigend
+    b = _make_series([100.0] * 30)                         # konstant
+    result = calculate_zscore(a, b, window=20)
+    assert result > Decimal("0"), f"Expected positive Z-Score for rising A / flat B, got {result}"
+
+
+def test_zscore_signal_threshold():
+    """Ein extremer Spread soll |Z-Score| > 2.0 liefern."""
+    # Erste 25 Werte: A ≈ B (ratio=1.0). Letzte 5: A explodiert → starkes Signal.
+    # Rolling-window 20 bei letztem Wert: 15x1.0 + 2,4,6,8,10 → Z ≈ 2.9
+    flat  = [100.0] * 25
+    spike = [200.0, 400.0, 600.0, 800.0, 1000.0]
+    a = _make_series(flat + spike)
+    b = _make_series([100.0] * 30)
+    result = calculate_zscore(a, b, window=20)
+    assert abs(result) > Decimal("2.0"), (
+        f"Expected |Z-Score| > 2.0 for exploding spread, got {result}"
+    )
+
+
+def test_zscore_short_series_returns_zero():
+    """Zu kurze Serien (< window) sollen 0 zurückgeben, kein Crash."""
+    a = _make_series([100.0, 101.0, 102.0])
+    b = _make_series([50.0, 51.0, 52.0])
+    result = calculate_zscore(a, b, window=20)
+    assert result == Decimal("0"), f"Expected 0 for short series, got {result}"

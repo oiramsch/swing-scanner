@@ -504,6 +504,110 @@ async def portfolio_signal_check(ctx: dict):
         logger.error("Trigger check failed: %s", exc)
 
 
+async def daily_pair_scan(ctx: dict):
+    """
+    22:32 UTC — Pair Trading Z-Score Scan (Phase 4).
+
+    Berechnet den Z-Score für 4 markt-neutrale Pairs.
+    Generiert ein PairSignal wenn |Z-Score| > 2.0 und kein Signal für
+    dasselbe Pair heute bereits existiert.
+    """
+    logger.info("=== daily_pair_scan ===")
+    from decimal import Decimal
+    import asyncio
+
+    from backend.screener import calculate_zscore
+    from backend.providers import get_data_provider
+    from backend.database import (
+        PairSignal,
+        save_pair_signal,
+        pair_signal_exists_for_date,
+    )
+    from backend.notifier import send_push
+
+    PAIRS = [
+        {"long": "XLU", "short": "XLK", "name": "XLU/XLK"},
+        {"long": "XLV", "short": "XLY", "name": "XLV/XLY"},
+        {"long": "GLD", "short": "SPY", "name": "GLD/SPY"},
+        {"long": "TLT", "short": "QQQ", "name": "TLT/QQQ"},
+    ]
+
+    provider = get_data_provider()
+    scan_date = date.today()
+    signals_generated = 0
+
+    for pair in PAIRS:
+        try:
+            df_long  = await provider.get_daily_bars(pair["long"],  days=30)
+            df_short = await provider.get_daily_bars(pair["short"], days=30)
+
+            if df_long is None or df_short is None:
+                logger.warning("daily_pair_scan: no data for %s", pair["name"])
+                continue
+            if len(df_long) < 22 or len(df_short) < 22:
+                logger.warning("daily_pair_scan: insufficient bars for %s", pair["name"])
+                continue
+
+            # Align on common index
+            long_close  = df_long["Close"]
+            short_close = df_short["Close"]
+            aligned = long_close.align(short_close, join="inner")
+            long_close, short_close = aligned
+
+            if len(long_close) < 21:
+                logger.warning("daily_pair_scan: too few aligned bars for %s", pair["name"])
+                continue
+
+            zscore = calculate_zscore(long_close, short_close, window=20)
+            logger.info("daily_pair_scan: %s Z-Score = %s", pair["name"], zscore)
+
+            # Signal nur wenn |Z-Score| > 2.0
+            if abs(zscore) <= Decimal("2.0"):
+                continue
+
+            # Kein doppeltes Signal pro Tag
+            if pair_signal_exists_for_date(pair["name"], scan_date):
+                logger.info("daily_pair_scan: signal already exists for %s today", pair["name"])
+                continue
+
+            direction = "long_spread" if zscore > 0 else "short_spread"
+
+            signal = PairSignal(
+                tenant_id=1,
+                scan_date=scan_date,
+                pair_name=pair["name"],
+                long_ticker=pair["long"],
+                short_ticker=pair["short"],
+                zscore=float(zscore),
+                direction=direction,
+                entry_zscore=float(zscore),
+                exit_zscore_target=0.0,
+                status="active",
+            )
+            save_pair_signal(signal)
+            signals_generated += 1
+
+            # ntfy Push
+            await asyncio.to_thread(
+                send_push,
+                title=f"📊 Pair-Signal: {pair['name']}",
+                message=(
+                    f"Long {pair['long']} / Short {pair['short']}\n"
+                    f"Z-Score: {zscore:.2f} | Richtung: {direction}"
+                ),
+                priority="high",
+                tags="chart_with_upwards_trend",
+            )
+            logger.info("daily_pair_scan: signal saved for %s (Z=%.2f, dir=%s)",
+                        pair["name"], float(zscore), direction)
+
+        except Exception as exc:
+            logger.error("daily_pair_scan: error for %s: %s", pair["name"], exc)
+
+    logger.info("=== daily_pair_scan done: %d new signals ===", signals_generated)
+    return {"signals_generated": signals_generated}
+
+
 async def watchlist_check(ctx: dict):
     """22:35 UTC — Check watchlist alert conditions."""
     logger.info("=== watchlist_check ===")
@@ -1086,6 +1190,7 @@ class WorkerSettings:
         market_regime_update,
         ghost_portfolio_resolve,
         portfolio_signal_check,
+        daily_pair_scan,
         watchlist_check,
         performance_update,
         market_update_auto,
@@ -1099,6 +1204,8 @@ class WorkerSettings:
         cron(daily_scan, hour={_hour}, minute={_minute}, run_at_startup=False),
         cron(ghost_portfolio_resolve, hour={22}, minute={20}, run_at_startup=False),
         cron(portfolio_signal_check, hour={22}, minute={30}, run_at_startup=False),
+        # Phase 4 — Pair Trading Z-Score Scan: 22:32 UTC (nach portfolio_signal_check)
+        cron(daily_pair_scan, hour={22}, minute={32}, run_at_startup=False),
         cron(watchlist_check, hour={22}, minute={35}, run_at_startup=False),
         cron(performance_update, hour={22}, minute={45}, run_at_startup=False),
         cron(market_update_auto, hour={22}, minute={50}, run_at_startup=False),
