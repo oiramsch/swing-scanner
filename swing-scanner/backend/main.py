@@ -543,9 +543,13 @@ async def _run_scan_bg():
 
 
 @app.post("/api/scan/trigger")
-async def trigger_scan(background_tasks: BackgroundTasks):
+async def trigger_scan(background_tasks: BackgroundTasks, force: bool = False):
     if _scan_running:
         return {"status": "already_running"}
+    if force:
+        # force=true: clear today's results first so the duplicate-run guard doesn't block
+        from backend.database import clear_results_for_date, resolve_scan_date
+        clear_results_for_date(resolve_scan_date())
     background_tasks.add_task(_run_scan_bg)
     return {"status": "started"}
 
