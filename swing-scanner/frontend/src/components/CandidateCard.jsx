@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
+
+const CandidateChart = lazy(() => import("./chart/CandidateChart.jsx"));
 
 const SETUP_BADGE = {
   breakout: "bg-green-500/20 text-green-400 border border-green-500/30",
@@ -33,6 +35,7 @@ function ConfidenceBar({ score }) {
 
 export default function CandidateCard({ candidate }) {
   const [imgError, setImgError] = useState(false);
+  const [chartOpen, setChartOpen] = useState(false);
   const {
     ticker,
     setup_type,
@@ -49,7 +52,33 @@ export default function CandidateCard({ candidate }) {
   const badgeClass = SETUP_BADGE[setup_type] ?? SETUP_BADGE.none;
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden hover:border-gray-600 transition-colors flex flex-col">
+    <>
+      {/* Chart Modal */}
+      {chartOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={e => { if (e.target === e.currentTarget) setChartOpen(false); }}
+        >
+          <div className="w-full max-w-3xl rounded-xl overflow-hidden shadow-2xl">
+            <Suspense fallback={
+              <div className="bg-gray-950 flex items-center justify-center" style={{ height: 460 }}>
+                <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            }>
+              <CandidateChart
+                symbol={ticker}
+                scanResult={candidate}
+                onClose={() => setChartOpen(false)}
+              />
+            </Suspense>
+          </div>
+        </div>
+      )}
+
+    <div
+      className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden hover:border-gray-600 transition-colors flex flex-col cursor-pointer"
+      onClick={() => setChartOpen(true)}
+    >
       {/* Chart thumbnail */}
       <div className="relative bg-gray-950 aspect-square">
         {!imgError ? (
@@ -136,5 +165,6 @@ export default function CandidateCard({ candidate }) {
         )}
       </div>
     </div>
+    </>
   );
 }
