@@ -2,6 +2,7 @@ import { useState } from "react";
 import axios from "axios";
 import DeepAnalysisModal from "./DeepAnalysisModal.jsx";
 import PlanModal from "../trading/PlanModal.jsx";
+import CandidateChart from "../chart/CandidateChart.jsx";
 
 const SETUP_COLORS = {
   breakout: "bg-green-500/20 text-green-400 border-green-500/30",
@@ -133,6 +134,7 @@ export default function CandidateCard({ candidate: c }) {
   const [showPlan, setShowPlan] = useState(false);
   const [showHeadlines, setShowHeadlines] = useState(false);
   const [showChart, setShowChart] = useState(false);
+  const [showInteractiveChart, setShowInteractiveChart] = useState(false);
   const [showDimmed, setShowDimmed] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [addedToWatchlist, setAddedToWatchlist] = useState(false);
@@ -396,6 +398,13 @@ export default function CandidateCard({ candidate: c }) {
 
           {/* Action buttons */}
           <div className="flex gap-1.5 mt-auto pt-1 flex-wrap">
+            <button
+              onClick={() => setShowInteractiveChart(true)}
+              className="text-xs py-1.5 px-2 bg-gray-800/60 hover:bg-gray-700 text-gray-300 rounded border border-gray-700/50 transition"
+              title="Interaktiver Chart"
+            >
+              📈
+            </button>
             {c.has_deep_analysis && (
               <button
                 onClick={() => setShowDeep(true)}
@@ -437,6 +446,13 @@ export default function CandidateCard({ candidate: c }) {
         </div>
       </div>
 
+      {showInteractiveChart && (
+        <CandidateChart
+          symbol={c.ticker}
+          scanResult={c}
+          onClose={() => setShowInteractiveChart(false)}
+        />
+      )}
       {showDeep && (
         <DeepAnalysisModal candidate={c} onClose={() => setShowDeep(false)} />
       )}
