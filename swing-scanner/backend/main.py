@@ -2420,3 +2420,37 @@ Beantworte Fragen präzise und faktenbasiert. Wenn du unsicher bist, sage es. Gi
         error_msg = str(exc)
         set_ai_error(error_msg)
         raise HTTPException(status_code=503, detail=f"Claude API Fehler: {error_msg}")
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Pair Trading / Markt-neutral Z-Score
+# ---------------------------------------------------------------------------
+
+@app.get("/api/pairs")
+async def get_pairs(current_user: AuthenticatedUser = Depends(get_current_user)):
+    """Aktuelle (aktive) Pair-Trading-Signale."""
+    from backend.database import get_active_pair_signals
+    signals = get_active_pair_signals(tenant_id=1)
+    return [s.model_dump() for s in signals]
+
+
+@app.get("/api/pairs/history")
+async def get_pairs_history(
+    limit: int = 100,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Historische Pair-Trading-Signale."""
+    from backend.database import get_pair_signal_history
+    signals = get_pair_signal_history(tenant_id=1, limit=limit)
+    return [s.model_dump() for s in signals]
+
+
+@app.post("/api/pairs/scan")
+async def trigger_pair_scan(
+    background_tasks: BackgroundTasks,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Manueller Trigger für den Pair-Trading-Scan."""
+    from backend.scheduler import daily_pair_scan
+    background_tasks.add_task(daily_pair_scan, {})
+    return {"status": "started"}

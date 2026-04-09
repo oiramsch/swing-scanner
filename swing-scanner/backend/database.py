@@ -972,6 +972,33 @@ class TradePlan(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Phase 4 — Pair Trading / Markt-neutral Z-Score
+# ---------------------------------------------------------------------------
+
+class PairSignal(SQLModel, table=True):
+    """
+    Ein Pair-Trading-Signal basierend auf Z-Score-Analyse.
+
+    status lifecycle:
+      active   — Signal aktiv, Position noch nicht geschlossen
+      closed   — Position manuell oder automatisch geschlossen
+      expired  — Signal älter als 30 Tage ohne Auflösung
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: int = Field(default=1, index=True)
+    scan_date: date = Field(index=True)
+    pair_name: str                              # e.g. "XLU/XLK"
+    long_ticker: str
+    short_ticker: str
+    zscore: float                               # als float gespeichert, intern Decimal gerechnet
+    direction: str                              # "long_spread" | "short_spread"
+    entry_zscore: float                         # Z-Score bei Signal-Generierung
+    exit_zscore_target: float = 0.0            # Ziel: Rückkehr zur Mitte
+    status: str = "active"                      # active | closed | expired
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # ScanResult CRUD
 # ---------------------------------------------------------------------------
 
@@ -2187,3 +2214,46 @@ def mark_trigger_reached(scan_result_id: int) -> None:
             sr.trigger_reached = True
             session.add(sr)
             session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Pair Trading CRUD
+# ---------------------------------------------------------------------------
+
+def save_pair_signal(signal: PairSignal) -> PairSignal:
+    with Session(get_engine()) as session:
+        session.add(signal)
+        session.commit()
+        session.refresh(signal)
+        return signal
+
+
+def get_active_pair_signals(tenant_id: int = 1) -> list[PairSignal]:
+    with Session(get_engine()) as session:
+        return list(session.exec(
+            select(PairSignal)
+            .where(PairSignal.tenant_id == tenant_id, PairSignal.status == "active")
+            .order_by(PairSignal.created_at.desc())
+        ).all())
+
+
+def get_pair_signal_history(tenant_id: int = 1, limit: int = 100) -> list[PairSignal]:
+    with Session(get_engine()) as session:
+        return list(session.exec(
+            select(PairSignal)
+            .where(PairSignal.tenant_id == tenant_id)
+            .order_by(PairSignal.created_at.desc())
+            .limit(limit)
+        ).all())
+
+
+def pair_signal_exists_for_date(pair_name: str, scan_date: date, tenant_id: int = 1) -> bool:
+    """Verhindert doppelte Signale für dasselbe Pair am selben Tag."""
+    with Session(get_engine()) as session:
+        return session.exec(
+            select(PairSignal).where(
+                PairSignal.pair_name == pair_name,
+                PairSignal.scan_date == scan_date,
+                PairSignal.tenant_id == tenant_id,
+            )
+        ).first() is not None
