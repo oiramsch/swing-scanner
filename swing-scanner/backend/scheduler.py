@@ -22,6 +22,7 @@ from backend.database import (
     clear_results_for_date,
     get_archived_tickers_for_date,
     get_last_scan_datetime,
+    get_latest_funnel,
     get_pending_predictions,
     get_watchlist_pending,
     init_db,
@@ -232,6 +233,27 @@ async def daily_scan(ctx: dict, progress_cb: Optional[Callable] = None):
     logger.info("=== daily_scan started ===")
     scan_date = resolve_scan_date()
     logger.info("scan_date resolved to %s", scan_date)
+
+    # Cross-process duplicate-run guard: if a scan already ran for this scan_date
+    # within the last 30 minutes AND saved results, abort to prevent duplicates.
+    # This protects against concurrent ARQ-cron + manual-trigger runs.
+    latest = get_latest_funnel()
+    if latest and str(latest.scan_date) == str(scan_date):
+        ran_at = latest.ran_at
+        if ran_at.tzinfo is None:
+            ran_at = ran_at.replace(tzinfo=timezone.utc)
+        age_secs = (datetime.now(timezone.utc) - ran_at).total_seconds()
+        if age_secs < 1800:  # 30-minute window
+            from backend.database import get_results_for_date as _grf
+            existing = _grf(scan_date)
+            if existing:
+                logger.warning(
+                    "daily_scan SKIPPED — scan for %s already ran %.0f s ago (%d results). "
+                    "To force a re-run, call clear_results_for_date() first.",
+                    scan_date, age_secs, len(existing),
+                )
+                return {"status": "skipped", "reason": "already_ran", "count": len(existing)}
+
     clear_results_for_date(scan_date)
     # Always ensure regime is fresh — never scan with stale/missing data
     regime = await ensure_regime_current(max_age_hours=12)
