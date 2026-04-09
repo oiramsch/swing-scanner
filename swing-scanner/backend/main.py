@@ -2424,3 +2424,79 @@ Beantworte Fragen präzise und faktenbasiert. Wenn du unsicher bist, sage es. Gi
         error_msg = str(exc)
         set_ai_error(error_msg)
         raise HTTPException(status_code=503, detail=f"Claude API Fehler: {error_msg}")
+
+
+# ---------------------------------------------------------------------------
+# Chart Data — OHLCV + SMA50/200 via yfinance
+# ---------------------------------------------------------------------------
+
+_VALID_PERIODS = {"1mo", "3mo", "6mo", "1y"}
+
+
+@app.get("/api/chart/{symbol}")
+async def get_chart_data(
+    symbol: str,
+    period: str = "3mo",
+    interval: str = "1d",
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Return OHLCV bars + SMA50/200 for the given symbol via yfinance.
+    All price values are rounded via Decimal to avoid float artefacts.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+    import pandas as pd
+    import yfinance as yf
+
+    if period not in _VALID_PERIODS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid period '{period}'. Allowed: {sorted(_VALID_PERIODS)}",
+        )
+
+    try:
+        ticker = yf.Ticker(symbol.upper())
+        hist = ticker.history(period=period, interval=interval)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"yfinance error: {exc}")
+
+    if hist is None or hist.empty:
+        raise HTTPException(status_code=404, detail=f"No data found for symbol '{symbol}'")
+
+    two_dp = Decimal("0.01")
+
+    def to_dec(val: float) -> float:
+        return float(Decimal(str(val)).quantize(two_dp, rounding=ROUND_HALF_UP))
+
+    bars = []
+    for ts, row in hist.iterrows():
+        bars.append(
+            {
+                "time": ts.strftime("%Y-%m-%d"),
+                "open": to_dec(row["Open"]),
+                "high": to_dec(row["High"]),
+                "low": to_dec(row["Low"]),
+                "close": to_dec(row["Close"]),
+                "volume": int(row["Volume"]),
+            }
+        )
+
+    close_series = hist["Close"]
+    sma50_raw = close_series.rolling(50).mean()
+    sma200_raw = close_series.rolling(200).mean()
+
+    def _series_to_list(series: "pd.Series") -> list:
+        result = []
+        for ts, val in series.items():
+            if not pd.isna(val):
+                result.append({"time": ts.strftime("%Y-%m-%d"), "value": to_dec(val)})
+        return result
+
+    return {
+        "symbol": symbol.upper(),
+        "bars": bars,
+        "indicators": {
+            "sma50": _series_to_list(sma50_raw),
+            "sma200": _series_to_list(sma200_raw),
+        },
+    }
