@@ -193,6 +193,10 @@ async def on_startup():
     CHARTS_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("DB initialized, charts dir ready.")
 
+    # Repair existing TIMEOUT entries without exit/entry prices (idempotent, background).
+    from backend.scheduler import repair_timeout_entries
+    asyncio.create_task(repair_timeout_entries())
+
     # Load persisted settings from DB — these override .env defaults
     # so they survive container rebuilds without needing .env changes.
     from backend.database import get_ntfy_topic, get_anthropic_api_key
@@ -864,7 +868,7 @@ async def get_ghost_positions(
 
         exit_price: Optional[float] = None
         exit_date: Optional[str] = None
-        if p.status in ("WIN", "LOSS"):
+        if p.status in ("WIN", "LOSS", "TIMEOUT"):
             exit_price = p.resolved_price
             exit_date = str(p.resolved_at.date()) if p.resolved_at else None
 

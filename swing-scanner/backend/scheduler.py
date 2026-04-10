@@ -650,13 +650,50 @@ async def ghost_portfolio_resolve(ctx: dict):
             continue
 
         # Rule 1: TIMEOUT
+        # TIMEOUT != LOSS — TIMEOUT ist eigene Klasse für ML-Training.
+        # Wir erfassen den Schlusskurs des Timeout-Tags als Exit-Preis.
         if days_open >= 14:
+            timeout_price: Optional[float] = None
+            pnl_pct_val: Optional[float] = None
+            try:
+                import yfinance as _yf
+                from decimal import Decimal as _D
+                _end = today + timedelta(days=1)
+                _hist = await asyncio.to_thread(
+                    lambda: _yf.Ticker(pred.ticker).history(
+                        start=str(today), end=str(_end)
+                    )
+                )
+                if _hist.empty:
+                    # Fallback: letzter verfügbarer Kurs (Wochenende/Feiertag)
+                    _start = today - timedelta(days=3)
+                    _hist = await asyncio.to_thread(
+                        lambda: _yf.Ticker(pred.ticker).history(
+                            start=str(_start), end=str(_end)
+                        )
+                    )
+                if not _hist.empty:
+                    timeout_price = float(_hist["Close"].iloc[-1])
+                    if pred.entry_price and timeout_price:
+                        ep = _D(str(pred.entry_price))
+                        cp = _D(str(timeout_price))
+                        pnl_pct_val = float((cp - ep) / ep * 100)
+            except Exception as _exc:
+                logger.warning("TIMEOUT price fetch failed for %s: %s", pred.ticker, _exc)
+
             resolve_prediction(
                 pred.id, "TIMEOUT",
+                resolved_price=timeout_price,
+                pnl_pct=pnl_pct_val,
                 notes=f"expired after {days_open} days without hitting stop or target",
             )
             resolved += 1
-            logger.info("Ghost [TIMEOUT] %s (day %d)", pred.ticker, days_open)
+            logger.info(
+                "Ghost [TIMEOUT] %s (day %d) exit=%.2f pnl=%.1f%%",
+                pred.ticker, days_open,
+                timeout_price or 0.0,
+                pnl_pct_val or 0.0,
+            )
             continue
 
         # Rules 2+3: need EOD data — only if stop or target is set
@@ -719,6 +756,96 @@ async def ghost_portfolio_resolve(ctx: dict):
     logger.info(
         "Ghost Portfolio resolve: %d resolved, %d skipped (of %d pending)",
         resolved, skipped, len(pending),
+    )
+
+
+async def repair_timeout_entries() -> None:
+    """
+    Idempotent one-time repair for existing TIMEOUT predictions that are missing
+    resolved_price (exit price) or entry_price (Bear RS NULL-entry-zone bug).
+
+    Safe to run multiple times — only patches NULL fields.
+    Called at startup as a background task.
+    """
+    import yfinance as _yf
+    from decimal import Decimal as _D
+    from backend.database import PredictionArchive, get_engine
+    from sqlmodel import Session, select
+
+    logger.info("repair_timeout_entries: starting …")
+
+    with Session(get_engine()) as session:
+        stmt = select(PredictionArchive).where(PredictionArchive.status == "TIMEOUT")
+        timeouts = list(session.exec(stmt).all())
+
+    if not timeouts:
+        logger.info("repair_timeout_entries: nothing to repair")
+        return
+
+    to_fix_exit  = [p for p in timeouts if p.resolved_price is None]
+    to_fix_entry = [p for p in timeouts if p.entry_price is None]
+
+    logger.info(
+        "repair_timeout_entries: %d missing exit price, %d missing entry price",
+        len(to_fix_exit), len(to_fix_entry),
+    )
+
+    def _close_for_date(ticker: str, for_date: date) -> Optional[float]:
+        """Synchronous yfinance fetch — runs in a thread via asyncio.to_thread."""
+        try:
+            end = for_date + timedelta(days=1)
+            hist = _yf.Ticker(ticker).history(start=str(for_date), end=str(end))
+            if hist.empty:
+                # Weekend / holiday fallback: take last close within ±3 days
+                start = for_date - timedelta(days=3)
+                hist = _yf.Ticker(ticker).history(start=str(start), end=str(end))
+            return float(hist["Close"].iloc[-1]) if not hist.empty else None
+        except Exception as exc:
+            logger.warning("repair yfinance %s on %s: %s", ticker, for_date, exc)
+            return None
+
+    patched_exit  = 0
+    patched_entry = 0
+
+    with Session(get_engine()) as session:
+        # Fix 1 — missing exit prices
+        for p in to_fix_exit:
+            timeout_date = p.resolved_at.date() if p.resolved_at else (p.scan_date + timedelta(days=14))
+            close = await asyncio.to_thread(_close_for_date, p.ticker, timeout_date)
+            if close is None:
+                continue
+            pred = session.get(PredictionArchive, p.id)
+            if not pred:
+                continue
+            pred.resolved_price = close
+            if pred.entry_price:
+                ep = _D(str(pred.entry_price))
+                cp = _D(str(close))
+                pred.pnl_pct = float((cp - ep) / ep * 100)
+            session.add(pred)
+            patched_exit += 1
+
+        # Fix 2 — missing entry prices (Bear RS NULL-entry-zone bug 26.03.)
+        for p in to_fix_entry:
+            close = await asyncio.to_thread(_close_for_date, p.ticker, p.scan_date)
+            if close is None:
+                continue
+            pred = session.get(PredictionArchive, p.id)
+            if not pred:
+                continue
+            pred.entry_price = close
+            if pred.resolved_price:
+                ep = _D(str(close))
+                cp = _D(str(pred.resolved_price))
+                pred.pnl_pct = float((cp - ep) / ep * 100)
+            session.add(pred)
+            patched_entry += 1
+
+        session.commit()
+
+    logger.info(
+        "repair_timeout_entries: patched %d exit prices, %d entry prices",
+        patched_exit, patched_entry,
     )
 
 

@@ -323,7 +323,9 @@ function PositionsTable({ stats }) {
 
                   {/* Entry price */}
                   <td className="px-3 py-2.5 text-gray-300 whitespace-nowrap">
-                    {item.entry_price != null ? `$${fmt(item.entry_price)}` : "—"}
+                    {item.entry_price != null
+                      ? `$${fmt(item.entry_price)}`
+                      : <span className="text-amber-500/70 text-[10px] font-medium">Datenlücke</span>}
                   </td>
 
                   {/* Current price */}
@@ -366,7 +368,7 @@ function PositionsTable({ stats }) {
                         )}
                       </div>
                     )}
-                    {item.status in { WIN: 1, LOSS: 1 } && (
+                    {item.status in { WIN: 1, LOSS: 1, TIMEOUT: 1 } && (
                       <div className="flex flex-col gap-0.5 text-[10px]">
                         {item.exit_price != null && (
                           <span className="text-gray-400">Exit ${fmt(item.exit_price)}</span>
@@ -486,7 +488,9 @@ export default function GhostPortfolioTab() {
     );
   }
 
-  const decided = (stats.wins ?? 0) + (stats.losses ?? 0);
+  // TIMEOUT != LOSS — TIMEOUT ist eigene ML-Klasse.
+  // Für ML-Readiness zählen WIN + LOSS + TIMEOUT als entschiedene Predictions.
+  const decided    = stats.decided_ml ?? ((stats.wins ?? 0) + (stats.losses ?? 0) + (stats.timeouts ?? 0));
   const mlProgress = Math.min(Math.round(decided / ML_THRESHOLD * 100), 100);
   const dataReady  = decided >= MIN_DECIDED;
 
@@ -508,7 +512,7 @@ export default function GhostPortfolioTab() {
         <StatCard
           label="Win-Rate"
           value={stats.win_rate_pct != null ? `${stats.win_rate_pct}%` : "—"}
-          sub={`${decided} entschieden`}
+          sub={`${(stats.wins ?? 0) + (stats.losses ?? 0)} WIN+LOSS`}
           color={stats.win_rate_pct >= 60 ? "text-green-400" : stats.win_rate_pct >= 45 ? "text-yellow-400" : "text-red-400"}
         />
         <StatCard label="Wins" value={stats.wins} color="text-green-400" />
@@ -520,16 +524,27 @@ export default function GhostPortfolioTab() {
         />
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard label="Gesamt" value={stats.total} />
         <StatCard label="Pending" value={stats.pending} color="text-gray-400" />
         <StatCard
           label="Timeout-Rate"
-          value={stats.timeouts > 0 && decided + stats.timeouts > 0
-            ? `${Math.round(stats.timeouts / (decided + stats.timeouts) * 100)}%`
+          value={stats.timeouts > 0 && decided > 0
+            ? `${Math.round(stats.timeouts / decided * 100)}%`
             : "—"}
           sub={`${stats.timeouts} Timeouts`}
           color="text-gray-500"
+        />
+        <StatCard
+          label="Ø P&L bei TIMEOUT"
+          value={stats.avg_pnl_timeout != null
+            ? `${stats.avg_pnl_timeout > 0 ? "+" : ""}${Number(stats.avg_pnl_timeout).toFixed(1)}%`
+            : "—"}
+          sub="Kursveränderung nach 14d"
+          color={
+            stats.avg_pnl_timeout == null ? "text-gray-500" :
+            stats.avg_pnl_timeout >= 0 ? "text-green-400" : "text-red-400"
+          }
         />
       </div>
 
@@ -602,6 +617,7 @@ export default function GhostPortfolioTab() {
           />
         </div>
         <div className="text-[10px] text-gray-600">{stats.note}</div>
+        <div className="text-[10px] text-gray-700">WIN + LOSS + TIMEOUT zählen als entschiedene Labels</div>
       </div>
 
       {/* Auto vs Manual Trade Comparison */}

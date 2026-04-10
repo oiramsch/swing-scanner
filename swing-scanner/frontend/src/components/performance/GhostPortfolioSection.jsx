@@ -168,7 +168,9 @@ export default function GhostPortfolioSection() {
   );
 
   const noData = !stats || stats.total === 0;
-  const decided = (stats?.wins ?? 0) + (stats?.losses ?? 0);
+  // TIMEOUT != LOSS — TIMEOUT ist eigene ML-Klasse.
+  // Für ML-Readiness: WIN + LOSS + TIMEOUT alle als entschieden zählen.
+  const decided = stats?.decided_ml ?? ((stats?.wins ?? 0) + (stats?.losses ?? 0) + (stats?.timeouts ?? 0));
 
   // Bar chart: overall distribution
   const distData = noData ? [] : [
@@ -252,6 +254,7 @@ export default function GhostPortfolioSection() {
               />
             </div>
             <p className="text-gray-600 text-xs mt-1">{stats.note}</p>
+            <p className="text-gray-700 text-[10px] mt-0.5">WIN + LOSS + TIMEOUT zählen als entschiedene Labels</p>
           </div>
 
           {/* Chart + Regime/Module breakdown side by side on wider screens */}
