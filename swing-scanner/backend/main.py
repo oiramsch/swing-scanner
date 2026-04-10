@@ -782,6 +782,7 @@ async def get_ghost_positions(
     status: Optional[str] = None,
     module: Optional[str] = None,
     regime: Optional[str] = None,
+    candidate_status: Optional[str] = None,
     page: int = 1,
     sort_by: str = "scan_date",
     sort_dir: str = "desc",
@@ -807,6 +808,8 @@ async def get_ghost_positions(
                 q = q.where(PredictionArchive.strategy_module == module)
             if regime:
                 q = q.where(PredictionArchive.regime == regime)
+            if candidate_status:
+                q = q.where(PredictionArchive.candidate_status == candidate_status)
             if date_from:
                 q = q.where(PredictionArchive.scan_date >= date.fromisoformat(date_from))
             if date_to:
@@ -878,7 +881,10 @@ async def get_ghost_positions(
             "module": p.strategy_module,
             "regime": p.regime,
             "scan_date": str(p.scan_date),
+            "candidate_status": p.candidate_status,
             "entry_price": p.entry_price,
+            "entry_low": p.entry_low,
+            "entry_high": p.entry_high,
             "current_price": current_price,
             "change_pct": change_pct,
             "change_abs": change_abs,

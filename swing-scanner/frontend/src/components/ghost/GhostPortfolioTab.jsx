@@ -96,6 +96,53 @@ function fmt(val, decimals = 2) {
   return Number(val).toFixed(decimals);
 }
 
+const DATA_GAP_TOOLTIP = "Datenlücke — Entry-Zone wurde nicht berechnet (Bear RS Bug 26.03.)";
+const SILENT_TOOLTIP   = "Dieser Kandidat wurde vom Scanner erkannt aber nicht im Dashboard angezeigt (kein vollständiges Setup zum Scan-Zeitpunkt)";
+
+function NullCell() {
+  return (
+    <span title={DATA_GAP_TOOLTIP} className="text-gray-600 cursor-help">—</span>
+  );
+}
+
+function EntryZoneCell({ low, high }) {
+  if (low == null && high == null) return <NullCell />;
+  if (low != null && high != null && Math.abs(low - high) > 0.001) {
+    return <span className="text-gray-300 whitespace-nowrap">${fmt(low)}–${fmt(high)}</span>;
+  }
+  return <span className="text-gray-300 whitespace-nowrap">${fmt(low ?? high)}</span>;
+}
+
+function PriceCell({ value }) {
+  if (value == null) return <NullCell />;
+  return <span className="text-gray-300 whitespace-nowrap">${fmt(value)}</span>;
+}
+
+function CrvCell({ crv, entryLow, stopLoss, targetPrice }) {
+  // Use stored CRV if available, otherwise compute from entry_low
+  let val = crv;
+  if (val == null && entryLow != null && stopLoss != null && targetPrice != null) {
+    const risk = entryLow - stopLoss;
+    if (risk > 0) {
+      val = (targetPrice - entryLow) / risk;
+    }
+  }
+  if (val == null) return <NullCell />;
+  const color = val >= 2 ? "text-green-400" : val >= 1.5 ? "text-yellow-400" : "text-red-400/80";
+  return <span className={`font-semibold whitespace-nowrap ${color}`}>{fmt(val, 1)}x</span>;
+}
+
+function SilentBadge() {
+  return (
+    <span
+      title={SILENT_TOOLTIP}
+      className="ml-1 px-1 py-0.5 rounded text-[10px] font-semibold bg-gray-700 text-gray-400 border border-gray-600 cursor-help"
+    >
+      Nicht angezeigt
+    </span>
+  );
+}
+
 function PositionsTable({ stats }) {
   const [items,      setItems]      = useState([]);
   const [total,      setTotal]      = useState(0);
@@ -103,11 +150,12 @@ function PositionsTable({ stats }) {
   const [loading,    setLoading]    = useState(true);
 
   // Filters
-  const [filterStatus,   setFilterStatus]   = useState("");
-  const [filterModule,   setFilterModule]   = useState("");
-  const [filterRegime,   setFilterRegime]   = useState("");
-  const [filterDateFrom, setFilterDateFrom] = useState("");
-  const [filterDateTo,   setFilterDateTo]   = useState("");
+  const [filterStatus,          setFilterStatus]          = useState("");
+  const [filterModule,          setFilterModule]          = useState("");
+  const [filterRegime,          setFilterRegime]          = useState("");
+  const [filterDateFrom,        setFilterDateFrom]        = useState("");
+  const [filterDateTo,          setFilterDateTo]          = useState("");
+  const [filterCandidateStatus, setFilterCandidateStatus] = useState("");
 
   // Sorting / Pagination
   const [sortBy,  setSortBy]  = useState("scan_date");
@@ -121,11 +169,12 @@ function PositionsTable({ stats }) {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page, sort_by: sortBy, sort_dir: sortDir });
-      if (filterStatus)   params.set("status",    filterStatus);
-      if (filterModule)   params.set("module",    filterModule);
-      if (filterRegime)   params.set("regime",    filterRegime);
-      if (filterDateFrom) params.set("date_from", filterDateFrom);
-      if (filterDateTo)   params.set("date_to",   filterDateTo);
+      if (filterStatus)          params.set("status",           filterStatus);
+      if (filterModule)          params.set("module",           filterModule);
+      if (filterRegime)          params.set("regime",           filterRegime);
+      if (filterCandidateStatus) params.set("candidate_status", filterCandidateStatus);
+      if (filterDateFrom)        params.set("date_from",        filterDateFrom);
+      if (filterDateTo)          params.set("date_to",          filterDateTo);
 
       const res = await axios.get(`/api/ghost-portfolio/positions?${params}`);
       setItems(res.data.items ?? []);
@@ -135,7 +184,7 @@ function PositionsTable({ stats }) {
       console.error(e);
     }
     setLoading(false);
-  }, [page, sortBy, sortDir, filterStatus, filterModule, filterRegime, filterDateFrom, filterDateTo]);
+  }, [page, sortBy, sortDir, filterStatus, filterModule, filterRegime, filterCandidateStatus, filterDateFrom, filterDateTo]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -153,10 +202,13 @@ function PositionsTable({ stats }) {
     setFilterStatus("");
     setFilterModule("");
     setFilterRegime("");
+    setFilterCandidateStatus("");
     setFilterDateFrom("");
     setFilterDateTo("");
     setPage(1);
   }
+
+  const hasActiveFilter = filterStatus || filterModule || filterRegime || filterCandidateStatus || filterDateFrom || filterDateTo;
 
   function SortIcon({ col }) {
     if (sortBy !== col) return <span className="text-gray-700 ml-0.5">↕</span>;
@@ -206,6 +258,19 @@ function PositionsTable({ stats }) {
         </div>
 
         <div className="flex flex-col gap-1">
+          <label className="text-[10px] text-gray-500 uppercase tracking-wide">Anzeige</label>
+          <select
+            value={filterCandidateStatus}
+            onChange={e => { setFilterCandidateStatus(e.target.value); setPage(1); }}
+            className="bg-gray-800 border border-gray-700 text-gray-300 text-xs rounded px-2 py-1.5"
+          >
+            <option value="">Alle inkl. stille</option>
+            <option value="active">Nur angezeigte Kandidaten</option>
+            <option value="watchlist_pending">Nur stille Kandidaten</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
           <label className="text-[10px] text-gray-500 uppercase tracking-wide">Modul</label>
           <select
             value={filterModule}
@@ -249,7 +314,7 @@ function PositionsTable({ stats }) {
           />
         </div>
 
-        {(filterStatus || filterModule || filterRegime || filterDateFrom || filterDateTo) && (
+        {hasActiveFilter && (
           <button
             onClick={resetFilters}
             className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded border border-gray-700 transition self-end"
@@ -276,7 +341,10 @@ function PositionsTable({ stats }) {
                 <Th>Modul</Th>
                 <Th>Regime</Th>
                 <Th col="scan_date">Datum</Th>
-                <Th>Entry $</Th>
+                <Th>Entry-Zone</Th>
+                <Th>Stop</Th>
+                <Th>Target</Th>
+                <Th>CRV</Th>
                 <Th>Aktuell $</Th>
                 <Th col="performance">Δ%</Th>
                 <Th>Δ$</Th>
@@ -295,6 +363,7 @@ function PositionsTable({ stats }) {
                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${STATUS_STYLES[item.status] ?? "bg-gray-800 text-gray-400"}`}>
                       {item.status}
                     </span>
+                    {item.candidate_status === "watchlist_pending" && <SilentBadge />}
                   </td>
 
                   {/* Symbol */}
@@ -321,11 +390,29 @@ function PositionsTable({ stats }) {
                     {item.scan_date}
                   </td>
 
-                  {/* Entry price */}
-                  <td className="px-3 py-2.5 text-gray-300 whitespace-nowrap">
-                    {item.entry_price != null
-                      ? `$${fmt(item.entry_price)}`
-                      : <span className="text-amber-500/70 text-[10px] font-medium">Datenlücke</span>}
+                  {/* Entry Zone */}
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <EntryZoneCell low={item.entry_low} high={item.entry_high} />
+                  </td>
+
+                  {/* Stop-Loss */}
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <PriceCell value={item.stop_loss} />
+                  </td>
+
+                  {/* Target */}
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <PriceCell value={item.target_price} />
+                  </td>
+
+                  {/* CRV */}
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <CrvCell
+                      crv={item.crv}
+                      entryLow={item.entry_low}
+                      stopLoss={item.stop_loss}
+                      targetPrice={item.target_price}
+                    />
                   </td>
 
                   {/* Current price */}
@@ -547,6 +634,45 @@ export default function GhostPortfolioTab() {
           }
         />
       </div>
+
+      {/* Dashboard shown vs silent KPI */}
+      {(stats.shown_in_dashboard != null || stats.silent_candidates != null) && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="space-y-0.5">
+              <div className="text-xs font-semibold text-gray-300">Im Dashboard angezeigt</div>
+              <div className="text-[11px] text-gray-500">
+                Aktive Kandidaten (vollständiges Setup) vs. stille Kandidaten
+              </div>
+            </div>
+            <div className="flex items-center gap-4 text-sm">
+              <div className="text-center">
+                <div className="text-xl font-bold text-green-400">{stats.shown_in_dashboard ?? "—"}</div>
+                <div className="text-[10px] text-gray-500">Angezeigt</div>
+              </div>
+              <div className="text-gray-700 text-lg">/</div>
+              <div className="text-center">
+                <div className="text-xl font-bold text-gray-400">{stats.total ?? "—"}</div>
+                <div className="text-[10px] text-gray-500">Gesamt</div>
+              </div>
+              {stats.silent_candidates > 0 && (
+                <>
+                  <div className="text-gray-700 text-lg">·</div>
+                  <div className="text-center">
+                    <div
+                      className="text-xl font-bold text-gray-500"
+                      title={SILENT_TOOLTIP}
+                    >
+                      {stats.silent_candidates}
+                    </div>
+                    <div className="text-[10px] text-gray-600">Stille</div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Not enough data overlay */}
       {!dataReady && (

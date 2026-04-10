@@ -306,6 +306,24 @@ def _parse_entry_mid(entry_zone: Optional[str]) -> Optional[float]:
         return None
 
 
+def _parse_entry_bounds(
+    entry_zone: Optional[str],
+) -> tuple[Optional[float], Optional[float]]:
+    """Parse (entry_low, entry_high) from entry_zone string like '37.00-37.50' or '37.25'."""
+    if not entry_zone:
+        return None, None
+    try:
+        parts = str(entry_zone).replace("$", "").split("-")
+        if len(parts) == 2:
+            low  = float(parts[0].strip())
+            high = float(parts[1].strip())
+            return low, high
+        val = float(parts[0].strip())
+        return val, val
+    except Exception:
+        return None, None
+
+
 def _parse_price(val: Optional[str]) -> Optional[float]:
     if not val:
         return None

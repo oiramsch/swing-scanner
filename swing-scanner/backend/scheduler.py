@@ -180,7 +180,7 @@ def _archive_scan_results(scan_date, regime: str) -> int:
     Returns count of newly archived predictions.
     """
     from backend.database import get_results_for_date
-    from backend.news_checker import _parse_entry_mid, _parse_price
+    from backend.news_checker import _parse_entry_bounds, _parse_entry_mid, _parse_price
 
     active_results   = get_results_for_date(scan_date)   # status=active only
     watchlist_results = get_watchlist_pending(scan_date)  # status=watchlist_pending
@@ -194,6 +194,7 @@ def _archive_scan_results(scan_date, regime: str) -> int:
             continue
 
         entry_price  = _parse_entry_mid(r.entry_zone)
+        entry_low, entry_high = _parse_entry_bounds(r.entry_zone)
         stop_loss    = _parse_price(r.stop_loss)
         target_price = _parse_price(r.target)
 
@@ -205,6 +206,8 @@ def _archive_scan_results(scan_date, regime: str) -> int:
             candidate_status= r.candidate_status or "active",
             setup_type      = r.setup_type,
             entry_price     = entry_price,
+            entry_low       = entry_low,
+            entry_high      = entry_high,
             stop_loss       = stop_loss,
             target_price    = target_price,
             crv             = r.crv_calculated,
