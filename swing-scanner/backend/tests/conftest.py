@@ -38,10 +38,19 @@ def db_session(engine):
 
 @pytest.fixture(scope="session")
 def test_client(engine):
-    """FastAPI TestClient backed by the in-memory DB. Auth middleware is
-    bypassed by passing a dummy Bearer token (scan/status has no Depends auth)."""
+    """FastAPI TestClient backed by the in-memory DB.
+    get_current_user is overridden so routes using Depends(get_current_user)
+    accept any Bearer token without real JWT validation."""
     from fastapi.testclient import TestClient
     from backend.main import app
+    from backend.auth import get_current_user, AuthenticatedUser
+
+    async def _mock_user():
+        return AuthenticatedUser(email="test@test.com", tenant_id=1)
+
+    app.dependency_overrides[get_current_user] = _mock_user
 
     with TestClient(app, raise_server_exceptions=True) as client:
         yield client
+
+    app.dependency_overrides.clear()

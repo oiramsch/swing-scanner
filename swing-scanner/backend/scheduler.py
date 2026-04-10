@@ -18,17 +18,23 @@ from backend.database import (
     PredictionArchive,
     ScanFunnel,
     ScanResult,
+    TradePlan,
     archive_prediction,
     clear_results_for_date,
+    count_active_auto_trades,
+    get_all_broker_connections,
     get_archived_tickers_for_date,
     get_last_scan_datetime,
     get_latest_funnel,
+    get_paper_auto_trading,
     get_pending_predictions,
+    get_results_for_date,
     get_watchlist_pending,
     init_db,
     resolve_prediction,
     save_scan_funnel,
     save_scan_result,
+    save_trade_plan,
     update_candidate_status,
     update_deep_analysis,
 )
@@ -779,21 +785,11 @@ async def auto_paper_trade(ctx: dict):
     """
     logger.info("=== auto_paper_trade started ===")
     from decimal import Decimal, ROUND_DOWN
-
-    from backend.database import (
-        get_paper_auto_trading,
-        count_active_auto_trades,
-        get_results_for_date,
-        get_all_broker_connections,
-        save_trade_plan,
-        TradePlan,
-    )
     from backend.brokers import get_connector
     from backend.notifier import (
         notify_auto_trade_success,
         notify_auto_trade_error,
         notify_auto_trade_summary,
-        send_push,
     )
     from backend.news_checker import _parse_entry_mid, _parse_price
 
