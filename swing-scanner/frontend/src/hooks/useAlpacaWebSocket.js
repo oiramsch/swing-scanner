@@ -53,7 +53,8 @@ export function useAlpacaWebSocket(tickers) {
       setPrices(prev => {
         const next = { ...prev };
         for (const t of tickersRef.current) {
-          const base = prev[t] || 100;
+          const base = prev[t];
+          if (!base) continue; // Don't seed mock prices from thin air; let REST polling provide initial prices
           next[t] = parseFloat((base * (1 + (Math.random() * 0.01 - 0.005))).toFixed(2));
         }
         return next;

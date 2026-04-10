@@ -300,7 +300,13 @@ export default function TradingCockpit({ setActiveTab }) {
   );
   const { prices: wsPrices, connected: wsConnected, isMock: wsMock } = useAlpacaWebSocket(pendingTickers);
 
-  const wsStatus = wsConnected ? "live" : wsMock ? "mock" : "off";
+  // Show "mock" only when market is open but WebSocket fell back to mock mode
+  // (or when explicitly forced via env). Outside market hours: show "off" — expected, not a warning.
+  const wsStatus = wsConnected
+    ? "live"
+    : (wsMock && (market.isOpen || import.meta.env.VITE_MOCK_WEBSOCKET === "true"))
+    ? "mock"
+    : "off";
 
   useEffect(() => {
     loadAll();

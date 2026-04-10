@@ -35,8 +35,10 @@ function PositionSizer({ entryHigh, stopLoss, target, riskPct, brokers, selected
     return brokers
       .filter(b => selectedBrokers.includes(b.id))
       .map(b => {
-        const balance  = b.manual_balance ?? 0;
-        const currency = b.manual_currency ?? "USD";
+        const balance  = b.manual_balance ?? b.balance?.buying_power ?? 0;
+        const currency = b.manual_balance != null
+          ? (b.manual_currency ?? "USD")
+          : (b.balance?.currency ?? "USD");
         const grossRiskBudget = balance * (parseFloat(riskPct) / 100);
         // Estimate order value for fee calc (conservative: use entry × estimated shares)
         const estimatedShares = grossRiskBudget > 0 ? Math.floor(grossRiskBudget / riskPerShare) : 0;

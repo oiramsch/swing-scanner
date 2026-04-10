@@ -38,7 +38,7 @@ export default function JustageModal({ plan, broker, livePrice, onClose, onSucce
     if (!isTR) return;
     axios.get("/api/quotes?symbols=EURUSD%3DX")
       .then(r => {
-        const rate = r.data?.["EURUSD=X"];
+        const rate = r.data?.["EURUSD=X"]?.price;
         if (rate && rate > 0.5) setEurusd(rate);
       })
       .catch(() => {});
