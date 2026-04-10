@@ -2335,7 +2335,14 @@ async def list_brokers(
 
     async def _get_balance(conn):
         try:
-            connector = get_connector(conn.model_dump())
+            from backend.crypto import decrypt_or_none
+            conn_dict = conn.model_dump()
+            # Decrypt API credentials — model_dump() returns encrypted values only
+            if conn.api_key_enc:
+                conn_dict["api_key"] = decrypt_or_none(conn.api_key_enc)
+            if conn.api_secret_enc:
+                conn_dict["api_secret"] = decrypt_or_none(conn.api_secret_enc)
+            connector = get_connector(conn_dict)
             loop = asyncio.get_event_loop()
             balance = await loop.run_in_executor(None, connector.get_balance)
             return {**conn.model_dump(), "balance": balance, "error": None}
