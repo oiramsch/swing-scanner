@@ -354,7 +354,7 @@ export default function PositionCard({ position: pos, broker, onUpdate }) {
       {/* Close button */}
       {!showClose ? (
         <button
-          onClick={() => { setShowClose(true); setShowEdit(false); }}
+          onClick={() => { setShowClose(true); setShowEdit(false); setExitPrice(pos.stop_loss ? String(pos.stop_loss) : ""); }}
           className="text-xs py-1.5 bg-gray-800 hover:bg-red-900/30 text-gray-400 hover:text-red-300 rounded border border-gray-700 hover:border-red-800 transition"
         >
           Close Position
