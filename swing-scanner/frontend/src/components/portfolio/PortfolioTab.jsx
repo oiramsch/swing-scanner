@@ -61,7 +61,7 @@ function PortfolioByBroker({ positions, onUpdate }) {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {group.positions.map(pos => (
-                <PositionCard key={pos.id} position={pos} onUpdate={onUpdate} />
+                <PositionCard key={pos.id} position={pos} broker={broker} onUpdate={onUpdate} />
               ))}
             </div>
           </div>
