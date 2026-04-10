@@ -12,6 +12,7 @@ from backend.database import (
     PortfolioPosition,
     get_budget,
     get_closed_positions,
+    get_closed_trade_plans,
     get_open_positions,
     get_position,
     save_journal_entry,
@@ -190,8 +191,10 @@ def get_portfolio_summary() -> dict:
     total_risk = sum(p.risk_amount for p in open_positions)
     invested_pct = round((total_invested / budget.start_budget) * 100, 1) if budget.start_budget > 0 else 0
 
-    # Closed P&L
-    closed_pnl = sum(p.pnl_eur or 0 for p in closed_positions)
+    # Closed P&L — PortfolioPositions + closed TradePlans
+    closed_trade_plans = get_closed_trade_plans()
+    trade_plan_pnl = sum(p.pnl_eur or 0 for p in closed_trade_plans)
+    closed_pnl = sum(p.pnl_eur or 0 for p in closed_positions) + trade_plan_pnl
     wins = [p for p in closed_positions if (p.pnl_eur or 0) > 0]
     losses = [p for p in closed_positions if (p.pnl_eur or 0) < 0]
     win_rate = round(len(wins) / len(closed_positions) * 100, 1) if closed_positions else 0

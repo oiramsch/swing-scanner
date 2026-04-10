@@ -119,6 +119,89 @@ function SlippageInput({ plan, onSaved }) {
   );
 }
 
+function ClosePositionForm({ plan, onClose, onSuccess }) {
+  const [exitPrice, setExitPrice] = useState(plan.actual_exit_price != null ? String(plan.actual_exit_price) : "");
+  const [shares, setShares] = useState(plan.shares_executed != null ? String(plan.shares_executed) : "");
+  const [exitReason, setExitReason] = useState("manual");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function submit() {
+    const price = parseFloat(exitPrice);
+    if (isNaN(price) || price <= 0) { setError("Gültiger Exit-Preis erforderlich"); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      await axios.post(`/api/trade-plans/${plan.id}/close`, {
+        exit_price: price,
+        shares: parseFloat(shares) || undefined,
+        exit_reason: exitReason,
+      });
+      onSuccess?.();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Fehler beim Schließen");
+    }
+    setSaving(false);
+  }
+
+  const entryPrice = plan.actual_entry_price || plan.entry_high;
+  const previewPnl = !isNaN(parseFloat(exitPrice)) && entryPrice && parseFloat(shares) > 0
+    ? ((parseFloat(exitPrice) - entryPrice) * parseFloat(shares) / 1.09).toFixed(2)
+    : null;
+
+  return (
+    <div className="mt-3 p-3 bg-gray-800/60 border border-red-800/40 rounded-lg space-y-2">
+      <div className="text-xs font-medium text-red-300">Position schließen</div>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-[10px] text-gray-500 mb-1">Exit-Preis</label>
+          <input
+            type="number" step="0.01" value={exitPrice}
+            onChange={e => setExitPrice(e.target.value)}
+            placeholder="0.00"
+            className="w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-gray-200 text-xs focus:outline-none focus:border-red-600"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] text-gray-500 mb-1">Stück (optional)</label>
+          <input
+            type="number" step="1" value={shares}
+            onChange={e => setShares(e.target.value)}
+            placeholder={plan.shares_executed ?? "—"}
+            className="w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-gray-200 text-xs focus:outline-none focus:border-red-600"
+          />
+        </div>
+      </div>
+      <select
+        value={exitReason} onChange={e => setExitReason(e.target.value)}
+        className="w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-gray-300 text-xs"
+      >
+        <option value="manual">Manuell</option>
+        <option value="stop_loss">Stop Loss</option>
+        <option value="target">Target erreicht</option>
+        <option value="signal">Signal</option>
+      </select>
+      {previewPnl !== null && (
+        <div className={`text-xs px-2 py-1 rounded ${parseFloat(previewPnl) >= 0 ? "text-green-400 bg-green-900/20" : "text-red-400 bg-red-900/20"}`}>
+          P&L ca. {parseFloat(previewPnl) >= 0 ? "+" : ""}€{previewPnl}
+        </div>
+      )}
+      {error && <div className="text-xs text-red-400">{error}</div>}
+      <div className="flex gap-2">
+        <button
+          onClick={submit} disabled={saving}
+          className="flex-1 py-1.5 bg-red-700 hover:bg-red-600 text-white text-xs rounded font-semibold transition disabled:opacity-50"
+        >
+          {saving ? "Wird geschlossen…" : "Position schließen ✓"}
+        </button>
+        <button onClick={onClose} className="px-3 py-1.5 bg-gray-700 text-gray-400 text-xs rounded transition">
+          Abbrechen
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRefresh }) {
   const livePrice = quotes[plan.ticker]?.price ?? null;
   const zone = parseEntryZone(plan.entry_low, plan.entry_high);
@@ -128,6 +211,7 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
   const assignedIds = JSON.parse(plan.broker_ids_json || "[]");
   const assignedBrokers = brokers.filter(b => b.id == null || assignedIds.includes(b.id));
   const [belowZoneConfirm, setBelowZoneConfirm] = useState(null); // broker waiting for below-zone confirm
+  const [showClose, setShowClose] = useState(false);
 
   function handleBrokerClick(broker) {
     if (belowZone) { setBelowZoneConfirm(broker); return; }
@@ -234,12 +318,26 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
           );
         })}
 
-        <button
-          onClick={() => onCancel(plan.id)}
-          className="ml-auto text-[11px] text-gray-600 hover:text-red-400 transition"
-        >
-          Abbrechen
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {(plan.status === "active" || plan.status === "partial") && (
+            <button
+              onClick={() => setShowClose(c => !c)}
+              className={`text-[11px] px-2.5 py-1 rounded border transition ${
+                showClose
+                  ? "bg-red-900/30 border-red-700/60 text-red-300"
+                  : "bg-gray-800 border-gray-700 text-gray-500 hover:text-red-400 hover:border-red-700/50"
+              }`}
+            >
+              Close Position
+            </button>
+          )}
+          <button
+            onClick={() => onCancel(plan.id)}
+            className="text-[11px] text-gray-600 hover:text-red-400 transition"
+          >
+            Abbrechen
+          </button>
+        </div>
       </div>
 
       {belowZoneConfirm && (
@@ -276,6 +374,15 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
       {/* Slippage tracker (show for active/partial plans or if fill already recorded) */}
       {(plan.status === "active" || plan.status === "partial" || plan.actual_entry_price != null) && (
         <SlippageInput plan={plan} onSaved={onRefresh} />
+      )}
+
+      {/* Close Position form */}
+      {showClose && (
+        <ClosePositionForm
+          plan={plan}
+          onClose={() => setShowClose(false)}
+          onSuccess={() => { setShowClose(false); onRefresh(); }}
+        />
       )}
     </div>
   );

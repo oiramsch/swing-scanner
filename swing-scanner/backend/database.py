@@ -114,6 +114,10 @@ def _apply_migrations():
         # Phase 3 — Paper Auto-Trading
         ("tradeplan",    "auto_trade", "INTEGER DEFAULT 0"),
         ("journalentry", "source",     "TEXT DEFAULT 'manual'"),
+        # Issue #61 — Close Position: archive closed TradePlans instead of deleting
+        ("tradeplan", "actual_exit_price", "REAL"),
+        ("tradeplan", "exit_date",         "TEXT"),
+        ("tradeplan", "shares_executed",   "REAL"),
         # v3.1 — Dynamic Universe Management
         ("scanuniverse", "tickers_json",       "TEXT"),
         ("scanuniverse", "regime_default",     "TEXT DEFAULT 'any'"),
@@ -970,6 +974,11 @@ class TradePlan(SQLModel, table=True):
     # Phase 3 — Paper Auto-Trading: True if placed automatically by auto_paper_trade job
     auto_trade: bool = False
 
+    # Issue #61 — Close Position archiving
+    actual_exit_price: Optional[float] = None
+    exit_date: Optional[date] = None
+    shares_executed: Optional[float] = None
+
 
 # ---------------------------------------------------------------------------
 # ScanResult CRUD
@@ -1819,6 +1828,16 @@ def get_all_trade_plans(tenant_id: int = 1, limit: int = 50) -> list[TradePlan]:
             .where(TradePlan.tenant_id == tenant_id)
             .order_by(TradePlan.created_at.desc())
             .limit(limit)
+        ).all())
+
+
+def get_closed_trade_plans(tenant_id: int = 1) -> list[TradePlan]:
+    with Session(get_engine()) as session:
+        return list(session.exec(
+            select(TradePlan)
+            .where(TradePlan.tenant_id == tenant_id)
+            .where(TradePlan.status == "closed")
+            .order_by(TradePlan.exit_date.desc())
         ).all())
 
 
