@@ -2283,7 +2283,8 @@ async def set_actual_entry(
 ):
     """
     Record the actual fill price after execution.
-    Body: { "actual_entry_price": 145.50 }
+    Body: { "actual_entry_price": 145.50, "actual_entry_price_eur": 133.00 }
+    actual_entry_price_eur is optional and stored in execution_state_json (TR broker only).
     Returns slippage vs. planned entry_high.
     """
     price = data.get("actual_entry_price")
@@ -2293,16 +2294,28 @@ async def set_actual_entry(
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    update_trade_plan(plan_id, {"actual_entry_price": float(price)})
+    update_data: dict = {"actual_entry_price": float(price)}
+
+    # Optionally store EUR fill price in execution_state_json (no schema change needed)
+    price_eur = data.get("actual_entry_price_eur")
+    if price_eur is not None:
+        exec_state = json.loads(plan.execution_state_json or "{}")
+        exec_state["actual_entry_price_eur"] = round(float(price_eur), 2)
+        update_data["execution_state_json"] = json.dumps(exec_state)
+
+    update_trade_plan(plan_id, update_data)
 
     slippage = float(price) - plan.entry_high
     slippage_pct = (slippage / plan.entry_high * 100) if plan.entry_high else 0
-    return {
+    result = {
         "actual_entry_price": float(price),
         "planned_entry_high": plan.entry_high,
         "slippage": round(slippage, 4),
         "slippage_pct": round(slippage_pct, 3),
     }
+    if price_eur is not None:
+        result["actual_entry_price_eur"] = round(float(price_eur), 2)
+    return result
 
 
 # ---------------------------------------------------------------------------

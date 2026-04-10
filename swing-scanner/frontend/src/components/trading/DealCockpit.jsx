@@ -48,20 +48,61 @@ function BrokerBadge({ broker }) {
   );
 }
 
-function SlippageInput({ plan, onSaved }) {
+function SlippageInput({ plan, isTR, onSaved }) {
+  const execState = JSON.parse(plan.execution_state_json || "{}");
+  const savedEurVal = execState.actual_entry_price_eur;
+
   const defaultVal = plan.actual_entry_price != null
     ? String(plan.actual_entry_price)
     : (plan.entry_high ? String(plan.entry_high) : "");
   const [val, setVal] = useState(defaultVal);
+  const [eurVal, setEurVal] = useState(savedEurVal ? String(savedEurVal) : "");
+  const [eurusd, setEurusd] = useState(null);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState(null);
+
+  // Fetch EURUSD rate for TR plans
+  useEffect(() => {
+    if (!isTR) return;
+    axios.get("/api/fx/eurusd")
+      .then(r => {
+        const rate = r.data?.rate;
+        if (rate && rate > 0.5) setEurusd(rate);
+      })
+      .catch(() => {});
+  }, [isTR]);
+
+  // Derive EUR from USD once rate is loaded (only if no saved EUR value yet)
+  useEffect(() => {
+    if (!isTR || !eurusd || eurVal !== "") return;
+    const usdPrice = plan.actual_entry_price ?? (plan.entry_high ? parseFloat(plan.entry_high) : null);
+    if (usdPrice) setEurVal((usdPrice / eurusd).toFixed(2));
+  }, [eurusd, isTR]);
+
+  function handleUsdChange(v) {
+    setVal(v);
+    if (eurusd && v !== "" && !isNaN(parseFloat(v))) {
+      setEurVal((parseFloat(v) / eurusd).toFixed(2));
+    }
+  }
+
+  function handleEurChange(v) {
+    setEurVal(v);
+    if (eurusd && v !== "" && !isNaN(parseFloat(v))) {
+      setVal((parseFloat(v) * eurusd).toFixed(2));
+    }
+  }
 
   async function save() {
     const price = parseFloat(val);
     if (isNaN(price) || price <= 0) return;
     setSaving(true);
+    const body = { actual_entry_price: price };
+    if (isTR && eurVal !== "" && !isNaN(parseFloat(eurVal)) && parseFloat(eurVal) > 0) {
+      body.actual_entry_price_eur = parseFloat(eurVal);
+    }
     try {
-      const res = await axios.patch(`/api/trade-plans/${plan.id}/actual-entry`, { actual_entry_price: price });
+      const res = await axios.patch(`/api/trade-plans/${plan.id}/actual-entry`, body);
       setResult(res.data);
       onSaved?.();
     } catch {}
@@ -89,14 +130,31 @@ function SlippageInput({ plan, onSaved }) {
       )}
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-gray-600">Tatsächlicher Kaufkurs:</span>
-        <input
-          type="number"
-          step="0.01"
-          value={val}
-          onChange={e => setVal(e.target.value)}
-          placeholder="0.00"
-          className="w-24 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-gray-200 text-xs focus:outline-none focus:border-indigo-600"
-        />
+        <div className="flex items-center gap-1">
+          {isTR && <span className="text-gray-500">$</span>}
+          <input
+            type="number"
+            step="0.01"
+            value={val}
+            onChange={e => isTR ? handleUsdChange(e.target.value) : setVal(e.target.value)}
+            placeholder="0.00"
+            className="w-24 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-gray-200 text-xs focus:outline-none focus:border-indigo-600"
+          />
+        </div>
+        {isTR && eurusd && (
+          <div className="flex items-center gap-1">
+            <span className="text-blue-400/70">€</span>
+            <input
+              type="number"
+              step="0.01"
+              value={eurVal}
+              onChange={e => handleEurChange(e.target.value)}
+              placeholder="0.00"
+              title="Kaufkurs in EUR (€) — wird automatisch in USD umgerechnet"
+              className="w-24 px-2 py-1 bg-gray-800 border border-blue-700/50 rounded text-blue-200 text-xs focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        )}
         <button
           onClick={save}
           disabled={saving}
@@ -114,6 +172,9 @@ function SlippageInput({ plan, onSaved }) {
             CRV {crv.toFixed(1)}
           </span>
         )}
+        {isTR && eurusd && (
+          <span className="text-[10px] text-gray-600">EUR/USD: {eurusd.toFixed(4)}</span>
+        )}
       </div>
     </div>
   );
@@ -128,6 +189,12 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
   const assignedIds = JSON.parse(plan.broker_ids_json || "[]");
   const assignedBrokers = brokers.filter(b => b.id == null || assignedIds.includes(b.id));
   const [belowZoneConfirm, setBelowZoneConfirm] = useState(null); // broker waiting for below-zone confirm
+
+  // Determine if a TR broker is assigned to or has executed this plan
+  const hasTRBroker = brokers.some(b =>
+    b.broker_type === "trade_republic" &&
+    (assignedIds.includes(b.id) || execState[String(b.id)] === "executed")
+  );
 
   function handleBrokerClick(broker) {
     if (belowZone) { setBelowZoneConfirm(broker); return; }
@@ -275,7 +342,7 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
 
       {/* Slippage tracker (show for active/partial plans or if fill already recorded) */}
       {(plan.status === "active" || plan.status === "partial" || plan.actual_entry_price != null) && (
-        <SlippageInput plan={plan} onSaved={onRefresh} />
+        <SlippageInput plan={plan} isTR={hasTRBroker} onSaved={onRefresh} />
       )}
     </div>
   );
