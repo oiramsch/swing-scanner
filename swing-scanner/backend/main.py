@@ -1132,6 +1132,32 @@ async def market_update_history(days: int = 7):
     return result
 
 
+
+# ---------------------------------------------------------------------------
+# FX Rates
+# ---------------------------------------------------------------------------
+
+@app.get("/api/fx/eurusd")
+async def get_eurusd_rate():
+    """Return current EUR/USD exchange rate from yfinance (EURUSD=X). Fallback: 1.09."""
+    import asyncio
+    import yfinance as yf
+
+    def _fetch():
+        try:
+            ticker = yf.Ticker("EURUSD=X")
+            hist = ticker.history(period="1d")
+            if hist is not None and not hist.empty:
+                rate = float(hist.iloc[-1]["Close"])
+                return {"rate": round(rate, 4), "source": "yfinance"}
+        except Exception:
+            pass
+        return {"rate": 1.09, "source": "fallback"}
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _fetch)
+
+
 # ---------------------------------------------------------------------------
 # Journal
 # ---------------------------------------------------------------------------

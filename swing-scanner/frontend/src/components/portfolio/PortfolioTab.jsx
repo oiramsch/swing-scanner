@@ -7,54 +7,10 @@ import PortfolioAIReport from "./PortfolioAIReport.jsx";
 import MarketUpdateBanner from "./MarketUpdateBanner.jsx";
 import AlpacaPositions from "./AlpacaPositions.jsx";
 
-const BROKER_ICONS  = { alpaca: "🦙", trade_republic: "🇩🇪", ibkr: "📊" };
-const BROKER_LABELS = { alpaca: "Alpaca", trade_republic: "Trade Republic", ibkr: "IBKR" };
+const BROKER_ICONS = { alpaca: "🦙", trade_republic: "🇩🇪", ibkr: "📊" };
 
-function ConsolidatedSummary({ brokers }) {
-  if (!brokers?.length) return null;
-
-  // Sum all broker balances, convert EUR→USD at ~1.09 for display
-  const EUR_TO_USD = 1.09;
-  let totalUSD = 0;
-  let hasData = false;
-  const lines = [];
-
-  for (const b of brokers) {
-    const bal = b.balance?.buying_power ?? b.manual_balance;
-    if (bal == null) continue;
-    const currency = b.balance?.currency ?? b.manual_currency ?? "USD";
-    const inUSD = currency === "EUR" ? bal * EUR_TO_USD : bal;
-    totalUSD += inUSD;
-    hasData = true;
-    lines.push({ label: b.label, amount: bal, currency, icon: BROKER_ICONS[b.broker_type] ?? "💼" });
-  }
-
-  if (!hasData || lines.length < 2) return null;
-
-  return (
-    <div className="bg-gray-900 border border-indigo-800/30 rounded-xl p-4">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-semibold text-gray-200">Konsolidiert — alle Broker</span>
-        <span className="text-lg font-bold text-indigo-300">${totalUSD.toLocaleString("en", { maximumFractionDigits: 0 })}</span>
-      </div>
-      <div className="flex flex-wrap gap-3">
-        {lines.map(l => (
-          <div key={l.label} className="flex items-center gap-1.5 text-xs text-gray-400">
-            <span>{l.icon}</span>
-            <span>{l.label}</span>
-            <span className="text-gray-300 font-medium">
-              {l.currency === "EUR" ? "€" : "$"}{Math.round(l.amount).toLocaleString("de")}
-            </span>
-          </div>
-        ))}
-      </div>
-      <p className="text-[10px] text-gray-700 mt-2">EUR→USD @ ~1.09 (Schätzung für Gesamtansicht)</p>
-    </div>
-  );
-}
-
+// Groups manual/TR positions by broker_id (null = "Manuelle Positionen")
 function PortfolioByBroker({ positions, onUpdate }) {
-  // Group positions by broker_id (null = unassigned / legacy)
   const groups = {};
   for (const pos of positions) {
     const key = pos.broker_id != null ? String(pos.broker_id) : "__unassigned__";
@@ -68,8 +24,8 @@ function PortfolioByBroker({ positions, onUpdate }) {
   }, []);
 
   const brokerById = Object.fromEntries(brokers.map(b => [String(b.id), b]));
-
   const keys = Object.keys(groups);
+
   if (keys.length === 0) {
     return (
       <div className="text-center py-10 text-gray-600 text-sm bg-gray-900/50 border border-gray-800 rounded-xl">
@@ -81,10 +37,10 @@ function PortfolioByBroker({ positions, onUpdate }) {
   return (
     <div className="space-y-6">
       {keys.map(key => {
-        const group = groups[key];
+        const group  = groups[key];
         const broker = key !== "__unassigned__" ? brokerById[key] : null;
         const icon   = broker ? (BROKER_ICONS[broker.broker_type] ?? "💼") : "📋";
-        const label  = broker ? broker.label : "Ghost Portfolio";
+        const label  = broker ? broker.label : "Manuelle Positionen";
         const sym    = broker?.balance?.currency === "EUR" ? "€" : "$";
         const bPow   = broker?.balance?.buying_power;
         const count  = group.positions.length;
@@ -95,9 +51,13 @@ function PortfolioByBroker({ positions, onUpdate }) {
               <span className="text-base">{icon}</span>
               <span className="text-sm font-semibold text-gray-300">{label}</span>
               {bPow != null && (
-                <span className="text-xs text-gray-600 ml-1">Konto: {sym}{Math.round(bPow).toLocaleString("de")}</span>
+                <span className="text-xs text-gray-600 ml-1">
+                  Konto: {sym}{Math.round(bPow).toLocaleString("de")}
+                </span>
               )}
-              <span className="text-xs text-gray-700 ml-auto">{count} Position{count !== 1 ? "en" : ""}</span>
+              <span className="text-xs text-gray-700 ml-auto">
+                {count} Position{count !== 1 ? "en" : ""}
+              </span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {group.positions.map(pos => (
@@ -111,48 +71,64 @@ function PortfolioByBroker({ positions, onUpdate }) {
   );
 }
 
+function KpiCard({ label, value, sub, colorClass = "text-white" }) {
+  return (
+    <div className="bg-gray-800 rounded-lg p-3">
+      <div className="text-gray-400 text-xs">{label}</div>
+      <div className={`font-bold text-lg ${colorClass}`}>{value}</div>
+      {sub && <div className="text-gray-500 text-xs">{sub}</div>}
+    </div>
+  );
+}
+
+function BrokerSectionHeader({ icon, label, isPaper, kpis, error }) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap px-1 mb-2">
+      <span className="text-base">{icon}</span>
+      <span className="text-sm font-semibold text-gray-300">{label}</span>
+      {isPaper && (
+        <span className="text-[10px] px-1.5 py-0.5 bg-yellow-900/40 text-yellow-300 border border-yellow-700/40 rounded font-semibold">
+          PAPER
+        </span>
+      )}
+      {error ? (
+        <span className="text-xs text-red-400 ml-1">{error}</span>
+      ) : kpis ? (
+        <div className="flex gap-4 ml-1">
+          {kpis.map(k => (
+            <span key={k.label} className="text-xs text-gray-500">
+              {k.label}: <span className={k.colorClass ?? "text-gray-300"}>{k.value}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function PortfolioTab() {
-  const [portfolio, setPortfolio] = useState(null);
-  const [brokers, setBrokers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [showAdd, setShowAdd] = useState(false);
+  const [portfolio, setPortfolio]   = useState(null);
+  const [brokers, setBrokers]       = useState([]);
+  const [eur2usd, setEur2usd]       = useState(1.09);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState(null);
+  const [showAdd, setShowAdd]       = useState(false);
   const [showBudget, setShowBudget] = useState(false);
-  const [aiReport, setAiReport] = useState(null);
-  const [aiLoading, setAiLoading] = useState(false);
+  const [aiReport, setAiReport]     = useState(null);
+  const [aiLoading, setAiLoading]   = useState(false);
   const [marketUpdate, setMarketUpdate] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated]   = useState(null);
+  const [refreshing, setRefreshing]     = useState(false);
   const intervalRef = useRef(null);
 
-  const refresh = useCallback(async (showSpinner = false) => {
-    if (showSpinner) setRefreshing(true);
-    await fetchPortfolio();
-    setLastUpdated(new Date());
-    if (showSpinner) setRefreshing(false);
-  }, []);
-
-  useEffect(() => {
-    refresh();
-    fetchMarketUpdate();
-    axios.get("/api/brokers").then(r => setBrokers(r.data || [])).catch(() => {});
-    // Auto-refresh every 60 seconds for live P&L
-    intervalRef.current = setInterval(() => refresh(), 60_000);
-    return () => clearInterval(intervalRef.current);
-  }, []);
-
-  async function fetchMarketUpdate() {
+  const fetchBrokers = useCallback(async () => {
     try {
-      const res = await axios.get("/api/portfolio/market-update");
-      if (res.data?.status !== "no_update") {
-        setMarketUpdate(res.data);
-      }
-    } catch {
-      // Market update is optional — don't block the portfolio view
-    }
-  }
+      const res = await axios.get("/api/brokers");
+      setBrokers(res.data || []);
+    } catch { /* non-critical */ }
+  }, []);
 
-  async function fetchPortfolio() {
+  const fetchPortfolio = useCallback(async () => {
     try {
       const res = await axios.get("/api/portfolio");
       setPortfolio(res.data);
@@ -161,7 +137,29 @@ export default function PortfolioTab() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  const refresh = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setRefreshing(true);
+    await Promise.all([fetchPortfolio(), fetchBrokers()]);
+    setLastUpdated(new Date());
+    if (showSpinner) setRefreshing(false);
+  }, [fetchPortfolio, fetchBrokers]);
+
+  useEffect(() => {
+    refresh();
+    // Market update (non-blocking)
+    axios.get("/api/portfolio/market-update")
+      .then(r => { if (r.data?.status !== "no_update") setMarketUpdate(r.data); })
+      .catch(() => {});
+    // EUR/USD rate
+    axios.get("/api/fx/eurusd")
+      .then(r => setEur2usd(r.data?.rate ?? 1.09))
+      .catch(() => {});
+
+    intervalRef.current = setInterval(() => refresh(), 60_000);
+    return () => clearInterval(intervalRef.current);
+  }, []);
 
   async function runAiCheck() {
     setAiLoading(true);
@@ -178,26 +176,63 @@ export default function PortfolioTab() {
   if (loading) return (
     <div className="max-w-7xl mx-auto">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {[...Array(3)].map((_, i) => <div key={i} className="bg-gray-900 h-48 rounded-xl animate-pulse" />)}
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="bg-gray-900 h-48 rounded-xl animate-pulse" />
+        ))}
       </div>
     </div>
   );
 
-  const totalSignals = portfolio?.positions?.reduce((sum, p) => sum + (p.signals?.length || 0), 0) || 0;
+  // ── Alpaca broker from registry ──────────────────────────────────────────
+  const alpacaBroker     = brokers.find(b => b.broker_type === "alpaca");
+  const alpacaBal        = alpacaBroker?.balance;
+  const alpacaPortfolioV = alpacaBal?.portfolio_value ?? 0;
+  const alpacaBuyingPow  = alpacaBal?.buying_power    ?? 0;
+  const alpacaInvested   = Math.max(0, alpacaPortfolioV - alpacaBuyingPow);
+  const hasAlpacaBal     = !!alpacaBal;
+
+  // ── Trade Republic / manual portfolio ───────────────────────────────────
+  const trBudget    = portfolio?.budget?.start_budget  ?? 0;
+  const trInvested  = portfolio?.total_invested        ?? 0;
+  const trAvailable = portfolio?.available_capital     ?? 0;
+  const trPnl       = portfolio?.closed_pnl            ?? 0;
+
+  // ── Consolidated totals (all in EUR) ────────────────────────────────────
+  const totalBudget    = trBudget    + alpacaPortfolioV / eur2usd;
+  const totalInvested  = trInvested  + alpacaInvested   / eur2usd;
+  const totalAvailable = trAvailable + alpacaBuyingPow  / eur2usd;
+
+  const totalSignals = portfolio?.positions?.reduce(
+    (sum, p) => sum + (p.signals?.length || 0), 0
+  ) || 0;
+
+  const fmt = (n, locale = "de") => Math.round(n).toLocaleString(locale);
 
   return (
     <div className="max-w-7xl mx-auto space-y-4">
-      {error && <div className="p-3 bg-red-900/30 border border-red-700 rounded text-red-300 text-sm">{error}</div>}
+      {error && (
+        <div className="p-3 bg-red-900/30 border border-red-700 rounded text-red-300 text-sm">
+          {error}
+        </div>
+      )}
 
-      {/* Budget summary */}
+      {/* Market Update Banner */}
+      <MarketUpdateBanner update={marketUpdate} />
+
+      {/* ── CONSOLIDATED OVERVIEW — alle Broker ──────────────────────────── */}
       {portfolio && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <div>
-              <h2 className="text-white font-semibold">Portfolio Overview</h2>
+              <h2 className="text-white font-semibold">Portfolio Übersicht — alle Broker</h2>
               {lastUpdated && (
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Updated {lastUpdated.toLocaleTimeString()} · auto-refresh every 60s
+                  Aktualisiert {lastUpdated.toLocaleTimeString()} · auto-refresh alle 60s
+                  {hasAlpacaBal && (
+                    <span className="ml-2 text-gray-600">
+                      · EUR/USD @ {eur2usd.toFixed(2)}
+                    </span>
+                  )}
                 </p>
               )}
             </div>
@@ -218,7 +253,9 @@ export default function PortfolioTab() {
                 disabled={aiLoading}
                 className="text-sm px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 border border-indigo-500/30 rounded-lg disabled:opacity-50 flex items-center gap-1.5"
               >
-                {aiLoading && <span className="inline-block w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />}
+                {aiLoading && (
+                  <span className="inline-block w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                )}
                 KI Check
               </button>
               <button
@@ -237,53 +274,90 @@ export default function PortfolioTab() {
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-gray-800 rounded-lg p-3">
-              <div className="text-gray-400 text-xs">Budget</div>
-              <div className="text-white font-bold text-lg">€{portfolio.budget?.start_budget?.toLocaleString()}</div>
-            </div>
-            <div className="bg-gray-800 rounded-lg p-3">
-              <div className="text-gray-400 text-xs">Invested</div>
-              <div className="text-white font-bold text-lg">€{portfolio.total_invested?.toLocaleString()}</div>
-              <div className="text-gray-500 text-xs">{portfolio.invested_pct}%</div>
-            </div>
-            <div className="bg-gray-800 rounded-lg p-3">
-              <div className="text-gray-400 text-xs">Available</div>
-              <div className="text-green-400 font-bold text-lg">€{portfolio.available_capital?.toLocaleString()}</div>
-            </div>
-            <div className="bg-gray-800 rounded-lg p-3">
-              <div className="text-gray-400 text-xs">Closed P&L</div>
-              <div className={`font-bold text-lg ${(portfolio.closed_pnl || 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
-                {(portfolio.closed_pnl || 0) >= 0 ? "+" : ""}€{portfolio.closed_pnl?.toFixed(2)}
-              </div>
-              <div className="text-gray-500 text-xs">{portfolio.win_rate}% win rate</div>
-            </div>
+            <KpiCard
+              label="Gesamt-Budget"
+              value={`€${fmt(totalBudget)}`}
+              sub={hasAlpacaBal ? `TR €${fmt(trBudget)} + Alpaca ~€${fmt(alpacaPortfolioV / eur2usd)}` : undefined}
+            />
+            <KpiCard
+              label="Investiert"
+              value={`€${fmt(totalInvested)}`}
+              sub={hasAlpacaBal && alpacaInvested > 0 ? `TR €${fmt(trInvested)} + Alpaca ~€${fmt(alpacaInvested / eur2usd)}` : undefined}
+            />
+            <KpiCard
+              label="Verfügbar"
+              value={`€${fmt(totalAvailable)}`}
+              colorClass="text-green-400"
+              sub={hasAlpacaBal ? `TR €${fmt(trAvailable)} + Alpaca ~€${fmt(alpacaBuyingPow / eur2usd)}` : undefined}
+            />
+            <KpiCard
+              label="Closed P&L"
+              value={`${trPnl >= 0 ? "+" : ""}€${trPnl.toFixed(2)}`}
+              sub={`${portfolio.win_rate}% win rate`}
+              colorClass={trPnl >= 0 ? "text-green-400" : "text-red-400"}
+            />
           </div>
 
           {totalSignals > 0 && (
             <div className="mt-3 flex items-center gap-2 p-2 bg-red-900/20 border border-red-800/30 rounded-lg">
-              <span className="text-red-400 text-sm">⚠️ {totalSignals} active sell signal{totalSignals > 1 ? "s" : ""}</span>
+              <span className="text-red-400 text-sm">
+                ⚠️ {totalSignals} aktive{totalSignals > 1 ? " Verkaufssignale" : "s Verkaufssignal"}
+              </span>
             </div>
           )}
         </div>
       )}
 
-      {/* Consolidated broker summary */}
-      <ConsolidatedSummary brokers={brokers} />
-
       {/* AI Report */}
       {aiReport && <PortfolioAIReport report={aiReport} onClose={() => setAiReport(null)} />}
 
-      {/* Market Update Banner */}
-      <MarketUpdateBanner update={marketUpdate} />
+      {/* ── TRADE REPUBLIC ABSCHNITT ─────────────────────────────────────── */}
+      <div className="space-y-2">
+        <BrokerSectionHeader
+          icon="🇩🇪"
+          label="Trade Republic"
+          kpis={[
+            { label: "Budget",    value: `€${fmt(trBudget)}` },
+            { label: "Investiert", value: `€${fmt(trInvested)}` },
+            { label: "Verfügbar", value: `€${fmt(trAvailable)}`, colorClass: "text-green-400" },
+          ]}
+        />
+        <PortfolioByBroker
+          positions={portfolio?.positions ?? []}
+          onUpdate={fetchPortfolio}
+        />
+      </div>
 
-      {/* Per-Broker Position Sections */}
-      <PortfolioByBroker positions={portfolio?.positions ?? []} onUpdate={fetchPortfolio} />
+      {/* ── ALPACA ABSCHNITT ─────────────────────────────────────────────── */}
+      <div className="space-y-2">
+        <BrokerSectionHeader
+          icon="🦙"
+          label="Alpaca"
+          isPaper={alpacaBroker?.is_paper ?? true}
+          error={!hasAlpacaBal && alpacaBroker?.error ? alpacaBroker.error : null}
+          kpis={hasAlpacaBal ? [
+            { label: "Budget",    value: `$${fmt(alpacaPortfolioV, "en")}` },
+            { label: "Investiert", value: `$${fmt(alpacaInvested, "en")}` },
+            { label: "Verfügbar", value: `$${fmt(alpacaBuyingPow, "en")}`, colorClass: "text-green-400" },
+          ] : null}
+        />
+        <AlpacaPositions />
+      </div>
 
-      {/* Alpaca Live Positions */}
-      <AlpacaPositions />
-
-      {showAdd && <AddPositionModal onClose={() => setShowAdd(false)} onSaved={fetchPortfolio} budget={portfolio?.budget} />}
-      {showBudget && <BudgetSettings budget={portfolio?.budget} onClose={() => setShowBudget(false)} onSaved={fetchPortfolio} />}
+      {showAdd && (
+        <AddPositionModal
+          onClose={() => setShowAdd(false)}
+          onSaved={fetchPortfolio}
+          budget={portfolio?.budget}
+        />
+      )}
+      {showBudget && (
+        <BudgetSettings
+          budget={portfolio?.budget}
+          onClose={() => setShowBudget(false)}
+          onSaved={fetchPortfolio}
+        />
+      )}
     </div>
   );
 }
