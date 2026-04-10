@@ -1005,11 +1005,6 @@ function FeatureFlagsSection() {
         </button>
       </div>
       {saved && <p className="text-xs text-green-400">✓ Gespeichert</p>}
-      {enabled && (
-        <div className="text-[11px] text-yellow-400 bg-yellow-900/20 border border-yellow-700/30 rounded-lg px-3 py-2">
-          ⚠️ Nur aktivieren wenn Phase 2 (Bear Bounce Short) deployed und getestet ist.
-        </div>
-      )}
     </Section>
   );
 }
