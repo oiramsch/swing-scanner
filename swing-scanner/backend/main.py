@@ -67,8 +67,10 @@ from backend.database import (
     TradePlan,
     get_active_trade_plans,
     get_all_trade_plans,
+    get_closed_trade_plans,
     get_trade_plan,
     save_trade_plan,
+    save_journal_entry,
     update_trade_plan,
     get_all_broker_connections,
     update_broker_manual_balance,
@@ -2107,6 +2109,83 @@ async def cancel_trade_plan(
     return {"status": "cancelled"}
 
 
+@app.post("/api/trade-plans/{plan_id}/close")
+async def close_trade_plan(
+    plan_id: int,
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Close a TradePlan: set status='closed', record exit price + date, auto-create JournalEntry.
+    Body: { exit_price: float, shares?: float, exit_reason?: str }
+    """
+    from datetime import date as _date, datetime as _dt
+    from backend.database import JournalEntry
+
+    plan = get_trade_plan(plan_id)
+    if not plan or plan.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Trade Plan nicht gefunden")
+
+    exit_price = float(data.get("exit_price", 0))
+    if exit_price <= 0:
+        raise HTTPException(status_code=422, detail="exit_price muss positiv sein")
+
+    shares = float(data.get("shares") or plan.shares_executed or 0)
+    exit_reason = data.get("exit_reason", "manual")
+    today = _date.today()
+
+    # Calculate P&L in EUR
+    entry_price = plan.actual_entry_price or plan.entry_high
+    pnl_eur: Optional[float] = None
+    pnl_pct: Optional[float] = None
+    if shares > 0 and entry_price:
+        # Fetch EUR/USD rate (best-effort, fallback 1.09)
+        eurusd = 1.09
+        try:
+            import yfinance as _yf
+            _t = _yf.Ticker("EURUSD=X")
+            _hist = _t.history(period="1d")
+            if not _hist.empty:
+                eurusd = round(float(_hist["Close"].iloc[-1]), 4)
+        except Exception:
+            pass
+        pnl_usd = (exit_price - entry_price) * shares
+        pnl_eur = round(pnl_usd / eurusd, 2)
+        pnl_pct = round(((exit_price - entry_price) / entry_price) * 100, 2)
+
+    update_data: dict = {
+        "status": "closed",
+        "actual_exit_price": exit_price,
+        "exit_date": today.isoformat(),
+    }
+    if shares > 0:
+        update_data["shares_executed"] = shares
+    update_trade_plan(plan_id, update_data)
+
+    # Auto-create JournalEntry so the trade appears in Journal Tab
+    if entry_price:
+        journal = JournalEntry(
+            trade_date=plan.created_at.date(),
+            ticker=plan.ticker,
+            setup_reason=plan.notes or "",
+            setup_type=plan.setup_type,
+            entry_price=entry_price,
+            stop_loss=plan.stop_loss,
+            target=plan.target or exit_price,
+            risk_eur=0.0,
+            risk_reward=0.0,
+            position_size=int(shares),
+            exit_price=exit_price,
+            exit_date=today,
+            pnl_eur=pnl_eur,
+            pnl_pct=pnl_pct,
+            source="tradeplan",
+        )
+        save_journal_entry(journal)
+
+    return {"status": "closed", "exit_price": exit_price, "pnl_eur": pnl_eur}
+
+
 @app.post("/api/trade-plans/{plan_id}/execute/{broker_id}")
 async def execute_trade_plan(
     plan_id: int,
@@ -2154,6 +2233,7 @@ async def execute_trade_plan(
         update_trade_plan(plan_id, {
             "execution_state_json": json.dumps(exec_state),
             "status": "active",
+            "shares_executed": float(plan_dict["qty"]),
         })
         return {"order": result, "broker": conn.label}
     except Exception as exc:
@@ -2266,6 +2346,7 @@ async def tr_plan_executed(
     update_trade_plan(plan_id, {
         "execution_state_json": json.dumps(exec_state),
         "status": "active",
+        "shares_executed": float(qty),
     })
 
     return {"position_id": position.get("id"), "broker": broker_id, "qty": qty}
