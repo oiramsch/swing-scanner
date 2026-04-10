@@ -49,7 +49,10 @@ function BrokerBadge({ broker }) {
 }
 
 function SlippageInput({ plan, onSaved }) {
-  const [val, setVal] = useState(plan.actual_entry_price != null ? String(plan.actual_entry_price) : "");
+  const defaultVal = plan.actual_entry_price != null
+    ? String(plan.actual_entry_price)
+    : (plan.entry_high ? String(plan.entry_high) : "");
+  const [val, setVal] = useState(defaultVal);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -71,29 +74,47 @@ function SlippageInput({ plan, onSaved }) {
       : null
   );
 
+  const actualPrice = parseFloat(val);
+  const aboveZone = !isNaN(actualPrice) && plan.entry_high && actualPrice > parseFloat(plan.entry_high);
+  const crv = !isNaN(actualPrice) && actualPrice > 0 && plan.target && plan.stop_loss
+    ? ((parseFloat(plan.target) - actualPrice) / (actualPrice - parseFloat(plan.stop_loss)))
+    : null;
+
   return (
-    <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
-      <span className="text-gray-600">Fill-Preis:</span>
-      <input
-        type="number"
-        step="0.01"
-        value={val}
-        onChange={e => setVal(e.target.value)}
-        placeholder="0.00"
-        className="w-24 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-gray-200 text-xs focus:outline-none focus:border-indigo-600"
-      />
-      <button
-        onClick={save}
-        disabled={saving}
-        className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 rounded transition disabled:opacity-50"
-      >
-        {saving ? "..." : "Speichern"}
-      </button>
-      {slippage != null && (
-        <span className={slippage > 0 ? "text-red-400" : slippage < 0 ? "text-green-400" : "text-gray-500"}>
-          Slippage: {slippage > 0 ? "+" : ""}{slippage.toFixed(2)}%
-        </span>
+    <div className="mt-2 space-y-1 text-xs">
+      {aboveZone && (
+        <div className="px-2 py-1 bg-orange-900/30 border border-orange-700/50 text-orange-400 rounded text-[11px]">
+          ⚠ Kauf oberhalb der Entry-Zone
+        </div>
       )}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-gray-600">Tatsächlicher Kaufkurs:</span>
+        <input
+          type="number"
+          step="0.01"
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          placeholder="0.00"
+          className="w-24 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-gray-200 text-xs focus:outline-none focus:border-indigo-600"
+        />
+        <button
+          onClick={save}
+          disabled={saving}
+          className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 rounded transition disabled:opacity-50"
+        >
+          {saving ? "..." : "Speichern"}
+        </button>
+        {slippage != null && (
+          <span className={slippage > 0 ? "text-red-400" : slippage < 0 ? "text-green-400" : "text-gray-500"}>
+            Slippage: {slippage > 0 ? "+" : ""}{slippage.toFixed(2)}%
+          </span>
+        )}
+        {crv != null && crv > 0 && (
+          <span className={crv >= 2.5 ? "text-green-400" : crv >= 1.5 ? "text-yellow-400" : "text-red-400"}>
+            CRV {crv.toFixed(1)}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -106,6 +127,13 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
   const execState = JSON.parse(plan.execution_state_json || "{}");
   const assignedIds = JSON.parse(plan.broker_ids_json || "[]");
   const assignedBrokers = brokers.filter(b => b.id == null || assignedIds.includes(b.id));
+  const [belowZoneConfirm, setBelowZoneConfirm] = useState(null); // broker waiting for below-zone confirm
+
+  function handleBrokerClick(broker) {
+    if (belowZone) { setBelowZoneConfirm(broker); return; }
+    if (broker.broker_type === "alpaca") onAlpacaBuy(plan, broker);
+    else onTRPlan(plan, broker);
+  }
 
   return (
     <div className={`p-4 border-b border-gray-800 last:border-0 transition ${inZone ? "bg-green-900/10" : belowZone ? "bg-orange-900/10" : ""}`}>
@@ -164,45 +192,42 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
                 </span>
               ) : isAlpaca ? (
                 <button
-                  onClick={() => !belowZone && onAlpacaBuy(plan, broker)}
-                  title={belowZone ? "Preis unter Support — Setup ungültig" : undefined}
+                  onClick={() => handleBrokerClick(broker)}
                   className={`text-xs px-3 py-1.5 rounded-lg border font-semibold transition ${
                     inZone
                       ? "bg-green-700 hover:bg-green-600 border-green-600 text-white"
                       : belowZone
-                      ? "bg-orange-900/30 border-orange-700/50 text-orange-400 cursor-not-allowed"
+                      ? "bg-orange-900/30 border-orange-700/50 text-orange-400 hover:bg-orange-900/50"
                       : "bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-300"
                   }`}
                 >
-                  {belowZone ? "⚠️ Below Zone" : `${broker.label} kaufen`}
+                  {belowZone ? "⚠ Below Zone" : `${broker.label} kaufen`}
                 </button>
               ) : isTR ? (
                 <button
-                  onClick={() => !belowZone && onTRPlan(plan, broker)}
-                  title={belowZone ? "Preis unter Support — Setup ungültig" : undefined}
+                  onClick={() => handleBrokerClick(broker)}
                   className={`text-xs px-3 py-1.5 rounded-lg border font-semibold transition ${
                     belowZone
-                      ? "bg-orange-900/30 border-orange-700/50 text-orange-400 cursor-not-allowed"
+                      ? "bg-orange-900/30 border-orange-700/50 text-orange-400 hover:bg-orange-900/50"
                       : inZone
                       ? "bg-green-700 hover:bg-green-600 border-green-600 text-white"
                       : "border-indigo-700/50 bg-indigo-900/20 hover:bg-indigo-900/40 text-indigo-300"
                   }`}
                 >
-                  {belowZone ? "⚠️ Below Zone" : `${broker.label} Plan ↗`}
+                  {belowZone ? "⚠ Below Zone" : `${broker.label} Plan ↗`}
                 </button>
               ) : (
                 <button
-                  onClick={() => !belowZone && onTRPlan(plan, broker)}
-                  title={belowZone ? "Preis unter Support — Setup ungültig" : undefined}
+                  onClick={() => handleBrokerClick(broker)}
                   className={`text-xs px-3 py-1.5 rounded-lg border transition ${
                     belowZone
-                      ? "bg-orange-900/30 border-orange-700/50 text-orange-400 cursor-not-allowed"
+                      ? "bg-orange-900/30 border-orange-700/50 text-orange-400 hover:bg-orange-900/50"
                       : inZone
                       ? "bg-green-700 hover:bg-green-600 border-green-600 text-white"
                       : "border-gray-700 bg-gray-800 hover:bg-gray-700 text-gray-400"
                   }`}
                 >
-                  {belowZone ? "⚠️ Below Zone" : `${broker.label} ↗`}
+                  {belowZone ? "⚠ Below Zone" : `${broker.label} ↗`}
                 </button>
               )}
             </div>
@@ -216,6 +241,33 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
           Abbrechen
         </button>
       </div>
+
+      {belowZoneConfirm && (
+        <div className="mt-2 px-3 py-2 bg-orange-900/20 border border-orange-700/50 rounded-lg text-xs space-y-2">
+          <div className="text-orange-400 font-medium">
+            ⚠ Der aktuelle Kurs liegt unter der Entry-Zone. Trotzdem kaufen?
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setBelowZoneConfirm(null)}
+              className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded border border-gray-700 transition"
+            >
+              Abbrechen
+            </button>
+            <button
+              onClick={() => {
+                const broker = belowZoneConfirm;
+                setBelowZoneConfirm(null);
+                if (broker.broker_type === "alpaca") onAlpacaBuy(plan, broker);
+                else onTRPlan(plan, broker);
+              }}
+              className="px-3 py-1.5 bg-orange-700 hover:bg-orange-600 text-white rounded font-semibold transition"
+            >
+              Trotzdem kaufen
+            </button>
+          </div>
+        </div>
+      )}
 
       {plan.notes && (
         <div className="mt-2 text-xs text-gray-600 italic">{plan.notes}</div>

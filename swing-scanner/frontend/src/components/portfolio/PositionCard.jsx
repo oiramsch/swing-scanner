@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import axios from "axios";
 
 const SIGNAL_COLORS = {
@@ -16,7 +16,8 @@ const SIGNAL_ICONS = {
   stagnation: "💤",
 };
 
-export default function PositionCard({ position: pos, onUpdate }) {
+export default function PositionCard({ position: pos, broker, onUpdate }) {
+  const isTR = broker?.broker_type === "trade_republic";
   const [showEdit, setShowEdit] = useState(false);
   const [editForm, setEditForm] = useState({
     entry_price: pos.entry_price ?? "",
@@ -27,9 +28,22 @@ export default function PositionCard({ position: pos, onUpdate }) {
   });
   const [showClose, setShowClose] = useState(false);
   const [exitPrice, setExitPrice] = useState("");
+  const [exitPriceEur, setExitPriceEur] = useState("");
+  const [exitEurMode, setExitEurMode] = useState(false);
+  const [eurusd, setEurusd] = useState(null);
   const [exitReason, setExitReason] = useState("manual");
   const [saving, setSaving] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
+
+  useEffect(() => {
+    if (!showClose || !isTR) return;
+    axios.get("/api/quotes?symbols=EURUSD%3DX")
+      .then(r => {
+        const rate = r.data?.["EURUSD=X"];
+        if (rate && rate > 0.5) setEurusd(rate);
+      })
+      .catch(() => {});
+  }, [showClose, isTR]);
 
   const pnl = pos.unrealized_pnl ?? pos.pnl_eur ?? 0;
   const pnlPct = pos.unrealized_pct ?? pos.pnl_pct ?? 0;
@@ -88,11 +102,17 @@ export default function PositionCard({ position: pos, onUpdate }) {
   }
 
   async function closePosition() {
-    if (!exitPrice) return;
+    let priceUsd;
+    if (exitEurMode && isTR && exitPriceEur && eurusd) {
+      priceUsd = parseFloat(exitPriceEur) * eurusd;
+    } else {
+      priceUsd = parseFloat(exitPrice);
+    }
+    if (!priceUsd || isNaN(priceUsd)) return;
     setSaving(true);
     try {
       await axios.post(`/api/portfolio/${pos.id}/close`, {
-        exit_price: parseFloat(exitPrice),
+        exit_price: priceUsd,
         exit_reason: exitReason,
       });
       setShowClose(false);
@@ -341,11 +361,45 @@ export default function PositionCard({ position: pos, onUpdate }) {
         </button>
       ) : (
         <div className="space-y-2">
-          <input
-            type="number" step="0.01" placeholder="Exit price"
-            value={exitPrice} onChange={e => setExitPrice(e.target.value)}
-            className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-white text-sm"
-          />
+          {isTR && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setExitEurMode(m => !m)}
+                className={`px-2 py-0.5 rounded border text-[10px] transition ${
+                  exitEurMode
+                    ? "bg-indigo-900/30 border-indigo-600 text-indigo-300"
+                    : "border-gray-700 text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                {exitEurMode ? "€ EUR-Modus aktiv" : "EUR eingeben"}
+              </button>
+              {exitEurMode && eurusd && (
+                <span className="text-[10px] text-gray-600">EUR/USD: {eurusd.toFixed(4)}</span>
+              )}
+            </div>
+          )}
+          {exitEurMode && isTR ? (
+            <div className="space-y-1">
+              <input
+                type="number" step="0.01" placeholder="Exit Preis (EUR)"
+                value={exitPriceEur} onChange={e => setExitPriceEur(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-white text-sm"
+              />
+              {exitPriceEur && eurusd ? (
+                <div className="text-xs text-gray-500 px-1">
+                  ≈ ${(parseFloat(exitPriceEur) * eurusd).toFixed(2)} USD gespeichert
+                </div>
+              ) : exitPriceEur && !eurusd ? (
+                <div className="text-xs text-gray-600 px-1">EUR/USD-Rate wird geladen…</div>
+              ) : null}
+            </div>
+          ) : (
+            <input
+              type="number" step="0.01" placeholder="Exit price"
+              value={exitPrice} onChange={e => setExitPrice(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-white text-sm"
+            />
+          )}
           <select value={exitReason} onChange={e => setExitReason(e.target.value)}
             className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-1.5 text-gray-300 text-sm">
             <option value="manual">Manual</option>
@@ -354,8 +408,11 @@ export default function PositionCard({ position: pos, onUpdate }) {
             <option value="signal">Signal</option>
           </select>
           <div className="flex gap-2">
-            <button onClick={closePosition} disabled={saving || !exitPrice}
-              className="flex-1 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded disabled:opacity-50">
+            <button
+              onClick={closePosition}
+              disabled={saving || (exitEurMode && isTR ? !exitPriceEur : !exitPrice)}
+              className="flex-1 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm rounded disabled:opacity-50"
+            >
               Confirm Close
             </button>
             <button onClick={() => setShowClose(false)} className="px-3 py-1.5 bg-gray-800 text-gray-400 rounded text-sm">

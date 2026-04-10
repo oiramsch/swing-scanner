@@ -61,6 +61,7 @@ export default function JustageModal({ plan, broker, livePrice, onClose, onSucce
   const [success,   setSuccess]   = useState(null);
   const [showTR,    setShowTR]    = useState(false);
   const [confirmLive, setConfirmLive] = useState(false); // double-confirm for live Alpaca
+  const [confirmBelowZone, setConfirmBelowZone] = useState(false); // confirm when price below zone
 
   const entry      = parseFloat(plan.entry_high);
   const stop       = parseFloat(plan.stop_loss);
@@ -210,6 +211,13 @@ export default function JustageModal({ plan, broker, livePrice, onClose, onSucce
             </div>
           </div>
 
+          {/* Below Zone confirmation prompt */}
+          {confirmBelowZone && (
+            <div className="px-3 py-2.5 bg-orange-900/20 border border-orange-700/50 rounded-lg text-xs text-orange-400 font-medium">
+              ⚠ Der aktuelle Kurs liegt unter der Entry-Zone. Trotzdem kaufen?
+            </div>
+          )}
+
           {/* Error */}
           {error && (
             <div className="text-red-400 text-xs bg-red-900/20 border border-red-800/40 rounded px-3 py-2">
@@ -235,14 +243,41 @@ export default function JustageModal({ plan, broker, livePrice, onClose, onSucce
             >
               Abbrechen
             </button>
-            {isAlpaca && !confirmLive && (
+            {/* Below Zone confirmation panel */}
+            {confirmBelowZone && (
+              <>
+                <button
+                  onClick={() => setConfirmBelowZone(false)}
+                  className="flex-1 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-gray-400 rounded border border-gray-700 transition"
+                >
+                  Zurück
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirmBelowZone(false);
+                    if (isAlpaca) {
+                      broker.is_paper ? executeAlpaca() : setConfirmLive(true);
+                    } else {
+                      setShowTR(true);
+                    }
+                  }}
+                  disabled={executing}
+                  className="flex-2 px-4 py-2 text-sm rounded font-semibold bg-orange-700 hover:bg-orange-600 text-white transition disabled:opacity-50"
+                >
+                  {executing ? "Kaufe…" : "Trotzdem kaufen"}
+                </button>
+              </>
+            )}
+            {isAlpaca && !confirmLive && !confirmBelowZone && (
               <button
-                onClick={() => broker.is_paper ? executeAlpaca() : setConfirmLive(true)}
-                disabled={executing || belowZone}
-                title={belowZone ? "Preis unter Support — Setup ungültig" : undefined}
+                onClick={() => {
+                  if (belowZone) { setConfirmBelowZone(true); return; }
+                  broker.is_paper ? executeAlpaca() : setConfirmLive(true);
+                }}
+                disabled={executing}
                 className={`flex-2 px-6 py-2 text-sm rounded font-semibold transition disabled:opacity-50 ${
                   belowZone
-                    ? "bg-orange-900/40 border border-orange-700/50 text-orange-400 cursor-not-allowed"
+                    ? "bg-orange-900/40 border border-orange-700/50 text-orange-400 hover:bg-orange-900/60"
                     : inZone
                     ? "bg-green-600 hover:bg-green-500 text-white"
                     : "bg-indigo-600 hover:bg-indigo-500 text-white"
@@ -251,7 +286,7 @@ export default function JustageModal({ plan, broker, livePrice, onClose, onSucce
                 {executing ? "Kaufe…" : belowZone ? "⚠️ Below Zone" : `${qty} Stk. kaufen`}
               </button>
             )}
-            {isAlpaca && confirmLive && (
+            {isAlpaca && confirmLive && !confirmBelowZone && (
               <>
                 <button
                   onClick={() => setConfirmLive(false)}
@@ -268,14 +303,16 @@ export default function JustageModal({ plan, broker, livePrice, onClose, onSucce
                 </button>
               </>
             )}
-            {(isTR || !isAlpaca) && (
+            {(isTR || !isAlpaca) && !confirmBelowZone && (
               <button
-                onClick={() => setShowTR(true)}
-                disabled={belowZone}
-                title={belowZone ? "Preis unter Support — Setup ungültig" : undefined}
+                onClick={() => {
+                  if (belowZone) { setConfirmBelowZone(true); return; }
+                  setShowTR(true);
+                }}
+                disabled={executing}
                 className={`flex-2 px-6 py-2 text-sm rounded font-semibold transition disabled:opacity-50 ${
                   belowZone
-                    ? "bg-orange-900/40 border border-orange-700/50 text-orange-400 cursor-not-allowed"
+                    ? "bg-orange-900/40 border border-orange-700/50 text-orange-400 hover:bg-orange-900/60"
                     : "bg-indigo-600 hover:bg-indigo-500 text-white"
                 }`}
               >
