@@ -278,9 +278,9 @@ function OpenOrdersSection({ visible }) {
 // Main component
 // ---------------------------------------------------------------------------
 const WS_STATUS = {
-  live: { dot: "bg-green-400 animate-pulse", text: "text-green-400",  border: "border-green-700/50 bg-green-900/20",   label: "🟢 Live" },
-  mock: { dot: "bg-yellow-400",              text: "text-yellow-400", border: "border-yellow-700/50 bg-yellow-900/20", label: "🟡 Mock" },
-  off:  { dot: "bg-red-500",                 text: "text-red-400",    border: "border-red-700/50 bg-red-900/20",       label: "🔴 Offline" },
+  live:    { dot: "bg-green-400 animate-pulse", text: "text-green-400",  border: "border-green-700/50 bg-green-900/20",  label: "🟢 Live" },
+  polling: { dot: "bg-blue-400",               text: "text-blue-400",   border: "border-blue-700/50 bg-blue-900/20",    label: "🔵 Polling" },
+  off:     { dot: "bg-red-500",                text: "text-red-400",    border: "border-red-700/50 bg-red-900/20",      label: "🔴 Offline" },
 };
 
 export default function TradingCockpit({ setActiveTab }) {
@@ -300,7 +300,7 @@ export default function TradingCockpit({ setActiveTab }) {
   );
   const { prices: wsPrices, connected: wsConnected, isMock: wsMock } = useAlpacaWebSocket(pendingTickers);
 
-  const wsStatus = wsConnected ? "live" : wsMock ? "mock" : "off";
+  const wsStatus = wsConnected ? "live" : wsMock ? "polling" : "off";
 
   useEffect(() => {
     loadAll();
@@ -308,17 +308,10 @@ export default function TradingCockpit({ setActiveTab }) {
     return () => { clearInterval(clockRef); };
   }, []);
 
-  // Fallback polling: only when WebSocket is neither connected nor in mock mode
+  // Polling: slow (30s) when WS live — fast (5s) otherwise (mock/offline → use /api/quotes for real prices)
   useEffect(() => {
-    if (wsConnected || wsMock) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-      // Still poll volume_ratio at low frequency
-      pollRef.current = setInterval(refreshQuotes, 30000);
-    } else {
-      clearInterval(pollRef.current);
-      pollRef.current = setInterval(refreshQuotes, 5000);
-    }
+    clearInterval(pollRef.current);
+    pollRef.current = setInterval(refreshQuotes, wsConnected ? 30000 : 5000);
     return () => clearInterval(pollRef.current);
   }, [wsConnected, wsMock, plans]);
 
@@ -357,9 +350,9 @@ export default function TradingCockpit({ setActiveTab }) {
     } catch {}
   }
 
-  // Merge live prices: WS price takes priority, fallback to polling quote
+  // Merge live prices: real WS price takes priority; never use mock prices (base=100)
   function getLivePrice(ticker) {
-    if (wsPrices[ticker] != null) return wsPrices[ticker];
+    if (wsConnected && wsPrices[ticker] != null) return wsPrices[ticker];
     return quotes[ticker]?.price ?? null;
   }
 
@@ -434,7 +427,7 @@ export default function TradingCockpit({ setActiveTab }) {
             Pending Pläne ({plans.length})
           </h2>
           <span className="text-xs text-gray-600">
-            {wsConnected ? "WebSocket Live" : wsMock ? "Mock-Modus" : "Polling-Fallback"}
+            {wsConnected ? "WebSocket Live" : wsMock ? "Polling-Fallback" : "Kein Feed"}
           </span>
         </div>
 

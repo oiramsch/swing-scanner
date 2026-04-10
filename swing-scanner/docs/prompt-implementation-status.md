@@ -14,3 +14,4 @@
 | `Phase5.x_UserSettings_SaaS.md` | ⏳ Pending | — | |
 | `Bugfix_ScanMonitoring_NewsCache.md` | ⏳ Pending | — | |
 | `Bugfix_FridayScan_NewsCache.md` | ⏳ Pending | — | |
+| `Bugfix_AlpacaBalance_LivePrice_Mock.md` | ✅ Implemented | `claude/issue-46-*` | Bug #46: PlanModal balance fix + getLivePrice mock-bypass + Polling badge |
