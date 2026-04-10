@@ -114,6 +114,9 @@ def _apply_migrations():
         # Phase 3 — Paper Auto-Trading
         ("tradeplan",    "auto_trade", "INTEGER DEFAULT 0"),
         ("journalentry", "source",     "TEXT DEFAULT 'manual'"),
+        # v5.0 — Ghost Portfolio: entry zone bounds for Entry/TP/CRV display
+        ("predictionarchive", "entry_low",  "REAL"),
+        ("predictionarchive", "entry_high", "REAL"),
         # v3.1 — Dynamic Universe Management
         ("scanuniverse", "tickers_json",       "TEXT"),
         ("scanuniverse", "regime_default",     "TEXT DEFAULT 'any'"),
@@ -772,6 +775,8 @@ class PredictionArchive(SQLModel, table=True):
     setup_type: Optional[str] = None
     # Trade levels (parsed floats — None for watchlist_pending without setup)
     entry_price: Optional[float] = None          # midpoint of entry_zone
+    entry_low: Optional[float] = None            # lower bound of entry zone (v5.0)
+    entry_high: Optional[float] = None           # upper bound of entry zone (v5.0)
     stop_loss: Optional[float] = None
     target_price: Optional[float] = None
     crv: Optional[float] = None
@@ -1557,6 +1562,8 @@ def get_prediction_stats() -> dict:
     wins    = sum(1 for p in all_preds if p.status == "WIN")
     losses  = sum(1 for p in all_preds if p.status == "LOSS")
     timeouts = sum(1 for p in all_preds if p.status == "TIMEOUT")
+    shown_in_dashboard = sum(1 for p in all_preds if p.candidate_status == "active")
+    silent_candidates  = sum(1 for p in all_preds if p.candidate_status == "watchlist_pending")
 
     decided = wins + losses
     win_rate = round(wins / decided * 100, 1) if decided else None
@@ -1579,16 +1586,18 @@ def get_prediction_stats() -> dict:
         by_module[p.strategy_module][p.status] += 1
 
     return {
-        "total":         total,
-        "pending":       pending,
-        "wins":          wins,
-        "losses":        losses,
-        "timeouts":      timeouts,
-        "win_rate_pct":  win_rate,
+        "total":               total,
+        "pending":             pending,
+        "wins":                wins,
+        "losses":              losses,
+        "timeouts":            timeouts,
+        "shown_in_dashboard":  shown_in_dashboard,
+        "silent_candidates":   silent_candidates,
+        "win_rate_pct":        win_rate,
         "avg_days_to_resolve": avg_days,
-        "by_regime":     dict(by_regime),
-        "by_module":     dict(by_module),
-        "note":          f"ML training ready when decided >= 500 (currently {decided})",
+        "by_regime":           dict(by_regime),
+        "by_module":           dict(by_module),
+        "note":                f"ML training ready when decided >= 500 (currently {decided})",
     }
 
 

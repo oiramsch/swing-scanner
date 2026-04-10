@@ -97,3 +97,47 @@ def test_composite_score_low_crv():
     """CRV < 1.0 → factor capped at 0.5 → score = confidence × 0.5."""
     score = _composite_score(confidence=8.0, crv=0.5)
     assert abs(score - 4.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# _parse_entry_bounds (news_checker)
+# ---------------------------------------------------------------------------
+
+def test_parse_entry_bounds_range():
+    """'37.00-37.50' → (37.0, 37.5)."""
+    from backend.news_checker import _parse_entry_bounds
+    low, high = _parse_entry_bounds("37.00-37.50")
+    assert low == pytest.approx(37.0)
+    assert high == pytest.approx(37.5)
+
+
+def test_parse_entry_bounds_single_price():
+    """Single price '100.00' → (100.0, 100.0)."""
+    from backend.news_checker import _parse_entry_bounds
+    low, high = _parse_entry_bounds("100.00")
+    assert low == pytest.approx(100.0)
+    assert high == pytest.approx(100.0)
+
+
+def test_parse_entry_bounds_with_dollar():
+    """'$148.00-$150.00' strips $ and parses correctly."""
+    from backend.news_checker import _parse_entry_bounds
+    low, high = _parse_entry_bounds("$148.00-$150.00")
+    assert low == pytest.approx(148.0)
+    assert high == pytest.approx(150.0)
+
+
+def test_parse_entry_bounds_none():
+    """None input returns (None, None)."""
+    from backend.news_checker import _parse_entry_bounds
+    low, high = _parse_entry_bounds(None)
+    assert low is None
+    assert high is None
+
+
+def test_parse_entry_bounds_invalid():
+    """Unparseable string returns (None, None)."""
+    from backend.news_checker import _parse_entry_bounds
+    low, high = _parse_entry_bounds("N/A")
+    assert low is None
+    assert high is None

@@ -276,3 +276,111 @@ class TestGhostPositionsEndpoint:
         with Session(engine) as s:
             s.exec(delete(PredictionArchive))
             s.commit()
+
+    def test_entry_zone_fields_returned(self, test_client, engine):
+        """Items include entry_low, entry_high, candidate_status fields."""
+        from backend.database import PredictionArchive
+        from sqlmodel import Session, delete
+
+        with Session(engine) as s:
+            s.exec(delete(PredictionArchive))
+            s.add(PredictionArchive(
+                scan_date=date.today(), ticker="AAPL", regime="bull",
+                strategy_module="Bull Breakout", status="PENDING",
+                entry_price=100.0, entry_low=98.0, entry_high=102.0,
+                stop_loss=95.0, target_price=115.0, crv=2.33,
+                candidate_status="active",
+            ))
+            s.commit()
+
+        with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
+            resp = test_client.get("/api/ghost-portfolio/positions")
+
+        assert resp.status_code == 200
+        item = resp.json()["items"][0]
+        assert item["entry_low"] == 98.0
+        assert item["entry_high"] == 102.0
+        assert item["candidate_status"] == "active"
+        assert item["stop_loss"] == 95.0
+        assert item["target_price"] == 115.0
+        assert item["crv"] == 2.33
+
+        with Session(engine) as s:
+            s.exec(delete(PredictionArchive))
+            s.commit()
+
+    def test_filter_by_candidate_status(self, test_client, engine):
+        """?candidate_status=active only returns active (shown) entries."""
+        from backend.database import PredictionArchive
+        from sqlmodel import Session, delete
+
+        with Session(engine) as s:
+            s.exec(delete(PredictionArchive))
+            s.add(PredictionArchive(
+                scan_date=date.today(), ticker="SHOWN", regime="bull",
+                strategy_module="Bull Breakout", status="PENDING",
+                candidate_status="active",
+            ))
+            s.add(PredictionArchive(
+                scan_date=date.today(), ticker="SILENT", regime="bull",
+                strategy_module="Bull Breakout", status="PENDING",
+                candidate_status="watchlist_pending",
+            ))
+            s.commit()
+
+        with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
+            resp = test_client.get("/api/ghost-portfolio/positions?candidate_status=active")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 1
+        assert all(item["candidate_status"] == "active" for item in body["items"])
+
+        with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
+            resp2 = test_client.get("/api/ghost-portfolio/positions?candidate_status=watchlist_pending")
+
+        assert resp2.status_code == 200
+        body2 = resp2.json()
+        assert body2["total"] == 1
+        assert body2["items"][0]["ticker"] == "SILENT"
+
+        with Session(engine) as s:
+            s.exec(delete(PredictionArchive))
+            s.commit()
+
+    def test_prediction_stats_includes_shown_silent_kpi(self, test_client, engine):
+        """GET /api/predictions/stats returns shown_in_dashboard and silent_candidates."""
+        from backend.database import PredictionArchive
+        from sqlmodel import Session, delete
+
+        with Session(engine) as s:
+            s.exec(delete(PredictionArchive))
+            s.add(PredictionArchive(
+                scan_date=date.today(), ticker="A1", regime="bull",
+                strategy_module="Bull Breakout", status="PENDING",
+                candidate_status="active",
+            ))
+            s.add(PredictionArchive(
+                scan_date=date.today(), ticker="B1", regime="bull",
+                strategy_module="Bull Breakout", status="PENDING",
+                candidate_status="watchlist_pending",
+            ))
+            s.add(PredictionArchive(
+                scan_date=date.today(), ticker="B2", regime="bear",
+                strategy_module="Bear Relative Strength", status="WIN",
+                candidate_status="watchlist_pending",
+                entry_price=50.0, resolved_price=45.0,
+                resolved_at=datetime.utcnow(), days_to_resolve=7,
+            ))
+            s.commit()
+
+        resp = test_client.get("/api/predictions/stats")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["shown_in_dashboard"] == 1
+        assert body["silent_candidates"] == 2
+        assert body["total"] == 3
+
+        with Session(engine) as s:
+            s.exec(delete(PredictionArchive))
+            s.commit()
