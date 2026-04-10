@@ -447,11 +447,18 @@ export default function CandidateCard({ candidate: c }) {
       </div>
 
       {showInteractiveChart && (
-        <CandidateChart
-          symbol={c.ticker}
-          scanResult={c}
-          onClose={() => setShowInteractiveChart(false)}
-        />
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={e => { if (e.target === e.currentTarget) setShowInteractiveChart(false); }}
+        >
+          <div className="w-full max-w-3xl rounded-xl overflow-hidden shadow-2xl">
+            <CandidateChart
+              symbol={c.ticker}
+              scanResult={c}
+              onClose={() => setShowInteractiveChart(false)}
+            />
+          </div>
+        </div>
       )}
       {showDeep && (
         <DeepAnalysisModal candidate={c} onClose={() => setShowDeep(false)} />
