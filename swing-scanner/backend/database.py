@@ -121,6 +121,8 @@ def _apply_migrations():
         ("scanuniverse", "requires_capability","TEXT"),
         ("scanuniverse", "risk_warning",       "TEXT"),
         ("scanuniverse", "sort_order",         "INTEGER DEFAULT 99"),
+        # v4.1 — Ghost Portfolio TIMEOUT: P&L at expiry + exit price tracking
+        ("predictionarchive", "pnl_pct", "REAL"),
     ]
     engine = get_engine()
     with engine.connect() as conn:
@@ -777,10 +779,12 @@ class PredictionArchive(SQLModel, table=True):
     crv: Optional[float] = None
     confidence: int = 0
     # Resolution
+    # TIMEOUT != LOSS — TIMEOUT ist eigene ML-Klasse (abgelaufen ohne Treffer)
     status: str = "PENDING"                      # PENDING | WIN | LOSS | TIMEOUT
     resolved_at: Optional[datetime] = None
-    resolved_price: Optional[float] = None
+    resolved_price: Optional[float] = None       # EOD close at resolution day
     days_to_resolve: Optional[int] = None
+    pnl_pct: Optional[float] = None              # (resolved_price - entry_price) / entry_price * 100
     notes: Optional[str] = None
 
 
@@ -1523,16 +1527,19 @@ def resolve_prediction(
     pred_id: int,
     status: str,
     resolved_price: Optional[float] = None,
+    pnl_pct: Optional[float] = None,
     notes: Optional[str] = None,
 ) -> None:
     with Session(get_engine()) as session:
         pred = session.get(PredictionArchive, pred_id)
         if not pred:
             return
-        pred.status        = status
-        pred.resolved_at   = datetime.utcnow()
-        pred.resolved_price = resolved_price
+        pred.status          = status
+        pred.resolved_at     = datetime.utcnow()
+        pred.resolved_price  = resolved_price
         pred.days_to_resolve = (date.today() - pred.scan_date).days
+        if pnl_pct is not None:
+            pred.pnl_pct = pnl_pct
         if notes:
             pred.notes = notes
         session.add(pred)
@@ -1552,14 +1559,19 @@ def get_prediction_stats() -> dict:
 
     from collections import defaultdict
 
-    total   = len(all_preds)
-    pending = sum(1 for p in all_preds if p.status == "PENDING")
-    wins    = sum(1 for p in all_preds if p.status == "WIN")
-    losses  = sum(1 for p in all_preds if p.status == "LOSS")
+    total    = len(all_preds)
+    pending  = sum(1 for p in all_preds if p.status == "PENDING")
+    wins     = sum(1 for p in all_preds if p.status == "WIN")
+    losses   = sum(1 for p in all_preds if p.status == "LOSS")
     timeouts = sum(1 for p in all_preds if p.status == "TIMEOUT")
 
-    decided = wins + losses
-    win_rate = round(wins / decided * 100, 1) if decided else None
+    # TIMEOUT != LOSS — TIMEOUT ist eigene Klasse für ML-Training.
+    # Win-rate nur über WIN vs. LOSS; ML-Readiness zählt alle drei Labels.
+    decided_winloss = wins + losses
+    win_rate = round(wins / decided_winloss * 100, 1) if decided_winloss else None
+
+    # For ML readiness: WIN + LOSS + TIMEOUT all count as decided predictions
+    decided_ml = wins + losses + timeouts
 
     # Avg days to resolve (WIN + LOSS only)
     resolved_days = [
@@ -1567,6 +1579,13 @@ def get_prediction_stats() -> dict:
         if p.status in ("WIN", "LOSS") and p.days_to_resolve is not None
     ]
     avg_days = round(sum(resolved_days) / len(resolved_days), 1) if resolved_days else None
+
+    # Ø P&L bei TIMEOUT — zeigt ob abgelaufene Positionen im Schnitt im Plus oder Minus waren
+    timeout_pnls = [
+        p.pnl_pct for p in all_preds
+        if p.status == "TIMEOUT" and p.pnl_pct is not None
+    ]
+    avg_pnl_timeout = round(sum(timeout_pnls) / len(timeout_pnls), 2) if timeout_pnls else None
 
     # Breakdown by regime
     by_regime: dict = defaultdict(lambda: {"WIN": 0, "LOSS": 0, "TIMEOUT": 0, "PENDING": 0})
@@ -1579,16 +1598,18 @@ def get_prediction_stats() -> dict:
         by_module[p.strategy_module][p.status] += 1
 
     return {
-        "total":         total,
-        "pending":       pending,
-        "wins":          wins,
-        "losses":        losses,
-        "timeouts":      timeouts,
-        "win_rate_pct":  win_rate,
+        "total":              total,
+        "pending":            pending,
+        "wins":               wins,
+        "losses":             losses,
+        "timeouts":           timeouts,
+        "win_rate_pct":       win_rate,
         "avg_days_to_resolve": avg_days,
-        "by_regime":     dict(by_regime),
-        "by_module":     dict(by_module),
-        "note":          f"ML training ready when decided >= 500 (currently {decided})",
+        "avg_pnl_timeout":    avg_pnl_timeout,
+        "decided_ml":         decided_ml,
+        "by_regime":          dict(by_regime),
+        "by_module":          dict(by_module),
+        "note":               f"ML training ready when decided >= 500 (currently {decided_ml})",
     }
 
 
