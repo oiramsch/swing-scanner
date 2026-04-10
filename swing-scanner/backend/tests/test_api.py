@@ -6,7 +6,7 @@ on routes that don't use Depends(get_current_user), like /api/scan/status.
 """
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -189,3 +189,90 @@ class TestIntradayEndpoint:
         """Missing Bearer token → 401."""
         resp = test_client.get("/api/chart/AAPL/intraday")
         assert resp.status_code == 401
+
+
+# ── Ghost Portfolio Positions endpoint (Issue #52) ─────────────────────────
+
+class TestGhostPositionsEndpoint:
+    """Tests for GET /api/ghost-portfolio/positions."""
+
+    def test_empty_db_returns_empty_list(self, test_client):
+        """With no predictions in DB the endpoint returns an empty items list."""
+        with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
+            resp = test_client.get("/api/ghost-portfolio/positions")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "items" in body
+        assert "total" in body
+        assert "pages" in body
+        assert body["items"] == []
+        assert body["total"] == 0
+        assert body["pages"] == 1
+
+    def test_pagination_defaults(self, test_client):
+        """Response always includes page / page_size keys."""
+        with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
+            resp = test_client.get("/api/ghost-portfolio/positions")
+        body = resp.json()
+        assert body["page"] == 1
+        assert body["page_size"] == 50
+
+    def test_filter_by_status(self, test_client, engine):
+        """?status=WIN only returns WIN entries."""
+        from backend.database import PredictionArchive
+        from sqlmodel import Session, delete
+
+        with Session(engine) as s:
+            s.exec(delete(PredictionArchive))
+            s.add(PredictionArchive(
+                scan_date=date.today(), ticker="WIN1", regime="bull",
+                strategy_module="Bull Breakout", status="WIN",
+                entry_price=100.0, resolved_price=110.0,
+                resolved_at=datetime.utcnow(), days_to_resolve=5,
+            ))
+            s.add(PredictionArchive(
+                scan_date=date.today(), ticker="PEND1", regime="bull",
+                strategy_module="Bull Breakout", status="PENDING",
+                entry_price=100.0,
+            ))
+            s.commit()
+
+        with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
+            resp = test_client.get("/api/ghost-portfolio/positions?status=WIN")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert all(item["status"] == "WIN" for item in body["items"])
+
+        # Cleanup
+        with Session(engine) as s:
+            s.exec(delete(PredictionArchive))
+            s.commit()
+
+    def test_win_entry_has_exit_fields(self, test_client, engine):
+        """WIN entries expose exit_price and exit_date."""
+        from backend.database import PredictionArchive
+        from sqlmodel import Session, delete
+
+        resolved_dt = datetime(2026, 3, 1, 10, 0, 0)
+        with Session(engine) as s:
+            s.exec(delete(PredictionArchive))
+            s.add(PredictionArchive(
+                scan_date=date(2026, 2, 20), ticker="WIN2", regime="bull",
+                strategy_module="Bull Breakout", status="WIN",
+                entry_price=50.0, resolved_price=55.0,
+                resolved_at=resolved_dt, days_to_resolve=9,
+            ))
+            s.commit()
+
+        with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
+            resp = test_client.get("/api/ghost-portfolio/positions?status=WIN")
+
+        assert resp.status_code == 200
+        item = resp.json()["items"][0]
+        assert item["exit_price"] == 55.0
+        assert item["exit_date"] == "2026-03-01"
+
+        with Session(engine) as s:
+            s.exec(delete(PredictionArchive))
+            s.commit()

@@ -740,6 +740,172 @@ async def list_predictions(
 
 
 # ---------------------------------------------------------------------------
+# Ghost Portfolio — Positions (Issue #52)
+# ---------------------------------------------------------------------------
+
+# In-memory price cache: ticker -> (close_price, cache_date)
+_ghost_price_cache: dict[str, tuple[float, date]] = {}
+
+
+async def _get_cached_prices(tickers: list[str]) -> dict[str, float]:
+    """Fetch EOD prices for tickers via yfinance, cached once per day."""
+    import asyncio as _asyncio
+    from backend.providers.yfinance_provider import _snapshot_sync
+
+    today = date.today()
+    result: dict[str, float] = {}
+    to_fetch: list[str] = []
+
+    for ticker in tickers:
+        if ticker in _ghost_price_cache:
+            price, cached_date = _ghost_price_cache[ticker]
+            if cached_date == today:
+                result[ticker] = price
+                continue
+        to_fetch.append(ticker)
+
+    if to_fetch:
+        snapshots = await _asyncio.to_thread(_snapshot_sync, to_fetch)
+        for snap in snapshots:
+            _ghost_price_cache[snap["ticker"]] = (snap["close"], today)
+            result[snap["ticker"]] = snap["close"]
+
+    return result
+
+
+@app.get("/api/ghost-portfolio/positions")
+async def get_ghost_positions(
+    status: Optional[str] = None,
+    module: Optional[str] = None,
+    regime: Optional[str] = None,
+    page: int = 1,
+    sort_by: str = "scan_date",
+    sort_dir: str = "desc",
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    """
+    Paginated positions list for Ghost Portfolio tab.
+    Enriches PENDING entries with cached yfinance EOD prices.
+    """
+    from backend.database import PredictionArchive
+    from sqlmodel import Session, select, func
+    from backend.database import get_engine
+
+    page_size = 50
+
+    with Session(get_engine()) as session:
+        def _base_query():
+            q = select(PredictionArchive)
+            if status:
+                q = q.where(PredictionArchive.status == status.upper())
+            if module:
+                q = q.where(PredictionArchive.strategy_module == module)
+            if regime:
+                q = q.where(PredictionArchive.regime == regime)
+            if date_from:
+                q = q.where(PredictionArchive.scan_date >= date.fromisoformat(date_from))
+            if date_to:
+                q = q.where(PredictionArchive.scan_date <= date.fromisoformat(date_to))
+            return q
+
+        # Total count
+        count_stmt = select(func.count()).select_from(_base_query().subquery())
+        total: int = session.exec(count_stmt).one()
+
+        # Sorted + paginated query
+        data_q = _base_query()
+        if sort_by == "duration":
+            col = PredictionArchive.days_to_resolve
+        else:
+            col = PredictionArchive.scan_date
+
+        if sort_dir == "asc":
+            data_q = data_q.order_by(col.asc())
+        else:
+            data_q = data_q.order_by(col.desc())
+
+        offset = (page - 1) * page_size
+        data_q = data_q.offset(offset).limit(page_size)
+        preds = list(session.exec(data_q).all())
+
+    # Fetch current prices for PENDING entries
+    pending_tickers = [p.ticker for p in preds if p.status == "PENDING"]
+    current_prices = await _get_cached_prices(pending_tickers) if pending_tickers else {}
+
+    items = []
+    today = date.today()
+    for p in preds:
+        current_price = current_prices.get(p.ticker) if p.status == "PENDING" else None
+
+        change_pct: Optional[float] = None
+        change_abs: Optional[float] = None
+        color = "neutral"
+
+        if p.entry_price and current_price:
+            change_pct = round((current_price - p.entry_price) / p.entry_price * 100, 2)
+            change_abs = round(current_price - p.entry_price, 2)
+            if current_price >= p.entry_price:
+                color = "green"
+            elif p.stop_loss and current_price <= p.stop_loss:
+                color = "red"
+            else:
+                color = "yellow"
+
+        sl_distance_pct: Optional[float] = None
+        tp_distance_pct: Optional[float] = None
+        if p.status == "PENDING" and current_price and p.entry_price:
+            if p.stop_loss:
+                sl_distance_pct = round((current_price - p.stop_loss) / current_price * 100, 2)
+            if p.target_price:
+                tp_distance_pct = round((p.target_price - current_price) / current_price * 100, 2)
+
+        duration_days = (today - p.scan_date).days if p.scan_date else None
+
+        exit_price: Optional[float] = None
+        exit_date: Optional[str] = None
+        if p.status in ("WIN", "LOSS"):
+            exit_price = p.resolved_price
+            exit_date = str(p.resolved_at.date()) if p.resolved_at else None
+
+        items.append({
+            "id": p.id,
+            "ticker": p.ticker,
+            "module": p.strategy_module,
+            "regime": p.regime,
+            "scan_date": str(p.scan_date),
+            "entry_price": p.entry_price,
+            "current_price": current_price,
+            "change_pct": change_pct,
+            "change_abs": change_abs,
+            "stop_loss": p.stop_loss,
+            "target_price": p.target_price,
+            "crv": p.crv,
+            "duration_days": duration_days,
+            "status": p.status,
+            "exit_price": exit_price,
+            "exit_date": exit_date,
+            "sl_distance_pct": sl_distance_pct,
+            "tp_distance_pct": tp_distance_pct,
+            "color": color,
+            "confidence": p.confidence,
+        })
+
+    # Post-fetch sort for performance (change_pct)
+    if sort_by == "performance":
+        reverse = sort_dir != "asc"
+        items.sort(key=lambda x: x["change_pct"] if x["change_pct"] is not None else float("-inf"), reverse=reverse)
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": max(1, (total + page_size - 1) // page_size),
+        "items": items,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Filter Profiles
 # ---------------------------------------------------------------------------
 
