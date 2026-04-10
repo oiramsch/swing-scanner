@@ -50,6 +50,8 @@ jobs:
         if: steps.claude.outputs.branch_name != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
         run: |
           BRANCH="${{ steps.claude.outputs.branch_name }}"
           REPO="${{ github.repository }}"
@@ -67,8 +69,6 @@ jobs:
             echo "PR #$EXISTING already exists. Skipping."
             exit 0
           fi
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
-          ISSUE_TITLE="${{ github.event.issue.title }}"
           if [ -n "$ISSUE_NUMBER" ]; then
             PR_TITLE="$ISSUE_TITLE"
             PR_BODY=$(printf "Automatisch erstellt durch Claude Code \U0001F916\n\nFixes #%s" "$ISSUE_NUMBER")
