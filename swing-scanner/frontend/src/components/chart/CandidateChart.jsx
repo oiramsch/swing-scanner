@@ -134,9 +134,9 @@ export default function CandidateChart({ symbol, scanResult, onClose }) {
         color: b.close >= b.open ? "#22c55e33" : "#ef444433",
       })));
 
-      // Remove old SMA lines before re-adding
-      chartRef.current.removeSeries?.(chartRef.current._sma50);
-      chartRef.current.removeSeries?.(chartRef.current._sma200);
+      // Remove old SMA lines before re-adding (guard against undefined on first load)
+      if (chartRef.current._sma50)  { chartRef.current.removeSeries(chartRef.current._sma50);  chartRef.current._sma50  = null; }
+      if (chartRef.current._sma200) { chartRef.current.removeSeries(chartRef.current._sma200); chartRef.current._sma200 = null; }
 
       const sma50 = chartRef.current.addLineSeries({
         color: "#f97316",
