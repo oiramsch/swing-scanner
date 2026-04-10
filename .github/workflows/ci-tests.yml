@@ -24,7 +24,7 @@ jobs:
           if [ -d "swing-scanner/backend" ]; then
             cd swing-scanner/backend
             pip install -r requirements.txt || true
-            pip install pytest || true
+            pip install pytest pytest-asyncio || true
             pytest > ../../backend_error.log 2>&1
           else
             echo "Fehler: Ordner 'swing-scanner/backend' existiert nicht in diesem Branch!" > backend_error.log
