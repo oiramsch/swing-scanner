@@ -44,12 +44,66 @@ def create_journal_entry(data: dict) -> JournalEntry:
 
 
 def update_lesson(entry_id: int, data: dict) -> Optional[JournalEntry]:
-    allowed = {
-        "emotion_entry", "emotion_exit", "followed_rules",
-        "lesson", "mistakes", "exit_price", "exit_date",
-        "pnl_eur", "pnl_pct",
-    }
-    update_data = {k: v for k, v in data.items() if k in allowed}
+    from datetime import date as _date
+
+    update_data: dict = {}
+
+    # Optional string fields — empty string → None
+    for field in ("emotion_entry", "emotion_exit", "lesson", "mistakes", "setup_type"):
+        if field in data:
+            v = data[field]
+            update_data[field] = v if v not in (None, "") else None
+
+    # setup_reason keeps empty string (model default is "")
+    if "setup_reason" in data:
+        update_data["setup_reason"] = data.get("setup_reason") or ""
+
+    # ticker: required, uppercase
+    if "ticker" in data and data["ticker"]:
+        update_data["ticker"] = str(data["ticker"]).upper()
+
+    # Date fields: str → date object, empty/None → None
+    # exit_date is optional, trade_date is required so only update when non-empty
+    for field, required in (("exit_date", False), ("trade_date", True)):
+        if field not in data:
+            continue
+        v = data[field]
+        if not v:
+            if not required:
+                update_data[field] = None
+        elif isinstance(v, str):
+            update_data[field] = _date.fromisoformat(v)
+        else:
+            update_data[field] = v
+
+    # Float fields: None/empty string → None for optional, skip for required
+    optional_floats = {"exit_price", "pnl_eur", "pnl_pct"}
+    required_floats = {"entry_price", "stop_loss", "target", "risk_eur", "risk_reward"}
+    for field in optional_floats | required_floats:
+        if field not in data:
+            continue
+        v = data[field]
+        if v is None or v == "":
+            if field in optional_floats:
+                update_data[field] = None
+            # required floats with null/empty → skip (keep existing DB value)
+        else:
+            update_data[field] = float(v)
+
+    # Int fields
+    if "position_size" in data:
+        v = data["position_size"]
+        update_data["position_size"] = int(v) if v not in (None, "") else 0
+
+    # Bool fields
+    if "followed_rules" in data:
+        update_data["followed_rules"] = data["followed_rules"]
+
+    # Remove keys where value is None AND the field is non-nullable in the model
+    # (prevents accidentally overwriting required columns with NULL)
+    non_nullable = {"ticker", "trade_date", "entry_price", "stop_loss", "target"}
+    update_data = {k: v for k, v in update_data.items() if not (v is None and k in non_nullable)}
+
     return update_journal_entry(entry_id, update_data)
 
 

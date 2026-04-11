@@ -1361,7 +1361,10 @@ async def create_journal_entry_endpoint(data: dict):
 
 @app.put("/api/journal/{entry_id}")
 async def update_journal_endpoint(entry_id: int, data: dict):
-    updated = update_lesson(entry_id, data)
+    try:
+        updated = update_lesson(entry_id, data)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     if not updated:
         raise HTTPException(status_code=404, detail="Journal entry not found")
     return updated.model_dump()
