@@ -187,8 +187,8 @@ export default function PortfolioTab() {
   const alpacaBroker     = brokers.find(b => b.broker_type === "alpaca");
   const alpacaBal        = alpacaBroker?.balance;
   const alpacaPortfolioV = alpacaBal?.portfolio_value ?? 0;
-  const alpacaBuyingPow  = alpacaBal?.buying_power    ?? 0;
-  const alpacaInvested   = Math.max(0, alpacaPortfolioV - alpacaBuyingPow);
+  const alpacaCash       = alpacaBal?.buying_power    ?? 0;  // buying_power is normalized to cash by AlpacaConnector.get_balance()
+  const alpacaInvested   = Math.max(0, alpacaPortfolioV - alpacaCash);
   const hasAlpacaBal     = !!alpacaBal;
 
   // ── Trade Republic / manual portfolio ───────────────────────────────────
@@ -200,7 +200,7 @@ export default function PortfolioTab() {
   // ── Consolidated totals (all in EUR) ────────────────────────────────────
   const totalBudget    = trBudget    + alpacaPortfolioV / eur2usd;
   const totalInvested  = trInvested  + alpacaInvested   / eur2usd;
-  const totalAvailable = trAvailable + alpacaBuyingPow  / eur2usd;
+  const totalAvailable = trAvailable + alpacaCash        / eur2usd;
 
   const totalSignals = portfolio?.positions?.reduce(
     (sum, p) => sum + (p.signals?.length || 0), 0
@@ -288,7 +288,7 @@ export default function PortfolioTab() {
               label="Verfügbar"
               value={`€${fmt(totalAvailable)}`}
               colorClass="text-green-400"
-              sub={hasAlpacaBal ? `TR €${fmt(trAvailable)} + Alpaca ~€${fmt(alpacaBuyingPow / eur2usd)}` : undefined}
+              sub={hasAlpacaBal ? `TR €${fmt(trAvailable)} + Alpaca ~€${fmt(alpacaCash / eur2usd)}` : undefined}
             />
             <KpiCard
               label="Closed P&L"
@@ -338,7 +338,7 @@ export default function PortfolioTab() {
           kpis={hasAlpacaBal ? [
             { label: "Budget",    value: `$${fmt(alpacaPortfolioV, "en")}` },
             { label: "Investiert", value: `$${fmt(alpacaInvested, "en")}` },
-            { label: "Verfügbar", value: `$${fmt(alpacaBuyingPow, "en")}`, colorClass: "text-green-400" },
+            { label: "Verfügbar", value: `$${fmt(alpacaCash, "en")}`, colorClass: "text-green-400" },
           ] : null}
         />
         <AlpacaPositions />

@@ -19,6 +19,9 @@ class AlpacaConnector(BrokerConnector):
     def get_balance(self) -> dict:
         from backend.trading import get_account_info
         info = get_account_info(self.connection)
+        # Alpaca buying_power is margin-based (up to 2x cash on paper/margin accounts).
+        # Normalize to actual cash so all callers can use buying_power for "Verfügbar".
+        info["buying_power"] = info["cash"]
         info["manual"] = False
         return info
 
