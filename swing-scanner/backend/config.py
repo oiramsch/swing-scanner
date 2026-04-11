@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     lookback_days: int = 60
 
     # ── Claude ────────────────────────────────────────────────────────────────
-    claude_model: str = "claude-sonnet-4-20250514"
+    claude_model: str = "claude-sonnet-4-6"
     claude_vision_model: str = "claude-haiku-4-5-20251001"  # fact_extractor: objective chart facts only
     claude_max_tokens: int = 500
     claude_deep_max_tokens: int = 1000

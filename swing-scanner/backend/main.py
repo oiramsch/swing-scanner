@@ -2722,7 +2722,7 @@ async def ai_chat(
     Returns: { "reply": str, "tokens_used": int }
     """
     import anthropic
-    from backend.database import get_ai_status, set_ai_error, clear_ai_error, get_latest_regime
+    from backend.database import get_ai_status, set_ai_error, clear_ai_error
 
     message = (data.get("message") or "").strip()
     if not message:
@@ -2732,29 +2732,62 @@ async def ai_chat(
 
     session_history = data.get("session_history", [])
 
-    # Build context: today's candidates + regime
-    scan_date = date.today()
-    candidates = get_results_for_date(scan_date)
-    if not candidates:
-        latest = get_latest_scan_date()
-        if latest:
-            candidates = get_results_for_date(latest)
-            scan_date = latest
+    try:
+        # Build context: today's candidates + regime
+        scan_date = date.today()
+        candidates = get_results_for_date(scan_date)
+        if not candidates:
+            latest = get_latest_scan_date()
+            if latest:
+                candidates = get_results_for_date(latest)
+                scan_date = latest
 
-    regime_data = get_latest_regime()
-    regime = regime_data.get("regime", "neutral") if regime_data else "neutral"
+        regime_data = get_latest_regime()
+        # regime_data is a MarketRegime SQLModel instance, not a dict — use attribute access
+        regime = regime_data.regime if regime_data else "neutral"
 
-    # Build compact candidate context
-    cand_lines = []
-    for c in candidates[:20]:  # cap at 20 to control token cost
-        crv = f"CRV:{c.crv_calculated:.1f}" if c.crv_calculated else ""
-        cand_lines.append(
-            f"- {c.ticker} [{c.strategy_module}] {c.setup_type} conf={c.confidence} "
-            f"{crv} entry={c.entry_zone} stop={c.stop_loss} target={c.target} "
-            f"status={c.candidate_status}"
-        )
+        # Build compact candidate context
+        cand_lines = []
+        for c in candidates[:20]:  # cap at 20 to control token cost
+            crv = f"CRV:{c.crv_calculated:.1f}" if c.crv_calculated else ""
+            cand_lines.append(
+                f"- {c.ticker} [{c.strategy_module}] {c.setup_type} conf={c.confidence} "
+                f"{crv} entry={c.entry_zone} stop={c.stop_loss} target={c.target} "
+                f"status={c.candidate_status}"
+            )
 
-    system_prompt = f"""Du bist ein erfahrener Swing-Trading-Assistent. Du hast Zugriff auf die aktuellen Scanner-Ergebnisse.
+        # Build TradePlan context (active + recently closed)
+        active_plans = get_active_trade_plans(tenant_id=current_user.tenant_id)
+        closed_plans = get_closed_trade_plans(tenant_id=current_user.tenant_id)
+        plan_lines = []
+        for p in active_plans[:15]:
+            plan_lines.append(
+                f"- [{p.status.upper()}] {p.ticker} {p.direction} "
+                f"entry={p.entry_low}-{p.entry_high} SL={p.stop_loss} "
+                f"TP={p.target or '–'} setup={p.setup_type or '–'}"
+            )
+        for p in closed_plans[:5]:
+            pnl = ""
+            if p.actual_entry_price and p.actual_exit_price:
+                pnl_val = (p.actual_exit_price - p.actual_entry_price) * (1 if p.direction == "long" else -1)
+                pnl = f" P&L={pnl_val:+.2f}"
+            plan_lines.append(
+                f"- [CLOSED {p.exit_date or '?'}] {p.ticker} "
+                f"entry={p.actual_entry_price or p.entry_low} SL={p.stop_loss} "
+                f"exit={p.actual_exit_price or '–'}{pnl}"
+            )
+
+        # Build Journal context (last 10 entries)
+        journal_entries = get_journal_entries()[:10]
+        journal_lines = []
+        for j in journal_entries:
+            outcome = f"exit={j.exit_price} P&L={j.pnl_eur}€" if j.exit_price else "offen"
+            journal_lines.append(
+                f"- {j.trade_date} {j.ticker} entry={j.entry_price} SL={j.stop_loss} "
+                f"TP={j.target} {outcome} setup={j.setup_type or '–'}"
+            )
+
+        system_prompt = f"""Du bist ein erfahrener Swing-Trading-Assistent. Du hast Zugriff auf die aktuellen Scanner-Ergebnisse, offene TradePläne und das Trading-Journal des Users.
 
 AKTUELLES REGIME: {regime.upper()}
 SCAN-DATUM: {scan_date}
@@ -2762,16 +2795,21 @@ SCAN-DATUM: {scan_date}
 KANDIDATEN ({len(candidates)} total, zeige Top 20):
 {chr(10).join(cand_lines) if cand_lines else "Keine Kandidaten heute."}
 
+AKTIVE & KÜRZLICH GESCHLOSSENE TRADEPLÄNE ({len(active_plans)} aktiv):
+{chr(10).join(plan_lines) if plan_lines else "Keine TradePläne vorhanden."}
+
+JOURNAL (letzte {len(journal_entries)} Einträge):
+{chr(10).join(journal_lines) if journal_lines else "Kein Journal vorhanden."}
+
 Beantworte Fragen präzise und faktenbasiert. Wenn du unsicher bist, sage es. Gib keine Anlageberatung — weise darauf hin dass dies keine Rechts- oder Finanzberatung ist. Antworte auf Deutsch."""
 
-    # Prepare messages
-    messages = []
-    for h in session_history[-10:]:  # keep last 10 turns
-        if h.get("role") in ("user", "assistant") and h.get("content"):
-            messages.append({"role": h["role"], "content": h["content"]})
-    messages.append({"role": "user", "content": message})
+        # Prepare messages
+        messages = []
+        for h in session_history[-10:]:  # keep last 10 turns
+            if h.get("role") in ("user", "assistant") and h.get("content"):
+                messages.append({"role": h["role"], "content": h["content"]})
+        messages.append({"role": "user", "content": message})
 
-    try:
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         response = client.messages.create(
             model=settings.claude_model,
@@ -2783,6 +2821,8 @@ Beantworte Fragen präzise und faktenbasiert. Wenn du unsicher bist, sage es. Gi
         tokens_used = response.usage.input_tokens + response.usage.output_tokens
         clear_ai_error()
         return {"reply": reply, "tokens_used": tokens_used}
+    except HTTPException:
+        raise
     except Exception as exc:
         error_msg = str(exc)
         set_ai_error(error_msg)
