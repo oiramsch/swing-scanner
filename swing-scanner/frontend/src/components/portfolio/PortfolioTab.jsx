@@ -187,7 +187,7 @@ export default function PortfolioTab() {
   const alpacaBroker     = brokers.find(b => b.broker_type === "alpaca");
   const alpacaBal        = alpacaBroker?.balance;
   const alpacaPortfolioV = alpacaBal?.portfolio_value ?? 0;
-  const alpacaCash       = alpacaBal?.cash            ?? 0;  // cash = verfügbares Guthaben (buying_power = 2× cash bei Paper → falsch)
+  const alpacaCash       = alpacaBal?.buying_power    ?? 0;  // buying_power is normalized to cash by AlpacaConnector.get_balance()
   const alpacaInvested   = Math.max(0, alpacaPortfolioV - alpacaCash);
   const hasAlpacaBal     = !!alpacaBal;
 
