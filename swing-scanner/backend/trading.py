@@ -117,6 +117,29 @@ def cancel_order(creds: dict, order_id: str) -> None:
     logger.info("Order cancelled: %s", order_id)
 
 
+def replace_order(
+    creds: dict,
+    order_id: str,
+    *,
+    limit_price: Optional[float] = None,
+    stop_price: Optional[float] = None,
+) -> dict:
+    """
+    Replace (modify) an existing order — change its limit or stop price.
+    SELL LIMIT (TP): pass limit_price.
+    SELL STOP  (SL): pass stop_price.
+    """
+    from alpaca.trading.requests import ReplaceOrderRequest
+    client = _get_trading_client(creds)
+    req = ReplaceOrderRequest(
+        limit_price=round(limit_price, 2) if limit_price is not None else None,
+        stop_price=round(stop_price, 2) if stop_price is not None else None,
+    )
+    order = client.replace_order_by_id(order_id, req)
+    logger.info("Order replaced: %s → limit=%s stop=%s", order_id, limit_price, stop_price)
+    return _order_to_dict(order)
+
+
 def get_alpaca_positions(creds: dict) -> list[dict]:
     """Return all open positions from Alpaca."""
     client = _get_trading_client(creds)
