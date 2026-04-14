@@ -202,10 +202,11 @@ function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute }) {
 // ---------------------------------------------------------------------------
 // Open orders list (Alpaca only)
 // ---------------------------------------------------------------------------
-function OpenOrdersSection({ visible }) {
-  const [orders,    setOrders]    = useState([]);
-  const [loading,   setLoading]   = useState(false);
+function OpenOrdersSection({ visible, quotes }) {
+  const [orders,     setOrders]     = useState([]);
+  const [loading,    setLoading]    = useState(false);
   const [cancelling, setCancelling] = useState({});
+  const [confirmId,  setConfirmId]  = useState(null); // order awaiting confirm
 
   useEffect(() => {
     if (!visible) return;
@@ -222,6 +223,7 @@ function OpenOrdersSection({ visible }) {
   }
 
   async function cancel(orderId) {
+    setConfirmId(null);
     setCancelling(c => ({ ...c, [orderId]: true }));
     try {
       await axios.delete(`/api/orders/${orderId}`);
@@ -230,6 +232,16 @@ function OpenOrdersSection({ visible }) {
       alert(err.response?.data?.detail || "Stornierung fehlgeschlagen");
     }
     setCancelling(c => ({ ...c, [orderId]: false }));
+  }
+
+  // For a SELL order: if current price is already above the limit → TP about to fill → block cancel
+  function cancelStatus(o) {
+    if (o.side !== "sell") return "allowed";
+    if (!o.limit_price) return "allowed";
+    const livePrice = quotes?.[o.ticker]?.price;
+    if (!livePrice) return "warn"; // unknown price → warn
+    if (livePrice >= o.limit_price) return "blocked"; // price above TP → don't cancel
+    return "warn"; // price below TP → warn but allow
   }
 
   if (!visible) return null;
@@ -248,26 +260,53 @@ function OpenOrdersSection({ visible }) {
         <div className="text-center py-6 text-xs text-gray-600">Keine offenen Orders</div>
       ) : (
         <div>
-          {orders.map(o => (
-            <div key={o.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-800 last:border-b-0 text-sm">
-              <span className="font-bold text-white w-16 shrink-0">{o.ticker}</span>
-              <span className="text-gray-400">{o.qty} Stk.</span>
-              {o.limit_price != null && <span className="text-gray-400">@ ${o.limit_price.toFixed(2)}</span>}
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">{o.type}</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded border ${o.status === "new" || o.status === "accepted" ? "bg-blue-900/20 border-blue-700/40 text-blue-400" : "bg-gray-800 border-gray-700 text-gray-500"}`}>
-                {o.status}
-              </span>
-              <div className="ml-auto">
-                <button
-                  onClick={() => cancel(o.id)}
-                  disabled={cancelling[o.id]}
-                  className="text-xs px-2.5 py-1 bg-red-900/30 hover:bg-red-900/60 border border-red-700/40 text-red-400 rounded transition disabled:opacity-50"
-                >
-                  {cancelling[o.id] ? "…" : "Stornieren"}
-                </button>
+          {orders.map(o => {
+            const cs = cancelStatus(o);
+            const isSell = o.side === "sell";
+            const typeLabel = (o.type || "").replace(/^OrderType\./i, "").toUpperCase();
+            const statusLabel = (o.status || "").replace(/^OrderStatus\./i, "");
+            const isConfirming = confirmId === o.id;
+            return (
+              <div key={o.id} className="px-4 py-2.5 border-b border-gray-800 last:border-b-0 text-sm space-y-1.5">
+                <div className="flex items-center gap-3">
+                  <span className="font-bold text-white w-16 shrink-0">{o.ticker}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${isSell ? "bg-red-900/20 border-red-700/40 text-red-400" : "bg-green-900/20 border-green-700/40 text-green-400"}`}>
+                    {isSell ? "SELL" : "BUY"}
+                  </span>
+                  <span className="text-gray-400">{o.qty} Stk.</span>
+                  {o.limit_price != null && <span className="text-gray-300">@ ${o.limit_price.toFixed(2)}</span>}
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">{typeLabel || o.type}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border ${["new","accepted"].includes(statusLabel) ? "bg-blue-900/20 border-blue-700/40 text-blue-400" : "bg-gray-800 border-gray-700 text-gray-500"}`}>
+                    {statusLabel || o.status}
+                  </span>
+                  <div className="ml-auto">
+                    {cs === "blocked" ? (
+                      <span className="text-[10px] text-gray-600 italic">Kurs ≥ Limit — nicht stornierbar</span>
+                    ) : isConfirming ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-orange-400">{isSell ? "⚠ Take-Profit stornieren?" : "Order stornieren?"}</span>
+                        <button onClick={() => cancel(o.id)} className="text-xs px-2 py-0.5 bg-red-700 hover:bg-red-600 text-white rounded transition">Ja</button>
+                        <button onClick={() => setConfirmId(null)} className="text-xs px-2 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition">Nein</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmId(o.id)}
+                        disabled={cancelling[o.id]}
+                        className="text-xs px-2.5 py-1 bg-red-900/30 hover:bg-red-900/60 border border-red-700/40 text-red-400 rounded transition disabled:opacity-50"
+                      >
+                        {cancelling[o.id] ? "…" : "Stornieren"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {cs === "blocked" && (
+                  <div className="text-[10px] text-orange-400/80 pl-0.5">
+                    Kurs ${quotes?.[o.ticker]?.price?.toFixed(2)} ≥ Limit ${o.limit_price?.toFixed(2)} — Take-Profit kurz vor Auslösung
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -462,7 +501,7 @@ export default function TradingCockpit({ setActiveTab }) {
       </div>
 
       {/* Open orders (Alpaca only) */}
-      <OpenOrdersSection visible={!!alpacaBroker} />
+      <OpenOrdersSection visible={!!alpacaBroker} quotes={quotes} />
 
       {/* Justage Modal */}
       {justageTarget && (
