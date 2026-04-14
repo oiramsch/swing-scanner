@@ -1259,8 +1259,8 @@ class WorkerSettings:
         cron(check_scan_health, hour={23}, minute={30}, run_at_startup=False),
         # Entry-zone check: hourly 14–20 UTC (09:00–15:00 ET, while market is open)
         cron(entry_zone_check, hour={14, 15, 16, 17, 18, 19, 20}, minute={0}, run_at_startup=False),
-        # Phase 3 — Auto Paper Trade: 15:35 UTC (25 min before market close)
-        cron(auto_paper_trade, hour={15}, minute={35}, run_at_startup=False),
+        # Phase 3 — Auto Paper Trade: 13:35 UTC (15:35 MESZ / 5 min nach Marktöffnung)
+        cron(auto_paper_trade, hour={13}, minute={35}, run_at_startup=False),
     ]
     on_startup = startup
     max_jobs = 1
