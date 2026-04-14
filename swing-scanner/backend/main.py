@@ -2244,6 +2244,19 @@ async def execute_trade_plan(
             "shares_executed": float(plan_dict["qty"]),
             "actual_entry_price": float(fill_price) if fill_price else None,
         })
+        # Create PortfolioPosition so the trade appears in the Portfolio tab
+        create_position({
+            "ticker": plan.ticker,
+            "entry_price": float(fill_price) if fill_price else float(plan.entry_high),
+            "shares": float(plan_dict["qty"]),
+            "stop_loss": plan.stop_loss,
+            "target": plan.target,
+            "entry_date": date.today().isoformat(),
+            "setup_type": plan.setup_type or "breakout",
+            "notes": f"Alpaca-Ausführung via TradePlan #{plan_id}",
+            "scan_result_id": plan.scan_result_id,
+            "broker_id": broker_id,
+        })
         return {"order": result, "broker": conn.label}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))

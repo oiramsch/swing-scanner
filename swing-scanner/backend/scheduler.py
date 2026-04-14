@@ -1077,6 +1077,22 @@ async def auto_paper_trade(ctx: dict):
             save_trade_plan(trade_plan)
 
             fill_price = float(order_result.get("limit_price") or entry_high)
+
+            # Create PortfolioPosition so the trade appears in the Portfolio tab
+            from backend.portfolio import create_position
+            create_position({
+                "ticker": ticker,
+                "entry_price": fill_price,
+                "shares": qty,
+                "stop_loss": float(stop_dec),
+                "target": float(target_dec),
+                "entry_date": today.isoformat(),
+                "setup_type": candidate.setup_type or "breakout",
+                "notes": f"Auto-Trade via Alpaca Paper (broker_id={alpaca_conn.id})",
+                "scan_result_id": candidate.id,
+                "broker_id": alpaca_conn.id,
+            })
+
             trade_risk = risk_per_share * qty
             total_risk += trade_risk
             n_placed   += 1
