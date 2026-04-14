@@ -147,7 +147,12 @@ export default function DealCockpitCharts({ plans }) {
     return () => clearInterval(intervalRef.current);
   }, []);
 
-  const activePlans = plans.filter(p => ["pending", "active", "partial"].includes(p.status));
+  // Deduplicate by ticker — one chart per stock, prefer active over pending
+  const allActive = plans.filter(p => ["pending", "active", "partial"].includes(p.status));
+  const seenTickers = new Set();
+  const activePlans = allActive
+    .sort((a, b) => (b.status === "active" ? 1 : 0) - (a.status === "active" ? 1 : 0))
+    .filter(p => { if (seenTickers.has(p.ticker)) return false; seenTickers.add(p.ticker); return true; });
 
   if (activePlans.length === 0) {
     return (
