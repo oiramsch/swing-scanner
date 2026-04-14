@@ -1,21 +1,25 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 
-// Derive a human label from order side + type
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 function orderLabel(order) {
   const side = order.side;
-  const type = order.type;   // "limit" | "stop" | "stop_limit" | "market" | ...
-  if (side === "sell" && type === "limit")                    return { label: "TP", color: "text-green-400 border-green-700/40 bg-green-900/10" };
+  const type = order.type;
+  if (side === "sell" && type === "limit")                         return { label: "TP", color: "text-green-400 border-green-700/40 bg-green-900/10" };
   if (side === "sell" && (type === "stop" || type === "stop_limit")) return { label: "SL", color: "text-red-400 border-red-700/40 bg-red-900/10" };
-  if (side === "buy")                                         return { label: "BUY", color: "text-blue-400 border-blue-700/40 bg-blue-900/10" };
+  if (side === "buy")                                              return { label: "BUY", color: "text-blue-400 border-blue-700/40 bg-blue-900/10" };
   return { label: type?.toUpperCase() || "?", color: "text-gray-400 border-gray-700 bg-gray-800/40" };
 }
 
-// Inline edit row for a single order
+// ---------------------------------------------------------------------------
+// Existing order row (TP / SL) — edit + cancel
+// ---------------------------------------------------------------------------
 function OrderRow({ order, onCancel, onModified }) {
-  const [editing, setEditing]     = useState(false);
-  const [price, setPrice]         = useState("");
-  const [saving, setSaving]       = useState(false);
+  const [editing, setEditing]         = useState(false);
+  const [price, setPrice]             = useState("");
+  const [saving, setSaving]           = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
   const { label, color } = orderLabel(order);
@@ -52,16 +56,11 @@ function OrderRow({ order, onCancel, onModified }) {
 
   return (
     <tr className="border-t border-gray-800/40 bg-gray-800/20">
-      {/* indent + label */}
       <td className="py-1.5 pr-2 pl-6 text-gray-600 text-[10px]">└</td>
       <td colSpan={4} className="py-1.5 pr-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${color}`}>
-            {label}
-          </span>
-          <span className="text-gray-400 text-[11px]">
-            {order.qty} Stk.
-          </span>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${color}`}>{label}</span>
+          <span className="text-gray-400 text-[11px]">{order.qty} Stk.</span>
           {currentPrice != null && !editing && (
             <span className="text-gray-300 text-[11px] font-mono">@ ${currentPrice.toFixed(2)}</span>
           )}
@@ -69,46 +68,33 @@ function OrderRow({ order, onCancel, onModified }) {
             <div className="flex items-center gap-1.5">
               <span className="text-gray-500 text-[11px]">@</span>
               <input
-                type="number"
-                step="0.01"
-                value={price}
+                type="number" step="0.01" value={price}
                 onChange={e => setPrice(e.target.value)}
                 placeholder={currentPrice?.toFixed(2)}
                 className="w-20 px-1.5 py-0.5 text-[11px] bg-gray-700 border border-gray-600 rounded text-white outline-none focus:border-indigo-500"
                 autoFocus
                 onKeyDown={e => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") { setEditing(false); setPrice(""); } }}
               />
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="text-[10px] px-2 py-0.5 bg-indigo-700 hover:bg-indigo-600 text-white rounded transition disabled:opacity-50"
-              >
+              <button onClick={handleSave} disabled={saving}
+                className="text-[10px] px-2 py-0.5 bg-indigo-700 hover:bg-indigo-600 text-white rounded transition disabled:opacity-50">
                 {saving ? "…" : "OK"}
               </button>
-              <button
-                onClick={() => { setEditing(false); setPrice(""); }}
-                className="text-[10px] px-1.5 py-0.5 text-gray-500 hover:text-gray-300 transition"
-              >
+              <button onClick={() => { setEditing(false); setPrice(""); }}
+                className="text-[10px] px-1.5 py-0.5 text-gray-500 hover:text-gray-300 transition">
                 Abbrechen
               </button>
             </div>
           )}
-          <span className={`text-[10px] px-1 py-0.5 rounded text-gray-500 border border-gray-700`}>
-            {order.status}
-          </span>
+          <span className="text-[10px] px-1 py-0.5 rounded text-gray-500 border border-gray-700">{order.status}</span>
         </div>
       </td>
-      {/* P&L cell — empty spacer */}
       <td />
-      {/* Actions */}
       <td className="text-right py-1.5">
         <div className="flex items-center justify-end gap-1.5">
           {(isTP || isSL) && !editing && (
-            <button
-              onClick={() => { setEditing(true); setPrice(currentPrice?.toFixed(2) || ""); }}
+            <button onClick={() => { setEditing(true); setPrice(currentPrice?.toFixed(2) || ""); }}
               title={isTP ? "Take-Profit anpassen" : "Stop-Loss anpassen"}
-              className="text-[10px] px-1.5 py-0.5 text-gray-500 hover:text-indigo-400 border border-gray-700 hover:border-indigo-600 rounded transition"
-            >
+              className="text-[10px] px-1.5 py-0.5 text-gray-500 hover:text-indigo-400 border border-gray-700 hover:border-indigo-600 rounded transition">
               ✏
             </button>
           )}
@@ -119,10 +105,8 @@ function OrderRow({ order, onCancel, onModified }) {
               <button onClick={() => setConfirmCancel(false)} className="text-[10px] px-1.5 py-0.5 bg-gray-700 text-gray-300 rounded transition">Nein</button>
             </div>
           ) : (
-            <button
-              onClick={() => setConfirmCancel(true)}
-              className="text-[10px] px-1.5 py-0.5 bg-red-900/20 hover:bg-red-900/50 border border-red-700/30 text-red-400 rounded transition"
-            >
+            <button onClick={() => setConfirmCancel(true)}
+              className="text-[10px] px-1.5 py-0.5 bg-red-900/20 hover:bg-red-900/50 border border-red-700/30 text-red-400 rounded transition">
               ✕
             </button>
           )}
@@ -132,16 +116,103 @@ function OrderRow({ order, onCancel, onModified }) {
   );
 }
 
-export default function AlpacaPositions() {
-  const [positions, setPositions] = useState(null);
-  const [orders,    setOrders]    = useState([]);
-  const [loading,   setLoading]   = useState(true);
-  const [error,     setError]     = useState(null);
-  const [selling,   setSelling]   = useState({});
+// ---------------------------------------------------------------------------
+// New order form (inline, per position)
+// ---------------------------------------------------------------------------
+function NewOrderForm({ pos, onClose, onPlaced }) {
+  const [orderType, setOrderType] = useState("limit_sell");
+  const [price, setPrice]         = useState("");
+  const [qty, setQty]             = useState(String(pos.qty));
+  const [saving, setSaving]       = useState(false);
 
-  useEffect(() => {
-    fetchAll();
-  }, []);
+  const isLimit = orderType === "limit_sell";
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const val = parseFloat(price);
+    const q   = parseFloat(qty);
+    if (!val || val <= 0 || !q || q <= 0) return;
+    setSaving(true);
+    try {
+      const res = await axios.post("/api/orders/single", {
+        ticker: pos.ticker,
+        qty: q,
+        type: orderType,
+        price: val,
+      });
+      onPlaced(res.data);
+      onClose();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Order fehlgeschlagen");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <tr className="border-t border-gray-800/40 bg-indigo-900/10">
+      <td className="py-2 pl-6 pr-2 text-gray-600 text-[10px]">+</td>
+      <td colSpan={5} className="py-2 pr-3">
+        <form onSubmit={handleSubmit} className="flex items-center gap-2 flex-wrap">
+          {/* Order type */}
+          <select
+            value={orderType}
+            onChange={e => setOrderType(e.target.value)}
+            className="text-[11px] bg-gray-800 border border-gray-700 text-gray-200 rounded px-2 py-1 outline-none focus:border-indigo-500"
+          >
+            <option value="limit_sell">Sell Limit (TP)</option>
+            <option value="stop_sell">Stop Loss (SL)</option>
+          </select>
+
+          {/* Qty */}
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-gray-500">Stk.</span>
+            <input
+              type="number" min="1" step="1" value={qty}
+              onChange={e => setQty(e.target.value)}
+              className="w-16 px-1.5 py-1 text-[11px] bg-gray-700 border border-gray-600 rounded text-white outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          {/* Price */}
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-gray-500">{isLimit ? "Limit @" : "Stop @"}</span>
+            <input
+              type="number" step="0.01" value={price}
+              onChange={e => setPrice(e.target.value)}
+              placeholder={pos.current_price?.toFixed(2)}
+              className="w-24 px-1.5 py-1 text-[11px] bg-gray-700 border border-gray-600 rounded text-white outline-none focus:border-indigo-500"
+              autoFocus
+              onKeyDown={e => { if (e.key === "Escape") onClose(); }}
+            />
+          </div>
+
+          <button type="submit" disabled={saving || !price}
+            className="text-[11px] px-3 py-1 bg-indigo-700 hover:bg-indigo-600 text-white rounded transition disabled:opacity-50 font-medium">
+            {saving ? "…" : "Order setzen"}
+          </button>
+          <button type="button" onClick={onClose}
+            className="text-[11px] px-2 py-1 text-gray-500 hover:text-gray-300 transition">
+            Abbrechen
+          </button>
+        </form>
+      </td>
+    </tr>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+export default function AlpacaPositions() {
+  const [positions, setPositions]   = useState(null);
+  const [orders,    setOrders]      = useState([]);
+  const [loading,   setLoading]     = useState(true);
+  const [error,     setError]       = useState(null);
+  const [selling,   setSelling]     = useState({});
+  const [addingFor, setAddingFor]   = useState(null); // ticker of open new-order form
+
+  useEffect(() => { fetchAll(); }, []);
 
   async function fetchAll() {
     setLoading(true);
@@ -162,10 +233,10 @@ export default function AlpacaPositions() {
     }
   }
 
-  // Group orders by ticker (only SELL child-orders — TP/SL)
+  // Group sell-side orders by ticker
   const ordersByTicker = {};
   for (const o of orders) {
-    if (o.side !== "sell") continue; // skip BUY entry orders
+    if (o.side !== "sell") continue;
     if (!ordersByTicker[o.ticker]) ordersByTicker[o.ticker] = [];
     ordersByTicker[o.ticker].push(o);
   }
@@ -174,8 +245,12 @@ export default function AlpacaPositions() {
     setOrders(prev => prev.filter(o => o.id !== orderId));
   }
 
-  function handleOrderModified(updatedOrder) {
-    setOrders(prev => prev.map(o => o.id === updatedOrder.id ? updatedOrder : o));
+  function handleOrderModified(updated) {
+    setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
+  }
+
+  function handleOrderPlaced(newOrder) {
+    setOrders(prev => [...prev, newOrder]);
   }
 
   async function handleSell(pos) {
@@ -191,10 +266,7 @@ export default function AlpacaPositions() {
     }
   }
 
-  if (loading) return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 animate-pulse h-24" />
-  );
-
+  if (loading) return <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 animate-pulse h-24" />;
   if (error && (error.includes("No broker") || error.includes("not configured"))) return null;
 
   return (
@@ -206,20 +278,11 @@ export default function AlpacaPositions() {
             PAPER
           </span>
         </div>
-        <button
-          onClick={fetchAll}
-          className="text-xs px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded"
-          title="Aktualisieren"
-        >
-          ↻
-        </button>
+        <button onClick={fetchAll} className="text-xs px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded" title="Aktualisieren">↻</button>
       </div>
 
       {error && <p className="text-red-400 text-xs">{error}</p>}
-
-      {!error && positions?.length === 0 && (
-        <p className="text-gray-500 text-sm">Keine offenen Positionen bei Alpaca.</p>
-      )}
+      {!error && positions?.length === 0 && <p className="text-gray-500 text-sm">Keine offenen Positionen bei Alpaca.</p>}
 
       {positions?.length > 0 && (
         <div className="overflow-x-auto">
@@ -237,10 +300,11 @@ export default function AlpacaPositions() {
             </thead>
             <tbody>
               {positions.map((pos) => {
-                const plPct = pos.unrealized_plpc != null ? (pos.unrealized_plpc * 100) : null;
-                const plAbs = pos.unrealized_pl;
-                const isPos = (plAbs ?? 0) >= 0;
+                const plPct    = pos.unrealized_plpc != null ? (pos.unrealized_plpc * 100) : null;
+                const plAbs    = pos.unrealized_pl;
+                const isPos    = (plAbs ?? 0) >= 0;
                 const posOrders = ordersByTicker[pos.ticker] || [];
+                const isAdding  = addingFor === pos.ticker;
 
                 return (
                   <>
@@ -258,23 +322,45 @@ export default function AlpacaPositions() {
                       <td className={`text-right pr-3 font-medium ${isPos ? "text-green-400" : "text-red-400"}`}>
                         {plAbs != null ? `${isPos ? "+" : ""}$${plAbs.toFixed(2)}` : "—"}
                         {plPct != null && (
-                          <span className="ml-1 text-[10px] opacity-70">
-                            ({isPos ? "+" : ""}{plPct.toFixed(2)}%)
-                          </span>
+                          <span className="ml-1 text-[10px] opacity-70">({isPos ? "+" : ""}{plPct.toFixed(2)}%)</span>
                         )}
                       </td>
                       <td className="text-right">
-                        <button
-                          onClick={() => handleSell(pos)}
-                          disabled={!!selling[pos.ticker]}
-                          className="px-2 py-1 text-[10px] bg-red-700/30 hover:bg-red-700/60 text-red-300 border border-red-700/40 rounded disabled:opacity-50 transition"
-                        >
-                          {selling[pos.ticker] ? (
-                            <span className="inline-block w-2.5 h-2.5 border border-red-300 border-t-transparent rounded-full animate-spin" />
-                          ) : "Sell"}
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Add new order */}
+                          <button
+                            onClick={() => setAddingFor(isAdding ? null : pos.ticker)}
+                            title="Neue Order setzen (TP / SL)"
+                            className={`px-2 py-1 text-[10px] rounded border transition font-bold ${
+                              isAdding
+                                ? "bg-indigo-800/50 border-indigo-600/60 text-indigo-300"
+                                : "bg-gray-800 hover:bg-indigo-900/30 border-gray-700 hover:border-indigo-600/50 text-gray-400 hover:text-indigo-300"
+                            }`}
+                          >
+                            +
+                          </button>
+                          {/* Market sell */}
+                          <button
+                            onClick={() => handleSell(pos)}
+                            disabled={!!selling[pos.ticker]}
+                            className="px-2 py-1 text-[10px] bg-red-700/30 hover:bg-red-700/60 text-red-300 border border-red-700/40 rounded disabled:opacity-50 transition"
+                          >
+                            {selling[pos.ticker] ? (
+                              <span className="inline-block w-2.5 h-2.5 border border-red-300 border-t-transparent rounded-full animate-spin" />
+                            ) : "Sell"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
+
+                    {/* New order form (inline, below position) */}
+                    {isAdding && (
+                      <NewOrderForm
+                        pos={pos}
+                        onClose={() => setAddingFor(null)}
+                        onPlaced={handleOrderPlaced}
+                      />
+                    )}
 
                     {/* Child order rows (TP + SL) */}
                     {posOrders.map(order => (
