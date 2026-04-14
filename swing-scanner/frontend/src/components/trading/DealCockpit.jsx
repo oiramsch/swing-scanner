@@ -279,6 +279,11 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
     b.broker_type === "trade_republic" &&
     (assignedIds.includes(b.id) || execState[String(b.id)] === "executed")
   );
+  // Alpaca fills are automatic — no manual entry confirmation needed
+  const hasAlpacaBroker = brokers.some(b =>
+    b.broker_type === "alpaca" &&
+    (assignedIds.includes(b.id) || execState[String(b.id)] === "executed")
+  );
 
   function handleBrokerClick(broker) {
     if (belowZone) { setBelowZoneConfirm(broker); return; }
@@ -438,8 +443,8 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
         <div className="mt-2 text-xs text-gray-600 italic">{plan.notes}</div>
       )}
 
-      {/* Slippage tracker (show for active/partial plans or if fill already recorded) */}
-      {(plan.status === "active" || plan.status === "partial" || plan.actual_entry_price != null) && (
+      {/* Slippage tracker — only for manual brokers (TR etc.), not Alpaca (fill is automatic) */}
+      {!hasAlpacaBroker && (plan.status === "active" || plan.status === "partial" || plan.actual_entry_price != null) && (
         <SlippageInput plan={plan} isTR={hasTRBroker} onSaved={onRefresh} />
       )}
 
