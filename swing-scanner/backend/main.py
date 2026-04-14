@@ -2212,7 +2212,11 @@ async def execute_trade_plan(
     if not conn:
         raise HTTPException(status_code=404, detail="Broker nicht gefunden")
 
-    connector = get_connector(conn.model_dump())
+    from backend.crypto import decrypt_or_none
+    conn_dict = conn.model_dump()
+    conn_dict["api_key"] = decrypt_or_none(conn.api_key_enc)
+    conn_dict["api_secret"] = decrypt_or_none(conn.api_secret_enc)
+    connector = get_connector(conn_dict)
     if not connector.supports_auto_trade():
         raise HTTPException(
             status_code=400,
