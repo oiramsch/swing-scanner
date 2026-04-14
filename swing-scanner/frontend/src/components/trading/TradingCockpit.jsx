@@ -100,7 +100,7 @@ function PdtBadge({ count }) {
 // ---------------------------------------------------------------------------
 // Plan tile
 // ---------------------------------------------------------------------------
-function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute }) {
+function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute, onArchive }) {
   const isShort = plan.direction === "short";
   const status = zoneStatus(livePrice, plan.entry_low, plan.entry_high);
   const styles = isShort ? SHORT_ZONE_STYLES : ZONE_STYLES;
@@ -163,8 +163,15 @@ function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute }) {
         )}
       </div>
 
-      {/* Right: execute buttons per broker */}
-      <div className="flex gap-1.5 shrink-0">
+      {/* Right: execute buttons per broker + archive */}
+      <div className="flex gap-1.5 shrink-0 items-center">
+        <button
+          onClick={() => onArchive(plan)}
+          title="Plan archivieren (z.B. bereits via Auto-Trade ausgeführt)"
+          className="px-2 py-1.5 text-xs text-gray-600 hover:text-gray-400 rounded border border-transparent hover:border-gray-700 transition"
+        >
+          ✕
+        </button>
         {brokers.map(broker => {
           // For longs: disabled when price is above zone (missed entry)
           // For shorts: disabled when price is below zone (stop threatened)
@@ -378,6 +385,15 @@ export default function TradingCockpit({ setActiveTab }) {
     return quotes[ticker]?.price ?? null;
   }
 
+  async function archivePlan(plan) {
+    try {
+      await axios.delete(`/api/trade-plans/${plan.id}`);
+      setPlans(ps => ps.filter(p => p.id !== plan.id));
+    } catch (err) {
+      alert(err.response?.data?.detail || "Archivieren fehlgeschlagen");
+    }
+  }
+
   // Alpaca broker for PDT + balance
   const alpacaBroker = brokers.find(b => b.broker_type === "alpaca");
   const daytradeCount = alpacaBroker?.balance?.daytrade_count ?? null;
@@ -470,6 +486,7 @@ export default function TradingCockpit({ setActiveTab }) {
                 livePrice={getLivePrice(plan.ticker)}
                 volumeRatio={quotes[plan.ticker]?.volume_ratio ?? null}
                 onExecute={(p, b) => setJustageTarget({ plan: p, broker: b })}
+                onArchive={archivePlan}
               />
             ))}
           </div>
