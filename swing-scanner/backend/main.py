@@ -1767,6 +1767,34 @@ async def cancel_order(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.patch("/api/orders/{order_id}")
+async def modify_order(
+    order_id: str,
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Modify an existing open order (change TP limit price or SL stop price).
+    Body: { limit_price?: float, stop_price?: float }
+    """
+    from backend.trading import replace_order as _replace
+    limit_price = data.get("limit_price")
+    stop_price  = data.get("stop_price")
+    if limit_price is None and stop_price is None:
+        raise HTTPException(status_code=422, detail="limit_price oder stop_price erforderlich")
+    try:
+        creds = get_broker_credentials(current_user.tenant_id)
+        updated = _replace(
+            creds,
+            order_id,
+            limit_price=float(limit_price) if limit_price is not None else None,
+            stop_price=float(stop_price) if stop_price is not None else None,
+        )
+        return updated
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.get("/api/quotes")
 async def get_live_quotes(
     symbols: str,
