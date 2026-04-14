@@ -1,9 +1,15 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+/**
+ * useAlpacaWebSocket — simplified to HTTP polling via /api/quotes (yfinance backend).
+ *
+ * Direct Alpaca WebSocket from the browser is not viable because:
+ *   1. API keys are stored encrypted on the backend — not accessible in the browser.
+ *   2. Alpaca requires authentication before subscribe, which would expose keys client-side.
+ *
+ * The /api/quotes endpoint (yfinance) is sufficient for swing-trading latency.
+ * Polls every 15 s during market hours, every 60 s otherwise.
+ */
+import { useState, useEffect, useRef } from "react";
 
-const WS_URL = "wss://stream.data.alpaca.markets/v2/iex";
-const MAX_SYMBOLS = 30;
-
-// DST-aware US market hours check
 function isMarketHours() {
   const now = new Date();
   const yr = now.getUTCFullYear();
@@ -21,130 +27,57 @@ function isMarketHours() {
   return etDay >= 1 && etDay <= 5 && etMins >= 9 * 60 + 30 && etMins < 16 * 60;
 }
 
-// Hook: useAlpacaWebSocket(tickers)
-// Returns: { prices: {AAPL: 182.50, ...}, connected: bool, isMock: bool, error: string|null }
 export function useAlpacaWebSocket(tickers) {
-  const [prices, setPrices] = useState({});
-  const [connected, setConnected] = useState(false);
-  const [isMock, setIsMock] = useState(false);
-  const [error, setError] = useState(null);
-
-  const wsRef = useRef(null);
-  const reconnectTimer = useRef(null);
-  const backoff = useRef(1000);
-  const mockTimer = useRef(null);
-  const mounted = useRef(true);
-  const tickersRef = useRef(tickers);
+  const [prices, setPrices]       = useState({});
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [hasData, setHasData]     = useState(false);
+  const tickersKey = tickers.join(",");
+  const intervalRef = useRef(null);
 
   useEffect(() => {
-    tickersRef.current = tickers;
-  }, [tickers]);
+    if (!tickersKey) return;
 
-  const stopMock = useCallback(() => {
-    clearInterval(mockTimer.current);
-    mockTimer.current = null;
-  }, []);
+    let cancelled = false;
 
-  const startMock = useCallback(() => {
-    setIsMock(true);
-    clearInterval(mockTimer.current);
-    mockTimer.current = setInterval(() => {
-      if (!mounted.current) return;
-      setPrices(prev => {
-        const next = { ...prev };
-        for (const t of tickersRef.current) {
-          const base = prev[t] || 100;
-          next[t] = parseFloat((base * (1 + (Math.random() * 0.01 - 0.005))).toFixed(2));
+    async function poll() {
+      try {
+        const res = await fetch(`/api/quotes?symbols=${tickersKey}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token") || ""}` },
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const priceMap = {};
+        for (const [sym, q] of Object.entries(data)) {
+          if (q.price != null) priceMap[sym] = q.price;
         }
-        return next;
-      });
-    }, 2000);
-  }, []);
-
-  const connect = useCallback(() => {
-    if (!mounted.current) return;
-
-    const useMock = import.meta.env.VITE_MOCK_WEBSOCKET === "true" || !isMarketHours();
-    if (useMock) {
-      startMock();
-      return;
+        if (!cancelled) {
+          setPrices(priceMap);
+          setLastUpdate(new Date());
+          setHasData(true);
+        }
+      } catch { /* network error — silently retry next interval */ }
     }
 
-    const limited = tickersRef.current.slice(0, MAX_SYMBOLS);
-    if (limited.length === 0) return;
+    poll();
 
-    try {
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        if (!mounted.current) { ws.close(); return; }
-        ws.send(JSON.stringify({ action: "subscribe", trades: limited }));
-        backoff.current = 1000;
-      };
-
-      ws.onmessage = (evt) => {
-        if (!mounted.current) return;
-        try {
-          const msgs = JSON.parse(evt.data);
-          for (const msg of msgs) {
-            if (msg.T === "success" && msg.msg === "connected") {
-              setConnected(true);
-              setIsMock(false);
-              stopMock();
-              setError(null);
-            } else if (msg.T === "t") {
-              // trade: msg.S = symbol, msg.p = price
-              setPrices(prev => ({ ...prev, [msg.S]: msg.p }));
-            } else if (msg.T === "error") {
-              setError(msg.msg || "WebSocket-Fehler");
-            }
-          }
-        } catch {}
-      };
-
-      ws.onerror = () => {
-        if (!mounted.current) return;
-        setError("Verbindungsfehler");
-        setConnected(false);
-      };
-
-      ws.onclose = () => {
-        if (!mounted.current) return;
-        setConnected(false);
-        startMock();
-        reconnectTimer.current = setTimeout(() => {
-          if (!mounted.current) return;
-          backoff.current = Math.min(backoff.current * 2, 30000);
-          connect();
-        }, backoff.current);
-      };
-    } catch {
-      startMock();
+    function startInterval() {
+      clearInterval(intervalRef.current);
+      const ms = isMarketHours() ? 15_000 : 60_000;
+      intervalRef.current = setInterval(() => {
+        poll();
+        // Re-schedule with current market-hours interval each tick
+        startInterval();
+      }, ms);
     }
-  }, [startMock, stopMock]);
+    startInterval();
 
-  useEffect(() => {
-    mounted.current = true;
-    connect();
     return () => {
-      mounted.current = false;
-      clearTimeout(reconnectTimer.current);
-      clearInterval(mockTimer.current);
-      if (wsRef.current) {
-        wsRef.current.onclose = null;
-        wsRef.current.close();
-        wsRef.current = null;
-      }
+      cancelled = true;
+      clearInterval(intervalRef.current);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tickersKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-subscribe when tickers change while WS is open
-  useEffect(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    const limited = tickers.slice(0, MAX_SYMBOLS);
-    wsRef.current.send(JSON.stringify({ action: "subscribe", trades: limited }));
-  }, [tickers]);
-
-  return { prices, connected, isMock, error };
+  // Keep signature compatible with old WebSocket hook:
+  // connected=true once we have data, isMock=false always
+  return { prices, connected: hasData, isMock: false, lastUpdate };
 }

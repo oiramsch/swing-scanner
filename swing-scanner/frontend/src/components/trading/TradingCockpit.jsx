@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import JustageModal from "./JustageModal.jsx";
-import { useAlpacaWebSocket } from "../../hooks/useAlpacaWebSocket.js";
 
 // ---------------------------------------------------------------------------
 // Market clock helper (DST-aware, US Eastern Time)
@@ -316,12 +315,6 @@ function OpenOrdersSection({ visible, quotes }) {
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-const WS_STATUS = {
-  live:    { dot: "bg-green-400 animate-pulse", text: "text-green-400",  border: "border-green-700/50 bg-green-900/20",  label: "🟢 Live" },
-  polling: { dot: "bg-blue-400",               text: "text-blue-400",   border: "border-blue-700/50 bg-blue-900/20",    label: "🔵 Polling" },
-  off:     { dot: "bg-red-500",                text: "text-red-400",    border: "border-red-700/50 bg-red-900/20",      label: "🔴 Offline" },
-};
-
 export default function TradingCockpit({ setActiveTab }) {
   const [plans,    setPlans]    = useState([]);
   const [brokers,  setBrokers]  = useState([]);
@@ -332,32 +325,24 @@ export default function TradingCockpit({ setActiveTab }) {
   const [lastUpdate, setLastUpdate] = useState(null);
   const pollRef = useRef(null);
 
-  // WebSocket live prices
-  const pendingTickers = useMemo(
-    () => plans.map(p => p.ticker).slice(0, 30),
-    [plans]
-  );
-  const { prices: wsPrices, connected: wsConnected, isMock: wsMock } = useAlpacaWebSocket(pendingTickers);
-
-  const wsStatus = wsConnected ? "live" : wsMock ? "polling" : "off";
-
   useEffect(() => {
     loadAll();
     const clockRef = setInterval(() => setMarket(getMarketInfo()), 30000);
     return () => { clearInterval(clockRef); };
   }, []);
 
-  // Polling: slow (30s) when WS live — fast (5s) otherwise (mock/offline → use /api/quotes for real prices)
+  // Poll quotes every 15 s during market hours, every 60 s outside
   useEffect(() => {
     clearInterval(pollRef.current);
-    pollRef.current = setInterval(refreshQuotes, wsConnected ? 30000 : 5000);
+    const ms = market.isOpen ? 15_000 : 60_000;
+    pollRef.current = setInterval(refreshQuotes, ms);
     return () => clearInterval(pollRef.current);
-  }, [wsConnected, wsMock, plans]);
+  }, [market.isOpen, plans]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Initial quote load when plans are ready
+  // Initial quote load when plans become available
   useEffect(() => {
     if (plans.length > 0) refreshQuotes();
-  }, [plans]);
+  }, [plans]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadAll() {
     setLoading(true);
@@ -389,9 +374,7 @@ export default function TradingCockpit({ setActiveTab }) {
     } catch {}
   }
 
-  // Merge live prices: real WS price takes priority; never use mock prices (base=100)
   function getLivePrice(ticker) {
-    if (wsConnected && wsPrices[ticker] != null) return wsPrices[ticker];
     return quotes[ticker]?.price ?? null;
   }
 
@@ -440,18 +423,13 @@ export default function TradingCockpit({ setActiveTab }) {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* WebSocket connection status */}
-          <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs ${WS_STATUS[wsStatus].border}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${WS_STATUS[wsStatus].dot}`} />
-            <span className={WS_STATUS[wsStatus].text}>{WS_STATUS[wsStatus].label}</span>
+          {/* Quote freshness indicator */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs border-gray-700 bg-gray-800/60 text-gray-400">
+            <span className={`w-1.5 h-1.5 rounded-full ${lastUpdate ? "bg-green-400" : "bg-gray-600"}`} />
+            <span>{lastUpdate ? `Kurse ${lastUpdate.toLocaleTimeString("de", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Laden…"}</span>
           </div>
-          {lastUpdate && (
-            <span className="text-[10px] text-gray-600">
-              {lastUpdate.toLocaleTimeString("de", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-            </span>
-          )}
           <button
-            onClick={loadAll}
+            onClick={() => { loadAll(); refreshQuotes(); }}
             className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded border border-gray-700 transition"
           >
             ↻
@@ -465,9 +443,7 @@ export default function TradingCockpit({ setActiveTab }) {
           <h2 className="text-sm font-semibold text-gray-200">
             Pending Pläne ({plans.length})
           </h2>
-          <span className="text-xs text-gray-600">
-            {wsConnected ? "WebSocket Live" : wsMock ? "Polling-Fallback" : "Kein Feed"}
-          </span>
+          <span className="text-xs text-gray-600">yfinance · {market.isOpen ? "15 s" : "60 s"}</span>
         </div>
 
         {loading ? (
