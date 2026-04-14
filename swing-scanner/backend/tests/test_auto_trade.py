@@ -106,7 +106,7 @@ async def test_safety_hard_paper_guard(engine):
 
     with patch("backend.scheduler.get_all_broker_connections", return_value=[live_conn]), \
          patch("backend.scheduler.get_results_for_date", return_value=[_make_candidate()]), \
-         patch("backend.notifier.send_push") as mock_push:
+         patch("backend.scheduler.send_push") as mock_push:
         from backend.scheduler import auto_paper_trade
         await auto_paper_trade({})
 

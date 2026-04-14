@@ -1018,7 +1018,7 @@ async def auto_paper_trade(ctx: dict):
         entry_low  = min(zone_nums) if len(zone_nums) >= 2 else entry_dec * Decimal("0.995")
         entry_high = max(zone_nums) if len(zone_nums) >= 2 else entry_dec * Decimal("1.005")
 
-        risk_per_share = abs(entry_dec - stop_dec)
+        risk_per_share = abs(entry_high - stop_dec)  # worst-case entry (upper bound)
         if risk_per_share <= 0:
             logger.info("auto_paper_trade: %s skipped — zero risk_per_share", ticker)
             continue
