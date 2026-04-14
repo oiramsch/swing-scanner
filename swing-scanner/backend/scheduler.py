@@ -960,7 +960,12 @@ async def auto_paper_trade(ctx: dict):
         )
         return
 
-    connector = get_connector(alpaca_conn.model_dump())
+    # Decrypt API credentials before passing to connector (model_dump only has api_key_enc)
+    from backend.crypto import decrypt_or_none
+    conn_dict = alpaca_conn.model_dump()
+    conn_dict["api_key"] = decrypt_or_none(alpaca_conn.api_key_enc)
+    conn_dict["api_secret"] = decrypt_or_none(alpaca_conn.api_secret_enc)
+    connector = get_connector(conn_dict)
 
     # Fetch account balance
     try:
