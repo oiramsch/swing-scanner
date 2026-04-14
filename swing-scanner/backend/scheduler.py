@@ -50,6 +50,7 @@ from backend.notifier import (
     send_daily_summary_email,
     send_push,
 )
+from backend.brokers import get_connector
 from backend.performance import update_performance_tracking
 from backend.screener import run_screener
 from backend.signal_checker import run_portfolio_signal_check, check_candidate_triggers
@@ -915,7 +916,7 @@ async def auto_paper_trade(ctx: dict):
     """
     logger.info("=== auto_paper_trade started ===")
     from decimal import Decimal, ROUND_DOWN
-    from backend.brokers import get_connector
+    from backend.crypto import decrypt_or_none
     from backend.notifier import (
         notify_auto_trade_success,
         notify_auto_trade_error,
@@ -934,22 +935,22 @@ async def auto_paper_trade(ctx: dict):
         logger.info("auto_paper_trade: no active candidates for %s", today)
         return
 
-    # Find the active Alpaca Paper broker connection (tenant 1)
+    # Find any Alpaca broker connection (paper check is the hard guard below)
     connections = get_all_broker_connections(tenant_id=1)
     alpaca_conn = next(
-        (c for c in connections if c.broker_type == "alpaca" and c.is_paper), None
+        (c for c in connections if c.broker_type == "alpaca"), None
     )
     if alpaca_conn is None:
-        logger.warning("auto_paper_trade: no active Alpaca Paper connection found — aborting")
+        logger.warning("auto_paper_trade: no active Alpaca connection found — aborting")
         send_push(
             title="⚠️ Auto-Trading abgebrochen",
-            message="Kein Alpaca Paper-Konto konfiguriert.",
+            message="Kein Alpaca-Konto konfiguriert.",
             priority="high",
             tags="warning",
         )
         return
 
-    # ── Safety Limit 1: Hard Paper guard ────────────────────────────────────
+    # ── Safety Limit 1: Hard Paper guard (defense-in-depth) ─────────────────
     if not alpaca_conn.is_paper:
         logger.error("auto_paper_trade: HARD GUARD — is_paper=False, aborting immediately")
         send_push(
@@ -961,7 +962,6 @@ async def auto_paper_trade(ctx: dict):
         return
 
     # Decrypt API credentials before passing to connector (model_dump only has api_key_enc)
-    from backend.crypto import decrypt_or_none
     conn_dict = alpaca_conn.model_dump()
     conn_dict["api_key"] = decrypt_or_none(alpaca_conn.api_key_enc)
     conn_dict["api_secret"] = decrypt_or_none(alpaca_conn.api_secret_enc)
@@ -1018,7 +1018,7 @@ async def auto_paper_trade(ctx: dict):
         entry_low  = min(zone_nums) if len(zone_nums) >= 2 else entry_dec * Decimal("0.995")
         entry_high = max(zone_nums) if len(zone_nums) >= 2 else entry_dec * Decimal("1.005")
 
-        risk_per_share = abs(entry_dec - stop_dec)
+        risk_per_share = abs(entry_high - stop_dec)  # worst-case entry (upper bound)
         if risk_per_share <= 0:
             logger.info("auto_paper_trade: %s skipped — zero risk_per_share", ticker)
             continue
