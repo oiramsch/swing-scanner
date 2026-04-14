@@ -171,6 +171,55 @@ def place_market_sell(creds: dict, *, ticker: str, qty: float) -> dict:
     return _order_to_dict(order)
 
 
+def place_limit_sell(
+    creds: dict,
+    *,
+    ticker: str,
+    qty: float,
+    limit_price: Union[Decimal, float],
+) -> dict:
+    """Place a standalone SELL LIMIT order (Take-Profit without bracket)."""
+    from alpaca.trading.requests import LimitOrderRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+
+    client = _get_trading_client(creds)
+    req = LimitOrderRequest(
+        symbol=ticker.upper(),
+        qty=qty,
+        side=OrderSide.SELL,
+        limit_price=round(float(limit_price), 2),
+        time_in_force=TimeInForce.GTC,
+        order_class=OrderClass.SIMPLE,
+    )
+    order = client.submit_order(req)
+    logger.info("Limit sell placed: %s × %s @ %s", ticker, qty, limit_price)
+    return _order_to_dict(order)
+
+
+def place_stop_sell(
+    creds: dict,
+    *,
+    ticker: str,
+    qty: float,
+    stop_price: Union[Decimal, float],
+) -> dict:
+    """Place a standalone SELL STOP order (Stop-Loss without bracket)."""
+    from alpaca.trading.requests import StopOrderRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce
+
+    client = _get_trading_client(creds)
+    req = StopOrderRequest(
+        symbol=ticker.upper(),
+        qty=qty,
+        side=OrderSide.SELL,
+        stop_price=round(float(stop_price), 2),
+        time_in_force=TimeInForce.GTC,
+    )
+    order = client.submit_order(req)
+    logger.info("Stop sell placed: %s × %s @ %s", ticker, qty, stop_price)
+    return _order_to_dict(order)
+
+
 def _position_to_dict(pos) -> dict:
     return {
         "ticker":           str(pos.symbol),

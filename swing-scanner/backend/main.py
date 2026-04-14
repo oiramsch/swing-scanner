@@ -1795,6 +1795,37 @@ async def modify_order(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.post("/api/orders/single")
+async def place_single_order(
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Place a standalone single-leg order for an existing position.
+    Body: { ticker, qty, type: "limit_sell" | "stop_sell", price }
+    """
+    from backend.trading import place_limit_sell as _limit, place_stop_sell as _stop
+    ticker    = data.get("ticker")
+    qty       = data.get("qty")
+    order_type = data.get("type")
+    price     = data.get("price")
+    if not ticker or not qty or not order_type or not price:
+        raise HTTPException(status_code=422, detail="ticker, qty, type und price erforderlich")
+    try:
+        creds = get_broker_credentials(current_user.tenant_id)
+        if order_type == "limit_sell":
+            order = _limit(creds, ticker=ticker, qty=float(qty), limit_price=float(price))
+        elif order_type == "stop_sell":
+            order = _stop(creds, ticker=ticker, qty=float(qty), stop_price=float(price))
+        else:
+            raise HTTPException(status_code=422, detail=f"Unbekannter Ordertyp: {order_type}")
+        return order
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.get("/api/quotes")
 async def get_live_quotes(
     symbols: str,
