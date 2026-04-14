@@ -54,7 +54,7 @@ function saveDrawings(symbol, drawings) {
 }
 
 // ── Main Component ─────────────────────────────────────────────────────────
-export default function CandidateChart({ symbol, scanResult, onClose }) {
+export default function CandidateChart({ symbol, scanResult, draftPlan, onClose }) {
   const containerRef = useRef(null);
   const canvasRef    = useRef(null);
   const chartRef     = useRef(null);
@@ -205,6 +205,41 @@ export default function CandidateChart({ symbol, scanResult, onClose }) {
 
     return () => { cancelled = true; };
   }, [period, symbol]);
+
+  // ── Draft plan live preview lines ─────────────────────────────────────────
+  // Re-renders whenever the user edits Entry/SL/TP in the plan form
+  useEffect(() => {
+    if (!candleRef.current) return;
+
+    // Remove previously drawn draft lines
+    if (candleRef.current._draftLines) {
+      candleRef.current._draftLines.forEach(pl => {
+        try { candleRef.current.removePriceLine(pl); } catch {}
+      });
+    }
+    candleRef.current._draftLines = [];
+
+    if (!draftPlan) return;
+
+    const addDraft = (price, color, title) => {
+      const p = parseFloat(price);
+      if (!p || isNaN(p)) return;
+      const pl = candleRef.current.createPriceLine({
+        price: p,
+        color,
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title,
+      });
+      candleRef.current._draftLines.push(pl);
+    };
+
+    addDraft(draftPlan.entryLow,  "#22c55e", "Entry L");
+    addDraft(draftPlan.entryHigh, "#22c55e", "Entry H");
+    addDraft(draftPlan.stopLoss,  "#ef4444", "SL");
+    addDraft(draftPlan.target,    "#3b82f6", "TP");
+  }, [draftPlan]);
 
   // ── Persist drawings to localStorage ─────────────────────────────────────
   useEffect(() => {
@@ -504,12 +539,14 @@ export default function CandidateChart({ symbol, scanResult, onClose }) {
 
           <div className="w-px h-4 bg-gray-700 mx-1" />
 
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded bg-gray-800 text-gray-400 hover:bg-gray-700 transition"
-          >
-            <X size={14} />
-          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded bg-gray-800 text-gray-400 hover:bg-gray-700 transition"
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
 

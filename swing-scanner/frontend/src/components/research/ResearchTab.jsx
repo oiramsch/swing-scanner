@@ -1,5 +1,7 @@
 import { useState } from "react";
 import axios from "axios";
+import CandidateChart from "../chart/CandidateChart.jsx";
+import ResearchPlanModal from "./ResearchPlanModal.jsx";
 
 function PctBadge({ value }) {
   if (value === null || value === undefined) return <span className="text-gray-600">—</span>;
@@ -30,10 +32,12 @@ function SectionCard({ title, children }) {
 }
 
 export default function ResearchTab() {
-  const [query, setQuery] = useState("");
-  const [data, setData]   = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [query,    setQuery]    = useState("");
+  const [data,     setData]     = useState(null);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState(null);
+  const [showPlan, setShowPlan] = useState(false);
+  const [draftPlan, setDraftPlan] = useState(null); // live preview in chart
 
   async function search(ticker) {
     const sym = (ticker || query).trim().toUpperCase();
@@ -41,6 +45,7 @@ export default function ResearchTab() {
     setLoading(true);
     setError(null);
     setData(null);
+    setDraftPlan(null);
     try {
       const res = await axios.get(`/api/research/${sym}`);
       setData(res.data);
@@ -57,9 +62,10 @@ export default function ResearchTab() {
 
   const perf = data?.performance ?? {};
   const earningsWarning = data?.earnings_in_days !== null && data?.earnings_in_days <= 7;
+  const currentPrice = perf.current ?? null;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-5">
+    <div className="max-w-5xl mx-auto space-y-5">
 
       {/* Search bar */}
       <div className="flex gap-2">
@@ -90,9 +96,8 @@ export default function ResearchTab() {
       {/* Loading skeleton */}
       {loading && (
         <div className="space-y-4 animate-pulse">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="h-28 bg-gray-900 border border-gray-800 rounded-xl" />
-          ))}
+          <div className="h-[460px] bg-gray-900 border border-gray-800 rounded-xl" />
+          {[1, 2].map(i => <div key={i} className="h-28 bg-gray-900 border border-gray-800 rounded-xl" />)}
         </div>
       )}
 
@@ -100,73 +105,36 @@ export default function ResearchTab() {
       {data && !loading && (
         <div className="space-y-4">
 
-          {/* Company header */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-white text-xl font-bold">{data.ticker}</span>
-                  {data.name && <span className="text-gray-400 text-sm">{data.name}</span>}
-                </div>
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  {data.sector && (
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-900/40 border border-indigo-700/40 text-indigo-300">
-                      {data.sector}
-                    </span>
-                  )}
-                  {data.industry && (
-                    <span className="text-[11px] text-gray-500">{data.industry}</span>
-                  )}
-                  {data.country && (
-                    <span className="text-[11px] text-gray-600">{data.country} · {data.exchange}</span>
-                  )}
-                </div>
-              </div>
-              <div className="text-right">
-                {perf.current && (
-                  <div className="text-white text-xl font-bold">${perf.current.toFixed(2)}</div>
+          {/* ── Chart (full width) ─────────────────────────────────────── */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            {/* Chart header with plan button */}
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-white font-bold">{data.ticker}</span>
+                {data.name && <span className="text-gray-500 text-sm">{data.name}</span>}
+                {data.sector && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-900/40 border border-indigo-700/40 text-indigo-300">
+                    {data.sector}
+                  </span>
+                )}
+                {currentPrice && (
+                  <span className="text-white font-semibold">${currentPrice.toFixed(2)}</span>
                 )}
                 {perf.change_1m !== undefined && (
-                  <div className="text-xs text-gray-500 mt-0.5">1M <PctBadge value={perf.change_1m} /></div>
+                  <span className="text-xs text-gray-500">1M <PctBadge value={perf.change_1m} /></span>
                 )}
               </div>
+              <button
+                onClick={() => setShowPlan(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg border border-indigo-600/60 transition"
+              >
+                + Tradingplan erstellen
+              </button>
             </div>
-
-            {/* Description */}
-            {data.description && (
-              <p className="mt-3 text-xs text-gray-500 leading-relaxed line-clamp-3">
-                {data.description}
-              </p>
-            )}
+            <CandidateChart symbol={data.ticker} draftPlan={draftPlan} />
           </div>
 
-          {/* Earnings warning */}
-          {earningsWarning && (
-            <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-orange-900/20 border border-orange-700/50 text-orange-300 text-sm">
-              <span className="text-lg leading-none mt-0.5">⚠️</span>
-              <div>
-                <span className="font-semibold">
-                  Earnings in {data.earnings_in_days === 0 ? "heute" : `${data.earnings_in_days} Tag${data.earnings_in_days === 1 ? "" : "en"}`}
-                </span>
-                {data.next_earnings && (
-                  <span className="text-orange-400/70 ml-2 text-xs">({data.next_earnings})</span>
-                )}
-                <div className="text-orange-400/60 text-xs mt-0.5">
-                  Erhöhtes Gap-Risiko vor dem Event — Positionsgröße anpassen oder abwarten.
-                </div>
-              </div>
-            </div>
-          )}
-          {!earningsWarning && data.next_earnings && (
-            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-xs text-gray-400">
-              <span>📅</span>
-              <span>Nächste Earnings: <span className="text-white font-medium">{data.next_earnings}</span>
-                <span className="text-gray-600 ml-1">({data.earnings_in_days} Tage)</span>
-              </span>
-            </div>
-          )}
-
-          {/* Metrics grid */}
+          {/* ── Two-column: Fundamentals + Technical ──────────────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <SectionCard title="Fundamentals">
               <MetricRow label="Market Cap" value={data.market_cap} />
@@ -183,8 +151,8 @@ export default function ResearchTab() {
             <SectionCard title="Technisch">
               <MetricRow label="52W Hoch" value={data.w52_high ? `$${data.w52_high.toFixed(2)}` : null} />
               <MetricRow label="52W Tief" value={data.w52_low ? `$${data.w52_low.toFixed(2)}` : null} />
-              {data.w52_high && data.w52_low && perf.current && (
-                <div className="mt-2">
+              {data.w52_high && data.w52_low && currentPrice && (
+                <div className="mt-2 mb-2">
                   <div className="flex justify-between text-[10px] text-gray-600 mb-1">
                     <span>${data.w52_low.toFixed(0)}</span>
                     <span>${data.w52_high.toFixed(0)}</span>
@@ -192,30 +160,49 @@ export default function ResearchTab() {
                   <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-indigo-500 rounded-full"
-                      style={{
-                        width: `${Math.min(100, Math.max(0,
-                          ((perf.current - data.w52_low) / (data.w52_high - data.w52_low)) * 100
-                        ))}%`
-                      }}
+                      style={{ width: `${Math.min(100, Math.max(0, ((currentPrice - data.w52_low) / (data.w52_high - data.w52_low)) * 100))}%` }}
                     />
                   </div>
                   <div className="text-center text-[10px] text-gray-500 mt-1">
-                    {(((perf.current - data.w52_low) / (data.w52_high - data.w52_low)) * 100).toFixed(0)}% vom 52W-Tief
+                    {(((currentPrice - data.w52_low) / (data.w52_high - data.w52_low)) * 100).toFixed(0)}% vom 52W-Tief
                   </div>
                 </div>
               )}
-              <MetricRow
-                label="Ø Volumen"
-                value={data.avg_volume ? `${(data.avg_volume / 1e6).toFixed(1)}M` : null}
-              />
+              <MetricRow label="Ø Volumen" value={data.avg_volume ? `${(data.avg_volume / 1e6).toFixed(1)}M` : null} />
               {data.float_shares && (
                 <MetricRow label="Float" value={`${(data.float_shares / 1e6).toFixed(1)}M`} />
               )}
             </SectionCard>
           </div>
 
-          {/* Performance */}
-          {perf.current && (
+          {/* ── Earnings warnings ─────────────────────────────────────── */}
+          {earningsWarning && (
+            <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-orange-900/20 border border-orange-700/50 text-orange-300 text-sm">
+              <span className="text-lg leading-none mt-0.5">⚠️</span>
+              <div>
+                <span className="font-semibold">
+                  Earnings in {data.earnings_in_days === 0 ? "heute" : `${data.earnings_in_days} Tag${data.earnings_in_days === 1 ? "" : "en"}`}
+                </span>
+                {data.next_earnings && (
+                  <span className="text-orange-400/70 ml-2 text-xs">({data.next_earnings})</span>
+                )}
+                <div className="text-orange-400/60 text-xs mt-0.5">
+                  Erhöhtes Gap-Risiko — Positionsgröße anpassen oder abwarten.
+                </div>
+              </div>
+            </div>
+          )}
+          {!earningsWarning && data.next_earnings && (
+            <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gray-900 border border-gray-800 text-xs text-gray-400">
+              <span>📅</span>
+              <span>Nächste Earnings: <span className="text-white font-medium">{data.next_earnings}</span>
+                <span className="text-gray-600 ml-1">({data.earnings_in_days} Tage)</span>
+              </span>
+            </div>
+          )}
+
+          {/* ── Performance ───────────────────────────────────────────── */}
+          {currentPrice && (
             <SectionCard title="Performance">
               <div className="grid grid-cols-5 gap-0 text-center">
                 {[
@@ -234,18 +221,22 @@ export default function ResearchTab() {
             </SectionCard>
           )}
 
-          {/* News */}
+          {/* ── Description ───────────────────────────────────────────── */}
+          {data.description && (
+            <SectionCard title="Unternehmen">
+              <p className="text-xs text-gray-400 leading-relaxed">{data.description}</p>
+              {(data.country || data.exchange) && (
+                <div className="mt-2 text-[11px] text-gray-600">{data.country} · {data.exchange}</div>
+              )}
+            </SectionCard>
+          )}
+
+          {/* ── News ──────────────────────────────────────────────────── */}
           {data.news?.length > 0 && (
             <SectionCard title="Aktuelle News">
-              <div className="space-y-2">
+              <div className="space-y-0">
                 {data.news.map((n, i) => (
-                  <a
-                    key={i}
-                    href={n.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block group"
-                  >
+                  <a key={i} href={n.link} target="_blank" rel="noopener noreferrer" className="block group">
                     <div className="flex items-start gap-2 py-2 border-b border-gray-800 last:border-0">
                       <div className="flex-1 min-w-0">
                         <div className="text-xs text-gray-200 group-hover:text-white transition line-clamp-2 leading-snug">
@@ -254,9 +245,7 @@ export default function ResearchTab() {
                         <div className="text-[10px] text-gray-600 mt-0.5">
                           {n.publisher}
                           {n.published_ts && (
-                            <span className="ml-1">
-                              · {new Date(n.published_ts * 1000).toLocaleDateString("de", { day: "2-digit", month: "short" })}
-                            </span>
+                            <span className="ml-1">· {new Date(n.published_ts * 1000).toLocaleDateString("de", { day: "2-digit", month: "short" })}</span>
                           )}
                         </div>
                       </div>
@@ -276,13 +265,20 @@ export default function ResearchTab() {
             <div className="text-gray-700 text-xs">
               Earnings Transcripts · Analyst Reports · Sentiment · Company Tearsheet
             </div>
-            <a href="https://bigdata.com" target="_blank" rel="noopener noreferrer"
-              className="inline-block mt-1 text-[11px] text-indigo-600 hover:text-indigo-400 transition">
-              bigdata.com ↗
-            </a>
           </div>
 
         </div>
+      )}
+
+      {/* ── Trading Plan Modal ────────────────────────────────────────── */}
+      {showPlan && data && (
+        <ResearchPlanModal
+          ticker={data.ticker}
+          currentPrice={currentPrice}
+          onClose={() => { setShowPlan(false); setDraftPlan(null); }}
+          onSaved={() => { setShowPlan(false); setDraftPlan(null); }}
+          onDraftChange={setDraftPlan}
+        />
       )}
     </div>
   );
