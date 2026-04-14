@@ -168,7 +168,7 @@ function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute, onArchive 
         <button
           onClick={() => onArchive(plan)}
           title="Plan archivieren (z.B. bereits via Auto-Trade ausgeführt)"
-          className="px-2 py-1.5 text-xs text-gray-600 hover:text-gray-400 rounded border border-transparent hover:border-gray-700 transition"
+          className="px-2 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-red-900/30 rounded border border-gray-700 hover:border-red-700/50 transition"
         >
           ✕
         </button>
