@@ -3,11 +3,11 @@ import axios from "axios";
 
 // Derive a human label from order side + type
 function orderLabel(order) {
-  const side = order.side;   // "buy" | "sell"
-  const type = order.type;   // "limit" | "stop" | "market" | ...
-  if (side === "sell" && type === "limit") return { label: "TP", color: "text-green-400 border-green-700/40 bg-green-900/10" };
-  if (side === "sell" && type === "stop")  return { label: "SL", color: "text-red-400 border-red-700/40 bg-red-900/10" };
-  if (side === "buy")                      return { label: "BUY", color: "text-blue-400 border-blue-700/40 bg-blue-900/10" };
+  const side = order.side;
+  const type = order.type;   // "limit" | "stop" | "stop_limit" | "market" | ...
+  if (side === "sell" && type === "limit")                    return { label: "TP", color: "text-green-400 border-green-700/40 bg-green-900/10" };
+  if (side === "sell" && (type === "stop" || type === "stop_limit")) return { label: "SL", color: "text-red-400 border-red-700/40 bg-red-900/10" };
+  if (side === "buy")                                         return { label: "BUY", color: "text-blue-400 border-blue-700/40 bg-blue-900/10" };
   return { label: type?.toUpperCase() || "?", color: "text-gray-400 border-gray-700 bg-gray-800/40" };
 }
 
@@ -20,8 +20,8 @@ function OrderRow({ order, onCancel, onModified }) {
 
   const { label, color } = orderLabel(order);
   const isTP = order.side === "sell" && order.type === "limit";
-  const isSL = order.side === "sell" && order.type === "stop";
-  const currentPrice = isTP ? order.limit_price : isSL ? order.stop_price : order.limit_price;
+  const isSL = order.side === "sell" && (order.type === "stop" || order.type === "stop_limit");
+  const currentPrice = isTP ? order.limit_price : isSL ? (order.stop_price ?? order.limit_price) : order.limit_price;
 
   async function handleSave() {
     const val = parseFloat(price);
