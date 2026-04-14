@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import JustageModal from "./JustageModal.jsx";
-import { useAlpacaWebSocket } from "../../hooks/useAlpacaWebSocket.js";
 
 // ---------------------------------------------------------------------------
 // Market clock helper (DST-aware, US Eastern Time)
@@ -202,10 +201,11 @@ function PlanTile({ plan, brokers, livePrice, volumeRatio, onExecute }) {
 // ---------------------------------------------------------------------------
 // Open orders list (Alpaca only)
 // ---------------------------------------------------------------------------
-function OpenOrdersSection({ visible }) {
-  const [orders,    setOrders]    = useState([]);
-  const [loading,   setLoading]   = useState(false);
+function OpenOrdersSection({ visible, quotes }) {
+  const [orders,     setOrders]     = useState([]);
+  const [loading,    setLoading]    = useState(false);
   const [cancelling, setCancelling] = useState({});
+  const [confirmId,  setConfirmId]  = useState(null); // order awaiting confirm
 
   useEffect(() => {
     if (!visible) return;
@@ -222,6 +222,7 @@ function OpenOrdersSection({ visible }) {
   }
 
   async function cancel(orderId) {
+    setConfirmId(null);
     setCancelling(c => ({ ...c, [orderId]: true }));
     try {
       await axios.delete(`/api/orders/${orderId}`);
@@ -230,6 +231,16 @@ function OpenOrdersSection({ visible }) {
       alert(err.response?.data?.detail || "Stornierung fehlgeschlagen");
     }
     setCancelling(c => ({ ...c, [orderId]: false }));
+  }
+
+  // For a SELL order: if current price is already above the limit → TP about to fill → block cancel
+  function cancelStatus(o) {
+    if (o.side !== "sell") return "allowed";
+    if (!o.limit_price) return "allowed";
+    const livePrice = quotes?.[o.ticker]?.price;
+    if (!livePrice) return "warn"; // unknown price → warn
+    if (livePrice >= o.limit_price) return "blocked"; // price above TP → don't cancel
+    return "warn"; // price below TP → warn but allow
   }
 
   if (!visible) return null;
@@ -248,26 +259,53 @@ function OpenOrdersSection({ visible }) {
         <div className="text-center py-6 text-xs text-gray-600">Keine offenen Orders</div>
       ) : (
         <div>
-          {orders.map(o => (
-            <div key={o.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-gray-800 last:border-b-0 text-sm">
-              <span className="font-bold text-white w-16 shrink-0">{o.ticker}</span>
-              <span className="text-gray-400">{o.qty} Stk.</span>
-              {o.limit_price != null && <span className="text-gray-400">@ ${o.limit_price.toFixed(2)}</span>}
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">{o.type}</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded border ${o.status === "new" || o.status === "accepted" ? "bg-blue-900/20 border-blue-700/40 text-blue-400" : "bg-gray-800 border-gray-700 text-gray-500"}`}>
-                {o.status}
-              </span>
-              <div className="ml-auto">
-                <button
-                  onClick={() => cancel(o.id)}
-                  disabled={cancelling[o.id]}
-                  className="text-xs px-2.5 py-1 bg-red-900/30 hover:bg-red-900/60 border border-red-700/40 text-red-400 rounded transition disabled:opacity-50"
-                >
-                  {cancelling[o.id] ? "…" : "Stornieren"}
-                </button>
+          {orders.map(o => {
+            const cs = cancelStatus(o);
+            const isSell = o.side === "sell";
+            const typeLabel = (o.type || "").replace(/^OrderType\./i, "").toUpperCase();
+            const statusLabel = (o.status || "").replace(/^OrderStatus\./i, "");
+            const isConfirming = confirmId === o.id;
+            return (
+              <div key={o.id} className="px-4 py-2.5 border-b border-gray-800 last:border-b-0 text-sm space-y-1.5">
+                <div className="flex items-center gap-3">
+                  <span className="font-bold text-white w-16 shrink-0">{o.ticker}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${isSell ? "bg-red-900/20 border-red-700/40 text-red-400" : "bg-green-900/20 border-green-700/40 text-green-400"}`}>
+                    {isSell ? "SELL" : "BUY"}
+                  </span>
+                  <span className="text-gray-400">{o.qty} Stk.</span>
+                  {o.limit_price != null && <span className="text-gray-300">@ ${o.limit_price.toFixed(2)}</span>}
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">{typeLabel || o.type}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border ${["new","accepted"].includes(statusLabel) ? "bg-blue-900/20 border-blue-700/40 text-blue-400" : "bg-gray-800 border-gray-700 text-gray-500"}`}>
+                    {statusLabel || o.status}
+                  </span>
+                  <div className="ml-auto">
+                    {cs === "blocked" ? (
+                      <span className="text-[10px] text-gray-600 italic">Kurs ≥ Limit — nicht stornierbar</span>
+                    ) : isConfirming ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-orange-400">{isSell ? "⚠ Take-Profit stornieren?" : "Order stornieren?"}</span>
+                        <button onClick={() => cancel(o.id)} className="text-xs px-2 py-0.5 bg-red-700 hover:bg-red-600 text-white rounded transition">Ja</button>
+                        <button onClick={() => setConfirmId(null)} className="text-xs px-2 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition">Nein</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmId(o.id)}
+                        disabled={cancelling[o.id]}
+                        className="text-xs px-2.5 py-1 bg-red-900/30 hover:bg-red-900/60 border border-red-700/40 text-red-400 rounded transition disabled:opacity-50"
+                      >
+                        {cancelling[o.id] ? "…" : "Stornieren"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {cs === "blocked" && (
+                  <div className="text-[10px] text-orange-400/80 pl-0.5">
+                    Kurs ${quotes?.[o.ticker]?.price?.toFixed(2)} ≥ Limit ${o.limit_price?.toFixed(2)} — Take-Profit kurz vor Auslösung
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -277,12 +315,6 @@ function OpenOrdersSection({ visible }) {
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-const WS_STATUS = {
-  live:    { dot: "bg-green-400 animate-pulse", text: "text-green-400",  border: "border-green-700/50 bg-green-900/20",  label: "🟢 Live" },
-  polling: { dot: "bg-blue-400",               text: "text-blue-400",   border: "border-blue-700/50 bg-blue-900/20",    label: "🔵 Polling" },
-  off:     { dot: "bg-red-500",                text: "text-red-400",    border: "border-red-700/50 bg-red-900/20",      label: "🔴 Offline" },
-};
-
 export default function TradingCockpit({ setActiveTab }) {
   const [plans,    setPlans]    = useState([]);
   const [brokers,  setBrokers]  = useState([]);
@@ -293,32 +325,24 @@ export default function TradingCockpit({ setActiveTab }) {
   const [lastUpdate, setLastUpdate] = useState(null);
   const pollRef = useRef(null);
 
-  // WebSocket live prices
-  const pendingTickers = useMemo(
-    () => plans.map(p => p.ticker).slice(0, 30),
-    [plans]
-  );
-  const { prices: wsPrices, connected: wsConnected, isMock: wsMock } = useAlpacaWebSocket(pendingTickers);
-
-  const wsStatus = wsConnected ? "live" : wsMock ? "polling" : "off";
-
   useEffect(() => {
     loadAll();
     const clockRef = setInterval(() => setMarket(getMarketInfo()), 30000);
     return () => { clearInterval(clockRef); };
   }, []);
 
-  // Polling: slow (30s) when WS live — fast (5s) otherwise (mock/offline → use /api/quotes for real prices)
+  // Poll quotes every 15 s during market hours, every 60 s outside
   useEffect(() => {
     clearInterval(pollRef.current);
-    pollRef.current = setInterval(refreshQuotes, wsConnected ? 30000 : 5000);
+    const ms = market.isOpen ? 15_000 : 60_000;
+    pollRef.current = setInterval(refreshQuotes, ms);
     return () => clearInterval(pollRef.current);
-  }, [wsConnected, wsMock, plans]);
+  }, [market.isOpen, plans]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Initial quote load when plans are ready
+  // Initial quote load when plans become available
   useEffect(() => {
     if (plans.length > 0) refreshQuotes();
-  }, [plans]);
+  }, [plans]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadAll() {
     setLoading(true);
@@ -350,9 +374,7 @@ export default function TradingCockpit({ setActiveTab }) {
     } catch {}
   }
 
-  // Merge live prices: real WS price takes priority; never use mock prices (base=100)
   function getLivePrice(ticker) {
-    if (wsConnected && wsPrices[ticker] != null) return wsPrices[ticker];
     return quotes[ticker]?.price ?? null;
   }
 
@@ -401,18 +423,13 @@ export default function TradingCockpit({ setActiveTab }) {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* WebSocket connection status */}
-          <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs ${WS_STATUS[wsStatus].border}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${WS_STATUS[wsStatus].dot}`} />
-            <span className={WS_STATUS[wsStatus].text}>{WS_STATUS[wsStatus].label}</span>
+          {/* Quote freshness indicator */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs border-gray-700 bg-gray-800/60 text-gray-400">
+            <span className={`w-1.5 h-1.5 rounded-full ${lastUpdate ? "bg-green-400" : "bg-gray-600"}`} />
+            <span>{lastUpdate ? `Kurse ${lastUpdate.toLocaleTimeString("de", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Laden…"}</span>
           </div>
-          {lastUpdate && (
-            <span className="text-[10px] text-gray-600">
-              {lastUpdate.toLocaleTimeString("de", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-            </span>
-          )}
           <button
-            onClick={loadAll}
+            onClick={() => { loadAll(); refreshQuotes(); }}
             className="text-xs px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded border border-gray-700 transition"
           >
             ↻
@@ -426,9 +443,7 @@ export default function TradingCockpit({ setActiveTab }) {
           <h2 className="text-sm font-semibold text-gray-200">
             Pending Pläne ({plans.length})
           </h2>
-          <span className="text-xs text-gray-600">
-            {wsConnected ? "WebSocket Live" : wsMock ? "Polling-Fallback" : "Kein Feed"}
-          </span>
+          <span className="text-xs text-gray-600">yfinance · {market.isOpen ? "15 s" : "60 s"}</span>
         </div>
 
         {loading ? (
@@ -462,7 +477,7 @@ export default function TradingCockpit({ setActiveTab }) {
       </div>
 
       {/* Open orders (Alpaca only) */}
-      <OpenOrdersSection visible={!!alpacaBroker} />
+      <OpenOrdersSection visible={!!alpacaBroker} quotes={quotes} />
 
       {/* Justage Modal */}
       {justageTarget && (
