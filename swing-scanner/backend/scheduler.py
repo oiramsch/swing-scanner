@@ -26,6 +26,7 @@ from backend.database import (
     get_archived_tickers_for_date,
     get_last_scan_datetime,
     get_latest_funnel,
+    get_active_trade_plans,
     get_paper_auto_trading,
     get_pending_predictions,
     get_results_for_date,
@@ -37,6 +38,7 @@ from backend.database import (
     save_trade_plan,
     update_candidate_status,
     update_deep_analysis,
+    update_trade_plan,
 )
 from backend.deep_analyzer import deep_analyze
 from backend.market_regime import ensure_regime_current, get_current_regime, update_market_regime
@@ -1056,6 +1058,16 @@ async def auto_paper_trade(ctx: dict):
 
         try:
             order_result = connector.place_order(plan_dict)
+
+            # Cancel any pre-existing pending plans for this ticker so they don't
+            # linger in the Trading Cockpit after the auto-trade has been placed.
+            stale_plans = [
+                p for p in get_active_trade_plans(tenant_id=1)
+                if p.ticker == ticker and p.status == "pending"
+            ]
+            for stale in stale_plans:
+                update_trade_plan(stale.id, {"status": "cancelled"})
+                logger.info("auto_paper_trade: cancelled stale pending plan #%s for %s", stale.id, ticker)
 
             # Persist as TradePlan with auto_trade=True
             trade_plan = TradePlan(
