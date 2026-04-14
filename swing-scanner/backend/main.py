@@ -2237,10 +2237,12 @@ async def execute_trade_plan(
         # Update execution state
         exec_state = json.loads(plan.execution_state_json or "{}")
         exec_state[str(broker_id)] = "executed"
+        fill_price = result.get("limit_price") or result.get("fill_price") or plan.entry_high
         update_trade_plan(plan_id, {
             "execution_state_json": json.dumps(exec_state),
             "status": "active",
             "shares_executed": float(plan_dict["qty"]),
+            "actual_entry_price": float(fill_price) if fill_price else None,
         })
         return {"order": result, "broker": conn.label}
     except Exception as exc:
