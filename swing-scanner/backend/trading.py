@@ -104,11 +104,18 @@ def place_short_bracket_order(
 
 
 def get_open_orders(creds: dict) -> list[dict]:
+    """
+    Return all non-terminal orders from Alpaca.
+    We query ALL orders and filter client-side to also catch bracket child orders
+    that may be in 'held' or 'accepted' status (not always returned by OPEN filter).
+    """
     from alpaca.trading.requests import GetOrdersRequest
     from alpaca.trading.enums import QueryOrderStatus
+    _TERMINAL = {"filled", "expired", "canceled", "cancelled", "rejected", "replaced"}
     client = _get_trading_client(creds)
-    orders = client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
-    return [_order_to_dict(o) for o in orders]
+    orders = client.get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL, limit=100))
+    return [_order_to_dict(o) for o in orders
+            if (o.status.value if hasattr(o.status, "value") else str(o.status)) not in _TERMINAL]
 
 
 def cancel_order(creds: dict, order_id: str) -> None:
@@ -188,6 +195,7 @@ def _order_to_dict(order) -> dict:
         "side":             order.side.value if hasattr(order.side, "value") else str(order.side),
         "type":             order.order_type.value if hasattr(order.order_type, "value") else str(order.order_type),
         "limit_price":      float(order.limit_price) if order.limit_price else None,
+        "stop_price":       float(order.stop_price) if order.stop_price else None,
         "created_at":       str(order.created_at),
         "filled_at":        str(order.filled_at) if order.filled_at else None,
         "filled_avg_price": float(order.filled_avg_price) if order.filled_avg_price else None,
