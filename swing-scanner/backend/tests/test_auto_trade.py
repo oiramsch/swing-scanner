@@ -102,6 +102,7 @@ async def test_safety_hard_paper_guard(engine):
     with Session(engine) as s:
         s.add(live_conn)
         s.commit()
+        s.refresh(live_conn)
 
     with patch("backend.scheduler.get_all_broker_connections", return_value=[live_conn]), \
          patch("backend.scheduler.get_results_for_date", return_value=[_make_candidate()]), \

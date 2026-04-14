@@ -199,7 +199,7 @@ class TestGhostPositionsEndpoint:
     def test_empty_db_returns_empty_list(self, test_client):
         """With no predictions in DB the endpoint returns an empty items list."""
         with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
-            resp = test_client.get("/api/ghost-portfolio/positions")
+            resp = test_client.get("/api/ghost-portfolio/positions", headers=_AUTH)
         assert resp.status_code == 200
         body = resp.json()
         assert "items" in body
@@ -212,7 +212,7 @@ class TestGhostPositionsEndpoint:
     def test_pagination_defaults(self, test_client):
         """Response always includes page / page_size keys."""
         with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
-            resp = test_client.get("/api/ghost-portfolio/positions")
+            resp = test_client.get("/api/ghost-portfolio/positions", headers=_AUTH)
         body = resp.json()
         assert body["page"] == 1
         assert body["page_size"] == 50
@@ -238,7 +238,7 @@ class TestGhostPositionsEndpoint:
             s.commit()
 
         with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
-            resp = test_client.get("/api/ghost-portfolio/positions?status=WIN")
+            resp = test_client.get("/api/ghost-portfolio/positions?status=WIN", headers=_AUTH)
 
         assert resp.status_code == 200
         body = resp.json()
@@ -266,7 +266,7 @@ class TestGhostPositionsEndpoint:
             s.commit()
 
         with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
-            resp = test_client.get("/api/ghost-portfolio/positions?status=WIN")
+            resp = test_client.get("/api/ghost-portfolio/positions?status=WIN", headers=_AUTH)
 
         assert resp.status_code == 200
         item = resp.json()["items"][0]
@@ -294,7 +294,7 @@ class TestGhostPositionsEndpoint:
             s.commit()
 
         with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
-            resp = test_client.get("/api/ghost-portfolio/positions")
+            resp = test_client.get("/api/ghost-portfolio/positions", headers=_AUTH)
 
         assert resp.status_code == 200
         item = resp.json()["items"][0]
@@ -329,7 +329,7 @@ class TestGhostPositionsEndpoint:
             s.commit()
 
         with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
-            resp = test_client.get("/api/ghost-portfolio/positions?candidate_status=active")
+            resp = test_client.get("/api/ghost-portfolio/positions?candidate_status=active", headers=_AUTH)
 
         assert resp.status_code == 200
         body = resp.json()
@@ -337,7 +337,7 @@ class TestGhostPositionsEndpoint:
         assert all(item["candidate_status"] == "active" for item in body["items"])
 
         with patch("backend.main._get_cached_prices", new=AsyncMock(return_value={})):
-            resp2 = test_client.get("/api/ghost-portfolio/positions?candidate_status=watchlist_pending")
+            resp2 = test_client.get("/api/ghost-portfolio/positions?candidate_status=watchlist_pending", headers=_AUTH)
 
         assert resp2.status_code == 200
         body2 = resp2.json()
@@ -374,7 +374,7 @@ class TestGhostPositionsEndpoint:
             ))
             s.commit()
 
-        resp = test_client.get("/api/predictions/stats")
+        resp = test_client.get("/api/predictions/stats", headers=_AUTH)
         assert resp.status_code == 200
         body = resp.json()
         assert body["shown_in_dashboard"] == 1
