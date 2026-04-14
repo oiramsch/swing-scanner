@@ -326,10 +326,10 @@ function PlanRow({ plan, brokers, quotes, onAlpacaBuy, onTRPlan, onCancel, onRef
 
       {/* Broker execution row */}
       <div className="mt-3 flex items-center gap-2 flex-wrap">
-        {brokers.length === 0 && (
+        {assignedBrokers.length === 0 && (
           <span className="text-xs text-gray-600">Keine Broker konfiguriert</span>
         )}
-        {brokers.map(broker => {
+        {assignedBrokers.map(broker => {
           const brokerId = broker.id;
           const executed = execState[String(brokerId)] === "executed";
           const isAlpaca = broker.broker_type === "alpaca";
