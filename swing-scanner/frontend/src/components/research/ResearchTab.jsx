@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import axios from "axios";
 import CandidateChart from "../chart/CandidateChart.jsx";
 import ResearchPlanModal from "./ResearchPlanModal.jsx";
+import ResearchChat from "./ResearchChat.jsx";
 import WatchlistSidebar from "./WatchlistSidebar.jsx";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer, Cell,
@@ -265,100 +266,6 @@ function TabNews({ news }) {
   );
 }
 
-// ── Tab: KI-Beratung ────────────────────────────────────────────────────────
-
-function TabAI({ data, currentPrice }) {
-  const [reply,    setReply]    = useState(null);
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState(null);
-  const lastTicker = useRef(null);
-
-  async function analyse() {
-    setLoading(true);
-    setError(null);
-    setReply(null);
-    const perf = data.performance ?? {};
-
-    const prompt = `Analysiere ${data.ticker} (${data.name || data.ticker}) als Swing-Trading-Kandidat.
-
-Aktuelle Daten:
-- Kurs: $${currentPrice?.toFixed(2) ?? "unbekannt"}
-- Sektor: ${data.sector || "—"}
-- Marktkapitalisierung: ${data.market_cap || "—"}
-- Beta: ${data.beta ?? "—"}
-- KGV: ${data.pe_ratio ?? "—"} (forward: ${data.forward_pe ?? "—"})
-- Short Float: ${data.short_float ? data.short_float + "%" : "—"}
-- 52W Hoch/Tief: $${data.w52_high?.toFixed(2) ?? "—"} / $${data.w52_low?.toFixed(2) ?? "—"}
-- Performance: 1M ${perf.change_1m?.toFixed(1) ?? "—"}%, 3M ${perf.change_3m?.toFixed(1) ?? "—"}%, 6M ${perf.change_6m?.toFixed(1) ?? "—"}%, YTD ${perf.change_ytd?.toFixed(1) ?? "—"}%
-${data.next_earnings ? `- Nächste Earnings: ${data.next_earnings} (in ${data.earnings_in_days} Tagen)` : ""}
-
-Bitte beantworte:
-1. Wie attraktiv ist der Wert aktuell für Swing-Trader (technisch + fundamental)?
-2. Was sind die wichtigsten Chancen und Risiken?
-3. Auf welche Levels/Katalysatoren sollte man achten?
-
-Bitte in 3–5 kurzen Absätzen. Keine Anlageberatung.`;
-
-    try {
-      const res = await axios.post("/api/chat", { message: prompt, session_history: [] });
-      setReply(res.data.reply);
-    } catch (err) {
-      setError(err.response?.data?.detail || "Claude API nicht erreichbar.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Auto-analyse when switching to this tab (once per ticker)
-  useEffect(() => {
-    if (lastTicker.current !== data.ticker) {
-      lastTicker.current = data.ticker;
-      analyse();
-    }
-  }, [data.ticker]);
-
-  return (
-    <div className="space-y-3">
-      {/* Disclaimer */}
-      <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-900/10 border border-amber-700/30 text-[11px] text-amber-400/80">
-        <span className="mt-0.5">⚠️</span>
-        <span>Diese KI-Analyse dient ausschließlich als Informationsquelle — keine Anlage- oder Handelsberatung. Alle Entscheidungen auf eigenes Risiko.</span>
-      </div>
-
-      {loading && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-2 animate-pulse">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="h-3 bg-gray-800 rounded" style={{ width: `${85 + i * 3}%` }} />
-          ))}
-        </div>
-      )}
-
-      {error && (
-        <div className="px-4 py-3 rounded-lg bg-red-900/20 border border-red-700/40 text-red-400 text-sm">{error}</div>
-      )}
-
-      {reply && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-5 h-5 rounded-full bg-indigo-700 flex items-center justify-center text-[10px] text-white font-bold">C</div>
-            <span className="text-xs text-gray-400">Claude · {data.ticker} Swing-Analyse</span>
-          </div>
-          <div className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{reply}</div>
-        </div>
-      )}
-
-      {(reply || error) && !loading && (
-        <button
-          onClick={analyse}
-          className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 hover:text-white transition"
-        >
-          Neu analysieren
-        </button>
-      )}
-    </div>
-  );
-}
-
 // ── Main ResearchTab ────────────────────────────────────────────────────────
 
 const TABS = ["Übersicht", "Saisonal", "News", "KI-Beratung"];
@@ -370,6 +277,7 @@ export default function ResearchTab() {
   const [error,    setError]    = useState(null);
   const [showPlan, setShowPlan] = useState(false);
   const [draftPlan, setDraftPlan] = useState(null);
+  const [suggestedPlan, setSuggestedPlan] = useState(null);
   const [activeTab,    setActiveTab]    = useState("Übersicht");
   // Lazy keep-alive: track which tabs have ever been opened.
   // A tab only mounts on first visit; afterwards stays mounted (block/hidden).
@@ -382,6 +290,7 @@ export default function ResearchTab() {
     setError(null);
     setData(null);
     setDraftPlan(null);
+    setSuggestedPlan(null);
     setActiveTab("Übersicht");
     setVisitedTabs(new Set(["Übersicht"]));
     try {
@@ -529,7 +438,7 @@ export default function ResearchTab() {
                   <div className={activeTab === "Übersicht"   ? "block" : "hidden"}><TabUebersicht data={data} currentPrice={currentPrice} perf={perf} /></div>
                   {visitedTabs.has("Saisonal")    && <div className={activeTab === "Saisonal"    ? "block" : "hidden"}><TabSeasonal ticker={data.ticker} /></div>}
                   {visitedTabs.has("News")        && <div className={activeTab === "News"        ? "block" : "hidden"}><TabNews news={data.news} /></div>}
-                  {visitedTabs.has("KI-Beratung") && <div className={activeTab === "KI-Beratung" ? "block" : "hidden"}><TabAI data={data} currentPrice={currentPrice} /></div>}
+                  {visitedTabs.has("KI-Beratung") && <div className={activeTab === "KI-Beratung" ? "block" : "hidden"}><ResearchChat ticker={data.ticker} onSuggestPlan={plan => { setSuggestedPlan(plan); setDraftPlan({ entryLow: plan.entry_low, entryHigh: plan.entry_high, stopLoss: plan.stop_loss, target: plan.target }); setShowPlan(true); }} /></div>}
                 </div>
               </div>
 
@@ -549,8 +458,9 @@ export default function ResearchTab() {
         <ResearchPlanModal
           ticker={data.ticker}
           currentPrice={currentPrice}
-          onClose={() => { setShowPlan(false); setDraftPlan(null); }}
-          onSaved={() => { setShowPlan(false); setDraftPlan(null); }}
+          initialValues={suggestedPlan ?? {}}
+          onClose={() => { setShowPlan(false); setSuggestedPlan(null); setDraftPlan(null); }}
+          onSaved={() => { setShowPlan(false); setSuggestedPlan(null); setDraftPlan(null); }}
           onDraftChange={setDraftPlan}
         />
       )}

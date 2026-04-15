@@ -2120,6 +2120,215 @@ async def research_seasonal(
     }
 
 
+@app.post("/api/research/{symbol}/chat")
+async def research_chat(
+    symbol: str,
+    data: dict,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Interactive AI chat for a specific ticker with full market context.
+    Body: { "message": str, "history": [{"role": "user"|"assistant", "content": str}] }
+    Returns: { "reply": str, "suggested_plan": {...} | null, "tokens_used": int }
+    """
+    import asyncio
+    import re
+    import anthropic
+    import yfinance as yf
+    import pandas as pd
+
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="Kein ANTHROPIC_API_KEY konfiguriert")
+
+    sym = symbol.upper().strip()
+    message = (data.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="message darf nicht leer sein")
+
+    history = data.get("history", [])
+
+    # ── Fetch ticker context (fundamentals + news) ──────────────────────────
+    def _fetch_context():
+        t = yf.Ticker(sym)
+        info: dict = {}
+        hist_1y = None
+        hist_1y_full = None
+        cal: dict = {}
+        news = []
+        try:
+            info = t.info or {}
+        except Exception:
+            pass
+        try:
+            hist_1y = t.history(period="1y")
+        except Exception:
+            pass
+        try:
+            hist_1y_full = t.history(period="1y")
+        except Exception:
+            pass
+        try:
+            cal = t.calendar or {}
+        except Exception:
+            pass
+        try:
+            raw_news = t.news or []
+            news = [n for n in raw_news[:5] if (n.get("title") or "").strip()]
+        except Exception:
+            pass
+        return info, hist_1y, cal, news
+
+    loop = asyncio.get_event_loop()
+    try:
+        info, hist_1y, cal, news = await loop.run_in_executor(None, _fetch_context)
+    except Exception:
+        info, hist_1y, cal, news = {}, None, {}, []
+
+    # Current price + performance
+    current_price = None
+    perf_1m = perf_3m = perf_ytd = None
+    sma50 = sma200 = None
+
+    if hist_1y is not None and not hist_1y.empty:
+        close = hist_1y["Close"]
+        if close.index.tz is not None:
+            close.index = close.index.tz_localize(None)
+        current_price = float(close.iloc[-1])
+        now = pd.Timestamp.now()
+
+        def _pct(days_ago):
+            past = close[close.index <= now - pd.Timedelta(days=days_ago)]
+            if past.empty:
+                return None
+            old = float(past.iloc[-1])
+            return round((current_price - old) / old * 100, 1) if old else None
+
+        perf_1m = _pct(30)
+        perf_3m = _pct(90)
+        ytd_past = close[close.index <= pd.Timestamp(now.year, 1, 1)]
+        if not ytd_past.empty:
+            ytd_old = float(ytd_past.iloc[-1])
+            perf_ytd = round((current_price - ytd_old) / ytd_old * 100, 1) if ytd_old else None
+
+        # SMA50 / SMA200 — last valid value
+        sma50_series = close.rolling(50).mean().dropna()
+        sma200_series = close.rolling(200).mean().dropna()
+        if not sma50_series.empty:
+            sma50 = round(float(sma50_series.iloc[-1]), 2)
+        if not sma200_series.empty:
+            sma200 = round(float(sma200_series.iloc[-1]), 2)
+
+    # Next earnings
+    next_earnings = None
+    earnings_in_days = None
+    try:
+        from datetime import date as _date
+        today = _date.today()
+        earnings_dates = cal.get("Earnings Date") or []
+        if not isinstance(earnings_dates, list):
+            earnings_dates = [earnings_dates]
+        for ed in earnings_dates:
+            ed_date = ed.date() if hasattr(ed, "date") else _date.fromisoformat(str(ed)[:10])
+            if ed_date >= today:
+                next_earnings = ed_date.isoformat()
+                earnings_in_days = (ed_date - today).days
+                break
+    except Exception:
+        pass
+
+    # Scan result (entry/SL/TP/CRV)
+    scan_result = get_result_by_ticker(sym)
+    scan_block = ""
+    if scan_result:
+        scan_block = (
+            f"\nSCAN-ERGEBNIS (aktuell):\n"
+            f"Setup: {scan_result.setup_type} | "
+            f"Entry: {scan_result.entry_zone or '–'} | "
+            f"SL: {scan_result.stop_loss or '–'} | "
+            f"TP: {scan_result.target or '–'} | "
+            f"CRV: {scan_result.crv_calculated or '–'}"
+        )
+
+    # News headlines
+    news_lines = "\n".join(f"- {n.get('title', '')}" for n in news[:3]) if news else "– Keine aktuellen News –"
+
+    # Build system prompt
+    price_str = f"${current_price:.2f}" if current_price else "–"
+    sma50_str  = f"${sma50}"  if sma50  else "–"
+    sma200_str = f"${sma200}" if sma200 else "–"
+    perf_str = f"1M {perf_1m:+.1f}% | 3M {perf_3m:+.1f}% | YTD {perf_ytd:+.1f}%" if all(
+        x is not None for x in [perf_1m, perf_3m, perf_ytd]
+    ) else "–"
+    earnings_str = (
+        f"{next_earnings} (in {earnings_in_days} Tagen)" if next_earnings else "–"
+    )
+
+    system_prompt = f"""Du bist ein Trading-Analyse-Assistent für Swing-Trading.
+
+TICKER: {sym} | {info.get('longName') or info.get('shortName') or sym} | Sektor: {info.get('sector') or '–'}
+KURS: {price_str} | Beta: {info.get('beta') or '–'} | KGV: {info.get('trailingPE') or '–'}
+52W: ${info.get('fiftyTwoWeekLow') or '–'}–${info.get('fiftyTwoWeekHigh') or '–'}
+SMA50: {sma50_str} | SMA200: {sma200_str}
+Performance: {perf_str}
+Short Float: {f"{round(float(info['shortPercentOfFloat'])*100,1)}%" if info.get('shortPercentOfFloat') else '–'}
+Earnings: {earnings_str}
+{scan_block}
+
+NEWS (letzte 48h):
+{news_lines}
+
+Antworte auf Deutsch. Keine Anlageberatung.
+Wenn du konkrete Trade-Parameter vorschlägst, füge am Ende deiner Antwort einen JSON-Block ein (kein Markdown):
+TRADE_JSON:{{"entry_low":X,"entry_high":X,"stop_loss":X,"target":X}}"""
+
+    # ── Build messages for Haiku ─────────────────────────────────────────────
+    messages = []
+    for h in history:
+        role = h.get("role")
+        content = h.get("content", "")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message})
+
+    try:
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            system=system_prompt,
+            messages=messages,
+        )
+    except anthropic.AuthenticationError:
+        raise HTTPException(status_code=401, detail="Ungültiger Anthropic API Key")
+    except anthropic.APIStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Claude API Fehler: {exc.message}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Claude API nicht erreichbar: {exc}")
+
+    raw_reply = response.content[0].text if response.content else ""
+    tokens_used = response.usage.input_tokens + response.usage.output_tokens
+
+    # ── Parse TRADE_JSON marker ───────────────────────────────────────────────
+    suggested_plan = None
+    reply_text = raw_reply
+
+    trade_json_match = re.search(r"TRADE_JSON:(\{[^}]+\})", raw_reply)
+    if trade_json_match:
+        try:
+            import json as _json
+            suggested_plan = _json.loads(trade_json_match.group(1))
+            # Remove the marker from the displayed reply
+            reply_text = raw_reply[:trade_json_match.start()].rstrip()
+        except Exception:
+            pass
+
+    return {
+        "reply": reply_text,
+        "suggested_plan": suggested_plan,
+        "tokens_used": tokens_used,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Multi-Broker OMS — Trade Plans
 # ---------------------------------------------------------------------------
