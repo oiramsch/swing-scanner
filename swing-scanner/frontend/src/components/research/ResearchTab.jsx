@@ -42,15 +42,22 @@ function SectionCard({ title, children }) {
 function SeasonalTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
+  const hasData = d.avg_return != null;
   return (
     <div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs">
       <div className="font-semibold text-white mb-1">{d.label}</div>
-      <div className={d.avg_return >= 0 ? "text-green-400" : "text-red-400"}>
-        Ø {d.avg_return >= 0 ? "+" : ""}{d.avg_return.toFixed(2)}%
-      </div>
-      <div className="text-gray-500 mt-0.5">
-        Positiv: {d.positive_years}/{d.total_years} Jahre
-      </div>
+      {hasData ? (
+        <div className={d.avg_return >= 0 ? "text-green-400" : "text-red-400"}>
+          Ø {d.avg_return >= 0 ? "+" : ""}{d.avg_return.toFixed(2)}%
+        </div>
+      ) : (
+        <div className="text-gray-500">Keine Daten</div>
+      )}
+      {d.total_years > 0 && (
+        <div className="text-gray-500 mt-0.5">
+          Positiv: {d.positive_years}/{d.total_years} Jahre
+        </div>
+      )}
     </div>
   );
 }
@@ -76,7 +83,7 @@ function TabUebersicht({ data, currentPrice, perf }) {
         <SectionCard title="Technisch">
           <MetricRow label="52W Hoch" value={data.w52_high ? `$${data.w52_high.toFixed(2)}` : null} />
           <MetricRow label="52W Tief" value={data.w52_low  ? `$${data.w52_low.toFixed(2)}`  : null} />
-          {data.w52_high && data.w52_low && currentPrice && (
+          {data.w52_high && data.w52_low && data.w52_high > data.w52_low && currentPrice && (
             <div className="mt-2 mb-2">
               <div className="flex justify-between text-[10px] text-gray-600 mb-1">
                 <span>${data.w52_low.toFixed(0)}</span>
@@ -164,14 +171,18 @@ function TabSeasonal({ ticker }) {
     <div className="space-y-4">
       <SectionCard title={`Saisonalität — Ø Monatsrendite (${data_years} Jahre)`}>
         <div className="flex gap-4 mb-4">
-          <div className="text-xs">
-            <span className="text-gray-500">Stärkster Monat: </span>
-            <span className="text-green-400 font-semibold">{best_month.label}</span>
-          </div>
-          <div className="text-xs">
-            <span className="text-gray-500">Schwächster Monat: </span>
-            <span className="text-red-400 font-semibold">{worst_month.label}</span>
-          </div>
+          {best_month && (
+            <div className="text-xs">
+              <span className="text-gray-500">Stärkster Monat: </span>
+              <span className="text-green-400 font-semibold">{best_month.label}</span>
+            </div>
+          )}
+          {worst_month && (
+            <div className="text-xs">
+              <span className="text-gray-500">Schwächster Monat: </span>
+              <span className="text-red-400 font-semibold">{worst_month.label}</span>
+            </div>
+          )}
         </div>
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={monthly_returns} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
@@ -193,8 +204,8 @@ function TabSeasonal({ ticker }) {
               {monthly_returns.map((entry, i) => (
                 <Cell
                   key={i}
-                  fill={entry.avg_return >= 0 ? "#22c55e" : "#ef4444"}
-                  opacity={entry.month === best_month.month || entry.month === worst_month.month ? 1 : 0.7}
+                  fill={(entry.avg_return ?? 0) >= 0 ? "#22c55e" : "#ef4444"}
+                  opacity={entry.month === best_month?.month || entry.month === worst_month?.month ? 1 : 0.7}
                 />
               ))}
             </Bar>
@@ -359,7 +370,10 @@ export default function ResearchTab() {
   const [error,    setError]    = useState(null);
   const [showPlan, setShowPlan] = useState(false);
   const [draftPlan, setDraftPlan] = useState(null);
-  const [activeTab, setActiveTab] = useState("Übersicht");
+  const [activeTab,    setActiveTab]    = useState("Übersicht");
+  // Lazy keep-alive: track which tabs have ever been opened.
+  // A tab only mounts on first visit; afterwards stays mounted (block/hidden).
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set(["Übersicht"]));
 
   async function search(ticker) {
     const sym = (ticker || query).trim().toUpperCase();
@@ -369,6 +383,7 @@ export default function ResearchTab() {
     setData(null);
     setDraftPlan(null);
     setActiveTab("Übersicht");
+    setVisitedTabs(new Set(["Übersicht"]));
     try {
       const res = await axios.get(`/api/research/${sym}`);
       setData(res.data);
@@ -495,7 +510,10 @@ export default function ResearchTab() {
                   {TABS.map(tab => (
                     <button
                       key={tab}
-                      onClick={() => setActiveTab(tab)}
+                      onClick={() => {
+                        setActiveTab(tab);
+                        setVisitedTabs(prev => new Set([...prev, tab]));
+                      }}
                       className={`px-4 py-2.5 text-xs font-medium transition border-b-2 -mb-px ${
                         activeTab === tab
                           ? "text-indigo-300 border-indigo-500"
@@ -506,12 +524,12 @@ export default function ResearchTab() {
                     </button>
                   ))}
                 </div>
-                {/* Tab content */}
+                {/* Tab content — always mounted, toggled via visibility to avoid re-fetch on tab switch */}
                 <div className="p-4">
-                  {activeTab === "Übersicht"   && <TabUebersicht data={data} currentPrice={currentPrice} perf={perf} />}
-                  {activeTab === "Saisonal"    && <TabSeasonal ticker={data.ticker} />}
-                  {activeTab === "News"        && <TabNews news={data.news} />}
-                  {activeTab === "KI-Beratung" && <TabAI data={data} currentPrice={currentPrice} />}
+                  <div className={activeTab === "Übersicht"   ? "block" : "hidden"}><TabUebersicht data={data} currentPrice={currentPrice} perf={perf} /></div>
+                  {visitedTabs.has("Saisonal")    && <div className={activeTab === "Saisonal"    ? "block" : "hidden"}><TabSeasonal ticker={data.ticker} /></div>}
+                  {visitedTabs.has("News")        && <div className={activeTab === "News"        ? "block" : "hidden"}><TabNews news={data.news} /></div>}
+                  {visitedTabs.has("KI-Beratung") && <div className={activeTab === "KI-Beratung" ? "block" : "hidden"}><TabAI data={data} currentPrice={currentPrice} /></div>}
                 </div>
               </div>
 
