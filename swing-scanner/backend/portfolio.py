@@ -10,6 +10,7 @@ from backend.database import (
     JournalEntry,
     PortfolioBudget,
     PortfolioPosition,
+    TradePlan,
     get_budget,
     get_closed_positions,
     get_closed_trade_plans,
@@ -19,6 +20,7 @@ from backend.database import (
     save_position,
     update_budget,
     update_position,
+    update_trade_plan,
 )
 from backend.position_sizing import calculate_position, check_sector_concentration
 
@@ -177,6 +179,28 @@ def close_position(position_id: int, exit_price: float, exit_reason: str = "manu
             pnl_pct=pnl_pct,
         )
         save_journal_entry(journal)
+
+    # Auto-close linked in_position TradePlans for the same ticker so they don't
+    # accumulate and block the auto-trading safety limit.
+    if updated:
+        try:
+            from sqlmodel import Session, select
+            from backend.database import get_engine
+            with Session(get_engine()) as db:
+                linked = db.exec(
+                    select(TradePlan)
+                    .where(TradePlan.ticker == pos.ticker)
+                    .where(TradePlan.status == "in_position")
+                ).all()
+                for plan in linked:
+                    update_trade_plan(plan.id, {
+                        "status": "closed",
+                        "actual_exit_price": exit_price,
+                        "exit_date": date.today().isoformat(),
+                    })
+                    logger.info("Auto-closed TradePlan #%s (%s) via position close", plan.id, pos.ticker)
+        except Exception as exc:
+            logger.warning("Could not auto-close linked TradePlan for %s: %s", pos.ticker, exc)
 
     return updated.model_dump() if updated else {}
 

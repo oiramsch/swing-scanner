@@ -1081,7 +1081,7 @@ async def auto_paper_trade(ctx: dict):
                 risk_pct=Decimal("5.0"),
                 broker_ids_json=f"[{alpaca_conn.id}]",
                 execution_state_json=f'{{"{alpaca_conn.id}": "executed"}}',
-                status="active",
+                status="in_position",
                 strategy_module=candidate.strategy_module,
                 setup_type=candidate.setup_type,
                 auto_trade=True,
