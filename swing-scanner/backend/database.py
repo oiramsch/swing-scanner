@@ -145,6 +145,20 @@ def _apply_migrations():
             except Exception:
                 pass  # Column already exists — ignore
 
+        # v5.1 — Backfill: Alpaca-executed plans stuck in 'active' → 'in_position'
+        try:
+            conn.execute(text("""
+                UPDATE tradeplan
+                SET status = 'in_position'
+                WHERE status = 'active'
+                  AND shares_executed IS NOT NULL
+                  AND shares_executed > 0
+            """))
+            conn.commit()
+            logger.info("Migration: backfilled in_position status for executed TradePlans")
+        except Exception:
+            pass
+
 
 def get_session():
     with Session(get_engine()) as session:
@@ -967,7 +981,7 @@ class TradePlan(SQLModel, table=True):
     execution_state_json: str = "{}"
 
     # Plan status
-    status: str = "pending"                    # pending | active | partial | done | cancelled
+    status: str = "pending"                    # pending | active | partial | in_position | done | cancelled
 
     # Context from scanner
     strategy_module: Optional[str] = None
@@ -2152,7 +2166,7 @@ def count_active_auto_trades(tenant_id: int = 1) -> int:
             select(TradePlan)
             .where(TradePlan.tenant_id == tenant_id)
             .where(TradePlan.auto_trade == True)  # noqa: E712
-            .where(TradePlan.status.in_(["pending", "active", "partial"]))
+            .where(TradePlan.status.in_(["pending", "active", "partial", "in_position"]))
         ).all().__len__()
 
 

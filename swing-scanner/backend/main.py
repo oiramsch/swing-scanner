@@ -2140,7 +2140,7 @@ async def trade_plan_performance_stats(
     def _bucket(plist):
         return {
             "total":     len(plist),
-            "active":    sum(1 for p in plist if p.status in ("pending", "active", "partial")),
+            "active":    sum(1 for p in plist if p.status in ("pending", "active", "partial", "in_position")),
             "done":      sum(1 for p in plist if p.status == "done"),
             "cancelled": sum(1 for p in plist if p.status == "cancelled"),
         }
@@ -2370,7 +2370,7 @@ async def execute_trade_plan(
         fill_price = result.get("limit_price") or result.get("fill_price") or plan.entry_high
         update_trade_plan(plan_id, {
             "execution_state_json": json.dumps(exec_state),
-            "status": "active",
+            "status": "in_position",
             "shares_executed": float(plan_dict["qty"]),
             "actual_entry_price": float(fill_price) if fill_price else None,
         })

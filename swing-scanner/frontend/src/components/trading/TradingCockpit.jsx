@@ -223,7 +223,8 @@ function OpenOrdersSection({ visible, quotes }) {
     setLoading(true);
     try {
       const res = await axios.get("/api/orders");
-      setOrders(res.data || []);
+      // SELL-Orders (TP/SL bracket children) are managed in the Portfolio tab — show BUY-side only
+      setOrders((res.data || []).filter(o => o.side === "buy"));
     } catch {}
     setLoading(false);
   }
@@ -255,7 +256,7 @@ function OpenOrdersSection({ visible, quotes }) {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-200">Offene Orders ({orders.length})</h2>
+        <h2 className="text-sm font-semibold text-gray-200">Offene Kauf-Orders ({orders.length})</h2>
         <button onClick={load} className="text-xs px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded border border-gray-700 transition">↻</button>
       </div>
       {loading ? (
