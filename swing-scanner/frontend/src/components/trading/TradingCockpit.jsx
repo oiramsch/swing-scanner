@@ -264,7 +264,7 @@ function OpenOrdersSection({ visible, quotes }) {
           <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : orders.length === 0 ? (
-        <div className="text-center py-6 text-xs text-gray-600">Keine offenen Orders</div>
+        <div className="text-center py-6 text-xs text-gray-600">Keine offenen Kauf-Orders</div>
       ) : (
         <div>
           {orders.map(o => {

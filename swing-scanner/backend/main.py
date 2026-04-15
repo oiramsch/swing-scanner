@@ -2141,7 +2141,7 @@ async def trade_plan_performance_stats(
         return {
             "total":     len(plist),
             "active":    sum(1 for p in plist if p.status in ("pending", "active", "partial", "in_position")),
-            "done":      sum(1 for p in plist if p.status == "done"),
+            "closed":    sum(1 for p in plist if p.status in ("closed", "done")),
             "cancelled": sum(1 for p in plist if p.status == "cancelled"),
         }
 

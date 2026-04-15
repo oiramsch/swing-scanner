@@ -145,17 +145,20 @@ def _apply_migrations():
             except Exception:
                 pass  # Column already exists — ignore
 
-        # v5.1 — Backfill: Alpaca-executed plans stuck in 'active' → 'in_position'
+        # v5.1 — Backfill: auto_trade Alpaca-Plans stuck in 'active' → 'in_position'
+        # Only auto_trade=1 plans: TR manual plans (auto_trade=0) must stay 'active'
+        # so the Deal Cockpit "Close Position" button remains accessible.
         try:
             conn.execute(text("""
                 UPDATE tradeplan
                 SET status = 'in_position'
                 WHERE status = 'active'
+                  AND auto_trade = 1
                   AND shares_executed IS NOT NULL
                   AND shares_executed > 0
             """))
             conn.commit()
-            logger.info("Migration: backfilled in_position status for executed TradePlans")
+            logger.info("Migration: backfilled in_position status for auto-trade TradePlans")
         except Exception:
             pass
 
@@ -981,7 +984,7 @@ class TradePlan(SQLModel, table=True):
     execution_state_json: str = "{}"
 
     # Plan status
-    status: str = "pending"                    # pending | active | partial | in_position | done | cancelled
+    status: str = "pending"                    # pending | active | partial | in_position | closed | cancelled
 
     # Context from scanner
     strategy_module: Optional[str] = None
