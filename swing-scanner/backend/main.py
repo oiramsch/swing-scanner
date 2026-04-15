@@ -2060,7 +2060,6 @@ async def research_seasonal(
     """
     import asyncio
     import yfinance as yf
-    import pandas as pd
 
     sym = ticker.upper().strip()
     MONTH_LABELS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
@@ -2092,7 +2091,7 @@ async def research_seasonal(
     for m in range(1, 13):
         month_data = monthly_returns[monthly_returns.index.month == m]
         if month_data.empty:
-            avg_return = 0.0
+            avg_return = None
             positive_years = 0
             total_years = 0
         else:
@@ -2107,14 +2106,16 @@ async def research_seasonal(
             "total_years": total_years,
         })
 
-    best  = max(results, key=lambda x: x["avg_return"])
-    worst = min(results, key=lambda x: x["avg_return"])
+    # Only consider months that actually have data
+    months_with_data = [r for r in results if r["avg_return"] is not None]
+    best  = max(months_with_data, key=lambda x: x["avg_return"]) if months_with_data else None
+    worst = min(months_with_data, key=lambda x: x["avg_return"]) if months_with_data else None
 
     return {
         "ticker": sym,
         "monthly_returns": results,
-        "best_month": {"month": best["month"], "label": best["label"]},
-        "worst_month": {"month": worst["month"], "label": worst["label"]},
+        "best_month":  {"month": best["month"],  "label": best["label"]}  if best  else None,
+        "worst_month": {"month": worst["month"], "label": worst["label"]} if worst else None,
         "data_years": int(monthly_returns.index.year.nunique()),
     }
 

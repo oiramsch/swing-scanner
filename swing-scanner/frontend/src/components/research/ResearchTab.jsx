@@ -76,7 +76,7 @@ function TabUebersicht({ data, currentPrice, perf }) {
         <SectionCard title="Technisch">
           <MetricRow label="52W Hoch" value={data.w52_high ? `$${data.w52_high.toFixed(2)}` : null} />
           <MetricRow label="52W Tief" value={data.w52_low  ? `$${data.w52_low.toFixed(2)}`  : null} />
-          {data.w52_high && data.w52_low && currentPrice && (
+          {data.w52_high && data.w52_low && data.w52_high > data.w52_low && currentPrice && (
             <div className="mt-2 mb-2">
               <div className="flex justify-between text-[10px] text-gray-600 mb-1">
                 <span>${data.w52_low.toFixed(0)}</span>
@@ -164,14 +164,18 @@ function TabSeasonal({ ticker }) {
     <div className="space-y-4">
       <SectionCard title={`Saisonalität — Ø Monatsrendite (${data_years} Jahre)`}>
         <div className="flex gap-4 mb-4">
-          <div className="text-xs">
-            <span className="text-gray-500">Stärkster Monat: </span>
-            <span className="text-green-400 font-semibold">{best_month.label}</span>
-          </div>
-          <div className="text-xs">
-            <span className="text-gray-500">Schwächster Monat: </span>
-            <span className="text-red-400 font-semibold">{worst_month.label}</span>
-          </div>
+          {best_month && (
+            <div className="text-xs">
+              <span className="text-gray-500">Stärkster Monat: </span>
+              <span className="text-green-400 font-semibold">{best_month.label}</span>
+            </div>
+          )}
+          {worst_month && (
+            <div className="text-xs">
+              <span className="text-gray-500">Schwächster Monat: </span>
+              <span className="text-red-400 font-semibold">{worst_month.label}</span>
+            </div>
+          )}
         </div>
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={monthly_returns} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
@@ -193,8 +197,8 @@ function TabSeasonal({ ticker }) {
               {monthly_returns.map((entry, i) => (
                 <Cell
                   key={i}
-                  fill={entry.avg_return >= 0 ? "#22c55e" : "#ef4444"}
-                  opacity={entry.month === best_month.month || entry.month === worst_month.month ? 1 : 0.7}
+                  fill={(entry.avg_return ?? 0) >= 0 ? "#22c55e" : "#ef4444"}
+                  opacity={entry.month === best_month?.month || entry.month === worst_month?.month ? 1 : 0.7}
                 />
               ))}
             </Bar>
@@ -506,12 +510,12 @@ export default function ResearchTab() {
                     </button>
                   ))}
                 </div>
-                {/* Tab content */}
+                {/* Tab content — always mounted, toggled via visibility to avoid re-fetch on tab switch */}
                 <div className="p-4">
-                  {activeTab === "Übersicht"   && <TabUebersicht data={data} currentPrice={currentPrice} perf={perf} />}
-                  {activeTab === "Saisonal"    && <TabSeasonal ticker={data.ticker} />}
-                  {activeTab === "News"        && <TabNews news={data.news} />}
-                  {activeTab === "KI-Beratung" && <TabAI data={data} currentPrice={currentPrice} />}
+                  <div className={activeTab === "Übersicht"   ? "block" : "hidden"}><TabUebersicht data={data} currentPrice={currentPrice} perf={perf} /></div>
+                  <div className={activeTab === "Saisonal"    ? "block" : "hidden"}><TabSeasonal ticker={data.ticker} /></div>
+                  <div className={activeTab === "News"        ? "block" : "hidden"}><TabNews news={data.news} /></div>
+                  <div className={activeTab === "KI-Beratung" ? "block" : "hidden"}><TabAI data={data} currentPrice={currentPrice} /></div>
                 </div>
               </div>
 

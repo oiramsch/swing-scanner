@@ -12,26 +12,21 @@ function RsiBadge({ rsi }) {
   return <span className={`font-mono text-[10px] ${color}`}>{rsi.toFixed(0)}</span>;
 }
 
-function PctBadge({ value }) {
-  if (value == null) return null;
-  const pos = value >= 0;
-  return (
-    <span className={`text-[10px] font-semibold ${pos ? "text-green-400" : "text-red-400"}`}>
-      {pos ? "+" : ""}{value.toFixed(1)}%
-    </span>
-  );
-}
-
 export default function WatchlistSidebar({ activeTicker, onSelect }) {
   const [items,   setItems]   = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState(false);
   const [adding,  setAdding]  = useState(false);
 
   async function load() {
+    setLoadErr(false);
     try {
       const res = await axios.get("/api/watchlist");
       setItems(res.data);
-    } catch {}
+    } catch (err) {
+      console.error("Watchlist laden fehlgeschlagen", err);
+      setLoadErr(true);
+    }
     setLoading(false);
   }
 
@@ -47,7 +42,9 @@ export default function WatchlistSidebar({ activeTicker, onSelect }) {
         alert_condition: "none",
       });
       await load();
-    } catch {}
+    } catch (err) {
+      console.error("Watchlist hinzufügen fehlgeschlagen", err);
+    }
     setAdding(false);
   }
 
@@ -56,7 +53,9 @@ export default function WatchlistSidebar({ activeTicker, onSelect }) {
     try {
       await axios.delete(`/api/watchlist/${id}`);
       setItems(prev => prev.filter(i => i.id !== id));
-    } catch {}
+    } catch (err) {
+      console.error("Watchlist entfernen fehlgeschlagen", err);
+    }
   }
 
   const alreadyInList = activeTicker && items.some(i => i.ticker === activeTicker);
@@ -86,7 +85,10 @@ export default function WatchlistSidebar({ activeTicker, onSelect }) {
         {loading && (
           <div className="px-3 py-4 text-xs text-gray-600 text-center">Lädt…</div>
         )}
-        {!loading && items.length === 0 && (
+        {!loading && loadErr && (
+          <div className="px-3 py-4 text-xs text-red-400/70 text-center">Watchlist konnte nicht geladen werden.</div>
+        )}
+        {!loading && !loadErr && items.length === 0 && (
           <div className="px-3 py-4 text-xs text-gray-700 text-center">
             Watchlist ist leer.<br />
             {activeTicker
