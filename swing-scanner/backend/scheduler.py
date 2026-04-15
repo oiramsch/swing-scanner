@@ -1085,6 +1085,7 @@ async def auto_paper_trade(ctx: dict):
                 strategy_module=candidate.strategy_module,
                 setup_type=candidate.setup_type,
                 auto_trade=True,
+                shares_executed=float(qty),
             )
             save_trade_plan(trade_plan)
 
