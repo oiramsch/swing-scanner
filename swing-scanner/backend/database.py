@@ -146,16 +146,15 @@ def _apply_migrations():
                 pass  # Column already exists — ignore
 
         # v5.1 — Backfill: auto_trade Alpaca-Plans stuck in 'active' → 'in_position'
-        # Only auto_trade=1 plans: TR manual plans (auto_trade=0) must stay 'active'
-        # so the Deal Cockpit "Close Position" button remains accessible.
+        # auto_trade=1 is sufficient: TR manual plans always have auto_trade=0.
+        # Note: auto_paper_trade does NOT set shares_executed, so we cannot use
+        # that field as a guard here.
         try:
             conn.execute(text("""
                 UPDATE tradeplan
                 SET status = 'in_position'
                 WHERE status = 'active'
                   AND auto_trade = 1
-                  AND shares_executed IS NOT NULL
-                  AND shares_executed > 0
             """))
             conn.commit()
             logger.info("Migration: backfilled in_position status for auto-trade TradePlans")
