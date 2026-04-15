@@ -42,15 +42,22 @@ function SectionCard({ title, children }) {
 function SeasonalTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
+  const hasData = d.avg_return != null;
   return (
     <div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs">
       <div className="font-semibold text-white mb-1">{d.label}</div>
-      <div className={d.avg_return >= 0 ? "text-green-400" : "text-red-400"}>
-        Ø {d.avg_return >= 0 ? "+" : ""}{d.avg_return.toFixed(2)}%
-      </div>
-      <div className="text-gray-500 mt-0.5">
-        Positiv: {d.positive_years}/{d.total_years} Jahre
-      </div>
+      {hasData ? (
+        <div className={d.avg_return >= 0 ? "text-green-400" : "text-red-400"}>
+          Ø {d.avg_return >= 0 ? "+" : ""}{d.avg_return.toFixed(2)}%
+        </div>
+      ) : (
+        <div className="text-gray-500">Keine Daten</div>
+      )}
+      {d.total_years > 0 && (
+        <div className="text-gray-500 mt-0.5">
+          Positiv: {d.positive_years}/{d.total_years} Jahre
+        </div>
+      )}
     </div>
   );
 }
@@ -363,7 +370,10 @@ export default function ResearchTab() {
   const [error,    setError]    = useState(null);
   const [showPlan, setShowPlan] = useState(false);
   const [draftPlan, setDraftPlan] = useState(null);
-  const [activeTab, setActiveTab] = useState("Übersicht");
+  const [activeTab,    setActiveTab]    = useState("Übersicht");
+  // Lazy keep-alive: track which tabs have ever been opened.
+  // A tab only mounts on first visit; afterwards stays mounted (block/hidden).
+  const [visitedTabs, setVisitedTabs] = useState(() => new Set(["Übersicht"]));
 
   async function search(ticker) {
     const sym = (ticker || query).trim().toUpperCase();
@@ -373,6 +383,7 @@ export default function ResearchTab() {
     setData(null);
     setDraftPlan(null);
     setActiveTab("Übersicht");
+    setVisitedTabs(new Set(["Übersicht"]));
     try {
       const res = await axios.get(`/api/research/${sym}`);
       setData(res.data);
@@ -499,7 +510,10 @@ export default function ResearchTab() {
                   {TABS.map(tab => (
                     <button
                       key={tab}
-                      onClick={() => setActiveTab(tab)}
+                      onClick={() => {
+                        setActiveTab(tab);
+                        setVisitedTabs(prev => new Set([...prev, tab]));
+                      }}
                       className={`px-4 py-2.5 text-xs font-medium transition border-b-2 -mb-px ${
                         activeTab === tab
                           ? "text-indigo-300 border-indigo-500"
@@ -513,9 +527,9 @@ export default function ResearchTab() {
                 {/* Tab content — always mounted, toggled via visibility to avoid re-fetch on tab switch */}
                 <div className="p-4">
                   <div className={activeTab === "Übersicht"   ? "block" : "hidden"}><TabUebersicht data={data} currentPrice={currentPrice} perf={perf} /></div>
-                  <div className={activeTab === "Saisonal"    ? "block" : "hidden"}><TabSeasonal ticker={data.ticker} /></div>
-                  <div className={activeTab === "News"        ? "block" : "hidden"}><TabNews news={data.news} /></div>
-                  <div className={activeTab === "KI-Beratung" ? "block" : "hidden"}><TabAI data={data} currentPrice={currentPrice} /></div>
+                  {visitedTabs.has("Saisonal")    && <div className={activeTab === "Saisonal"    ? "block" : "hidden"}><TabSeasonal ticker={data.ticker} /></div>}
+                  {visitedTabs.has("News")        && <div className={activeTab === "News"        ? "block" : "hidden"}><TabNews news={data.news} /></div>}
+                  {visitedTabs.has("KI-Beratung") && <div className={activeTab === "KI-Beratung" ? "block" : "hidden"}><TabAI data={data} currentPrice={currentPrice} /></div>}
                 </div>
               </div>
 
