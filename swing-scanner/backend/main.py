@@ -2049,6 +2049,76 @@ async def research_ticker(
     }
 
 
+@app.get("/api/research/{ticker}/seasonal")
+async def research_seasonal(
+    ticker: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Monthly seasonality: 10 years of daily OHLCV → average return per calendar month.
+    Returns avg_return, positive_years / total_years per month.
+    """
+    import asyncio
+    import yfinance as yf
+    import pandas as pd
+
+    sym = ticker.upper().strip()
+    MONTH_LABELS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
+                    "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
+
+    def _fetch():
+        t = yf.Ticker(sym)
+        hist = t.history(period="10y")
+        return hist
+
+    loop = asyncio.get_event_loop()
+    try:
+        hist = await loop.run_in_executor(None, _fetch)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Fehler bei {sym}: {exc}")
+
+    if hist is None or hist.empty:
+        raise HTTPException(status_code=404, detail=f"Keine Daten für {sym}")
+
+    # Strip timezone
+    hist.index = hist.index.tz_localize(None) if hist.index.tz else hist.index
+
+    # Resample to month-start, compute monthly returns
+    monthly_close = hist["Close"].resample("MS").last()
+    monthly_returns = monthly_close.pct_change().dropna() * 100  # percent
+
+    # Group by calendar month (1–12)
+    results = []
+    for m in range(1, 13):
+        month_data = monthly_returns[monthly_returns.index.month == m]
+        if month_data.empty:
+            avg_return = 0.0
+            positive_years = 0
+            total_years = 0
+        else:
+            avg_return = round(float(month_data.mean()), 2)
+            positive_years = int((month_data > 0).sum())
+            total_years = len(month_data)
+        results.append({
+            "month": m,
+            "label": MONTH_LABELS[m - 1],
+            "avg_return": avg_return,
+            "positive_years": positive_years,
+            "total_years": total_years,
+        })
+
+    best  = max(results, key=lambda x: x["avg_return"])
+    worst = min(results, key=lambda x: x["avg_return"])
+
+    return {
+        "ticker": sym,
+        "monthly_returns": results,
+        "best_month": {"month": best["month"], "label": best["label"]},
+        "worst_month": {"month": worst["month"], "label": worst["label"]},
+        "data_years": int(monthly_returns.index.year.nunique()),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Multi-Broker OMS — Trade Plans
 # ---------------------------------------------------------------------------

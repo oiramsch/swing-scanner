@@ -483,11 +483,10 @@ export default function CandidateChart({ symbol, scanResult, draftPlan, onClose 
 
   return (
     <div className="flex flex-col gap-0 bg-gray-950 rounded-xl overflow-hidden" style={{ minWidth: 0 }}>
-      {/* ── Header ── */}
+      {/* ── Header: period selector + close ── */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800">
         <div className="flex items-center gap-3">
           <span className="text-white font-bold text-base">{symbol}</span>
-
           {/* Period buttons */}
           <div className="flex gap-1">
             {PERIODS.map(p => (
@@ -505,49 +504,14 @@ export default function CandidateChart({ symbol, scanResult, draftPlan, onClose 
             ))}
           </div>
         </div>
-
-        {/* Drawing toolbar */}
-        <div className="flex items-center gap-1.5">
+        {onClose && (
           <button
-            title="Horizontale Linie"
-            onClick={() => setActiveTool(t => t === "horizontal" ? null : "horizontal")}
-            className={`p-1.5 rounded transition ${toolActive("horizontal") ? "bg-amber-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"}`}
+            onClick={onClose}
+            className="p-1.5 rounded bg-gray-800 text-gray-400 hover:bg-gray-700 transition"
           >
-            <Minus size={14} />
+            <X size={14} />
           </button>
-          <button
-            title="Trendlinie"
-            onClick={() => { setActiveTool(t => t === "trendline" ? null : "trendline"); setPendingPoint(null); }}
-            className={`p-1.5 rounded transition ${toolActive("trendline") ? "bg-amber-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"}`}
-          >
-            <TrendingUp size={14} />
-          </button>
-          <button
-            title="Fibonacci Retracement"
-            onClick={() => { setActiveTool(t => t === "fibonacci" ? null : "fibonacci"); setPendingPoint(null); }}
-            className={`p-1.5 rounded transition ${toolActive("fibonacci") ? "bg-amber-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"}`}
-          >
-            <BarChart2 size={14} />
-          </button>
-          <button
-            title="Alle löschen"
-            onClick={clearAll}
-            className="p-1.5 rounded bg-gray-800 text-gray-400 hover:bg-red-900/40 hover:text-red-400 transition"
-          >
-            <Trash2 size={14} />
-          </button>
-
-          <div className="w-px h-4 bg-gray-700 mx-1" />
-
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded bg-gray-800 text-gray-400 hover:bg-gray-700 transition"
-            >
-              <X size={14} />
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Tool hint */}
@@ -559,26 +523,62 @@ export default function CandidateChart({ symbol, scanResult, draftPlan, onClose 
         </div>
       )}
 
-      {/* ── Chart area ── */}
-      <div className="relative" style={{ height: 420 }}>
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-950/80 z-20">
-            <Loader size={24} className="text-indigo-400 animate-spin" />
-          </div>
-        )}
-        {error && (
-          <div className="absolute inset-0 flex items-center justify-center z-20">
-            <span className="text-red-400 text-sm">{error}</span>
-          </div>
-        )}
-        {/* Lightweight-charts mounts here */}
-        <div ref={containerRef} className="w-full h-full" />
-        {/* Canvas overlay for trendlines + fibonacci */}
-        <canvas
-          ref={canvasRef}
-          className="absolute inset-0 w-full h-full pointer-events-none"
-          style={{ zIndex: 10 }}
-        />
+      {/* ── Main area: left toolbar + chart ── */}
+      <div className="flex flex-row">
+        {/* Left vertical drawing toolbar */}
+        <div className="flex flex-col items-center gap-1 py-2 px-1 border-r border-gray-800 bg-gray-950 w-9 flex-shrink-0">
+          <button
+            title="Horizontale Linie (H)"
+            onClick={() => setActiveTool(t => t === "horizontal" ? null : "horizontal")}
+            className={`p-1.5 rounded transition w-7 flex items-center justify-center ${toolActive("horizontal") ? "bg-amber-600 text-white" : "bg-gray-800/60 text-gray-400 hover:bg-gray-700"}`}
+          >
+            <Minus size={13} />
+          </button>
+          <button
+            title="Trendlinie (T)"
+            onClick={() => { setActiveTool(t => t === "trendline" ? null : "trendline"); setPendingPoint(null); }}
+            className={`p-1.5 rounded transition w-7 flex items-center justify-center ${toolActive("trendline") ? "bg-amber-600 text-white" : "bg-gray-800/60 text-gray-400 hover:bg-gray-700"}`}
+          >
+            <TrendingUp size={13} />
+          </button>
+          <button
+            title="Fibonacci Retracement (F)"
+            onClick={() => { setActiveTool(t => t === "fibonacci" ? null : "fibonacci"); setPendingPoint(null); }}
+            className={`p-1.5 rounded transition w-7 flex items-center justify-center ${toolActive("fibonacci") ? "bg-amber-600 text-white" : "bg-gray-800/60 text-gray-400 hover:bg-gray-700"}`}
+          >
+            <BarChart2 size={13} />
+          </button>
+          <div className="w-5 h-px bg-gray-800 my-0.5" />
+          <button
+            title="Alle Zeichnungen löschen"
+            onClick={clearAll}
+            className="p-1.5 rounded w-7 flex items-center justify-center bg-gray-800/60 text-gray-500 hover:bg-red-900/40 hover:text-red-400 transition"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+
+        {/* ── Chart area ── */}
+        <div className="relative flex-1" style={{ height: 420 }}>
+          {loading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-950/80 z-20">
+              <Loader size={24} className="text-indigo-400 animate-spin" />
+            </div>
+          )}
+          {error && (
+            <div className="absolute inset-0 flex items-center justify-center z-20">
+              <span className="text-red-400 text-sm">{error}</span>
+            </div>
+          )}
+          {/* Lightweight-charts mounts here */}
+          <div ref={containerRef} className="w-full h-full" />
+          {/* Canvas overlay for trendlines + fibonacci */}
+          <canvas
+            ref={canvasRef}
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            style={{ zIndex: 10 }}
+          />
+        </div>
       </div>
     </div>
   );

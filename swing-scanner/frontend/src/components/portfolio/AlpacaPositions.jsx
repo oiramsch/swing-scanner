@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 
 // ---------------------------------------------------------------------------
@@ -307,9 +307,9 @@ export default function AlpacaPositions() {
                 const isAdding  = addingFor === pos.ticker;
 
                 return (
-                  <>
+                  <React.Fragment key={pos.ticker}>
                     {/* Position row */}
-                    <tr key={pos.ticker} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                    <tr className="border-b border-gray-800/50 hover:bg-gray-800/30">
                       <td className="py-2 pr-3 font-semibold text-white">{pos.ticker}</td>
                       <td className="text-right pr-3 text-gray-300">{pos.qty}</td>
                       <td className="text-right pr-3 text-gray-300">${pos.avg_entry_price?.toFixed(2)}</td>
@@ -371,7 +371,7 @@ export default function AlpacaPositions() {
                         onModified={handleOrderModified}
                       />
                     ))}
-                  </>
+                  </React.Fragment>
                 );
               })}
             </tbody>
