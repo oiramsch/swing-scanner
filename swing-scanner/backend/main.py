@@ -2145,7 +2145,8 @@ async def research_chat(
     if not message:
         raise HTTPException(status_code=422, detail="message darf nicht leer sein")
 
-    history = data.get("history", [])
+    # Cap history to last 10 turns to avoid token spikes
+    history = data.get("history", [])[-10:]
 
     # ── Fetch ticker context (fundamentals + news) ──────────────────────────
     def _fetch_context():
@@ -2161,10 +2162,6 @@ async def research_chat(
             pass
         try:
             hist_1y = t.history(period="1y")
-        except Exception:
-            pass
-        try:
-            hist_1y_full = t.history(period="1y")
         except Exception:
             pass
         try:
@@ -2236,8 +2233,9 @@ async def research_chat(
     except Exception:
         pass
 
-    # Scan result (entry/SL/TP/CRV)
-    scan_result = get_result_by_ticker(sym)
+    # Scan result (entry/SL/TP/CRV) — fall back to latest scan date if today has no result
+    _scan_date = get_latest_scan_date() or date.today()
+    scan_result = get_result_by_ticker(sym, _scan_date)
     scan_block = ""
     if scan_result:
         scan_block = (
@@ -2274,7 +2272,7 @@ Short Float: {f"{round(float(info['shortPercentOfFloat'])*100,1)}%" if info.get(
 Earnings: {earnings_str}
 {scan_block}
 
-NEWS (letzte 48h):
+NEWS (aktuell):
 {news_lines}
 
 Antworte auf Deutsch. Keine Anlageberatung.
@@ -2312,7 +2310,7 @@ TRADE_JSON:{{"entry_low":X,"entry_high":X,"stop_loss":X,"target":X}}"""
     suggested_plan = None
     reply_text = raw_reply
 
-    trade_json_match = re.search(r"TRADE_JSON:(\{[^}]+\})", raw_reply)
+    trade_json_match = re.search(r"TRADE_JSON:(\{.*\})", raw_reply, re.DOTALL)
     if trade_json_match:
         try:
             import json as _json

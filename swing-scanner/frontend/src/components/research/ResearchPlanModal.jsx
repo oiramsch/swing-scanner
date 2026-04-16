@@ -73,10 +73,10 @@ function PositionSizer({ entryHigh, stopLoss, target, riskPct, brokers, selected
 }
 
 export default function ResearchPlanModal({ ticker, currentPrice, onClose, onSaved, onDraftChange, initialValues = {} }) {
-  const [entryLow,  setEntryLow]  = useState(initialValues.entry_low  ? String(initialValues.entry_low)  : (currentPrice ? String(currentPrice) : ""));
-  const [entryHigh, setEntryHigh] = useState(initialValues.entry_high ? String(initialValues.entry_high) : (currentPrice ? String(currentPrice) : ""));
-  const [stopLoss,  setStopLoss]  = useState(initialValues.stop_loss  ? String(initialValues.stop_loss)  : "");
-  const [target,    setTarget]    = useState(initialValues.target      ? String(initialValues.target)     : "");
+  const [entryLow,  setEntryLow]  = useState(initialValues.entry_low  != null ? String(initialValues.entry_low)  : (currentPrice ? String(currentPrice) : ""));
+  const [entryHigh, setEntryHigh] = useState(initialValues.entry_high != null ? String(initialValues.entry_high) : (currentPrice ? String(currentPrice) : ""));
+  const [stopLoss,  setStopLoss]  = useState(initialValues.stop_loss  != null ? String(initialValues.stop_loss)  : "");
+  const [target,    setTarget]    = useState(initialValues.target      != null ? String(initialValues.target)     : "");
   const [riskPct,   setRiskPct]   = useState("1");
   const [brokers,   setBrokers]   = useState([]);
   const [selectedBrokers, setSelectedBrokers] = useState([]);

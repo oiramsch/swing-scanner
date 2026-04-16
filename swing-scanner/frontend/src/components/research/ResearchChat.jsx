@@ -13,14 +13,18 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
   const [error,     setError]     = useState(null);
   const bottomRef   = useRef(null);
   const inputRef    = useRef(null);
+  // Track the ticker that is active when a request is sent — ignore stale responses
+  const activeTicker = useRef(ticker);
 
   // Re-start chat when ticker changes
   useEffect(() => {
     if (!ticker) return;
+    activeTicker.current = ticker;
     setMessages([]);
     setInput("");
     setError(null);
-    sendMessage("Analysiere dieses Setup als Swing-Trading-Kandidat.", []);
+    setLoading(false);
+    sendMessage("Analysiere dieses Setup als Swing-Trading-Kandidat.", [], ticker);
   }, [ticker]);
 
   // Auto-scroll to bottom on new messages
@@ -28,10 +32,11 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  async function sendMessage(text, history) {
+  async function sendMessage(text, history, forTicker) {
     const msg = (text ?? input).trim();
-    if (!msg || loading) return;
+    if (!msg) return;
 
+    const requestTicker = forTicker ?? ticker;
     const newHistory = history ?? messages.map(m => ({ role: m.role, content: m.content }));
 
     // Optimistically add user message (skip for initial auto-message)
@@ -44,10 +49,13 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
     setError(null);
 
     try {
-      const res = await axios.post(`/api/research/${ticker}/chat`, {
+      const res = await axios.post(`/api/research/${requestTicker}/chat`, {
         message: msg,
         history: newHistory,
       });
+
+      // Ignore response if the user switched tickers while the request was in flight
+      if (activeTicker.current !== requestTicker) return;
 
       const { reply, suggested_plan } = res.data;
       setMessages(prev => [
@@ -55,11 +63,13 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
         { role: "assistant", content: reply, suggestedPlan: suggested_plan ?? null },
       ]);
     } catch (err) {
+      if (activeTicker.current !== requestTicker) return;
       setError(err.response?.data?.detail || "Claude API nicht erreichbar.");
     } finally {
-      setLoading(false);
-      // Re-focus input after response
-      setTimeout(() => inputRef.current?.focus(), 50);
+      if (activeTicker.current === requestTicker) {
+        setLoading(false);
+        setTimeout(() => inputRef.current?.focus(), 50);
+      }
     }
   }
 
