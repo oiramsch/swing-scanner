@@ -1,7 +1,8 @@
 /**
  * ResearchChat — interaktiver KI-Assistent für einen Ticker.
  * Startet automatisch mit einer initialen Analyse und erlaubt freie Folgefragen.
- * Initiale Analyse wird per ticker+datum in localStorage gecacht (kein erneuter API-Call).
+ * Gesamtes Gespräch wird per ticker+datum in localStorage gecacht — beim Ticker-
+ * Wechsel und zurück ist das komplette Chat-Verlauf sofort wieder da.
  * Wenn die KI Trade-Parameter vorschlägt, erscheint ein "Plan erstellen ↗" Button.
  */
 import { useState, useEffect, useRef } from "react";
@@ -25,7 +26,7 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
   // Track the ticker that is active when a request is sent — ignore stale responses
   const activeTicker = useRef(ticker);
 
-  // Re-start chat when ticker changes; use localStorage cache if available
+  // Re-start chat when ticker changes; restore full conversation from cache if available
   useEffect(() => {
     if (!ticker) return;
     activeTicker.current = ticker;
@@ -37,8 +38,14 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
     try {
       const cached = localStorage.getItem(cacheKey(ticker));
       if (cached) {
-        const { content, suggestedPlan } = JSON.parse(cached);
-        setMessages([{ role: "assistant", content, suggestedPlan: suggestedPlan ?? null, fromCache: true }]);
+        const parsed = JSON.parse(cached);
+        // Support both new format { messages: [...] } and legacy { content, suggestedPlan }
+        if (parsed.messages) {
+          const restored = parsed.messages.map((m, i) => i === 0 ? { ...m, fromCache: true } : m);
+          setMessages(restored);
+        } else if (parsed.content) {
+          setMessages([{ role: "assistant", content: parsed.content, suggestedPlan: parsed.suggestedPlan ?? null, fromCache: true }]);
+        }
         return;
       }
     } catch (e) {
@@ -89,19 +96,17 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
 
       const { reply, suggested_plan } = res.data;
       const newMsg = { role: "assistant", content: reply, suggestedPlan: suggested_plan ?? null };
-      setMessages(prev => [...prev, newMsg]);
-
-      // Cache the initial analysis for today
-      if (isInitialAnalysis) {
+      setMessages(prev => {
+        const updated = [...prev, newMsg];
+        // Persist full conversation after every assistant response
         try {
-          localStorage.setItem(cacheKey(requestTicker), JSON.stringify({
-            content: reply,
-            suggestedPlan: suggested_plan ?? null,
-          }));
+          const toStore = updated.map(({ fromCache, ...m }) => m);  // strip UI-only flag
+          localStorage.setItem(cacheKey(requestTicker), JSON.stringify({ messages: toStore }));
         } catch (e) {
           console.error("Cache write failed for", requestTicker, e);
         }
-      }
+        return updated;
+      });
     } catch (err) {
       if (activeTicker.current !== requestTicker) return;
       setError(err.response?.data?.detail || "Claude API nicht erreichbar.");
@@ -120,8 +125,8 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
     }
   }
 
-  const firstMsg = messages[0];
-  const isCached = firstMsg?.fromCache === true;
+  const isCached = messages[0]?.fromCache === true;
+  const cachedCount = isCached ? messages.length : 0;
 
   return (
     <div className="flex flex-col h-full min-h-[420px]">
@@ -134,7 +139,9 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
       {/* Cache badge */}
       {isCached && (
         <div className="flex items-center gap-2 mb-2 px-1 flex-shrink-0">
-          <span className="text-[10px] text-gray-600">💾 Gecacht · {todayStr()}</span>
+          <span className="text-[10px] text-gray-600">
+            💾 Gecacht · {todayStr()} · {cachedCount} Nachricht{cachedCount !== 1 ? "en" : ""}
+          </span>
           <button
             onClick={handleRefresh}
             className="text-[10px] text-indigo-400 hover:text-indigo-300 transition"
