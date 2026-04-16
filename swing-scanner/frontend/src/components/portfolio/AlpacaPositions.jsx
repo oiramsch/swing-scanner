@@ -202,15 +202,70 @@ function NewOrderForm({ pos, onClose, onPlaced }) {
 }
 
 // ---------------------------------------------------------------------------
+// Planned order row — SL/TP from DB position when no active order exists
+// ---------------------------------------------------------------------------
+function PlannedOrderRow({ ticker, type, price, qty, onActivated }) {
+  const [activating, setActivating] = useState(false);
+  const isTP = type === "tp";
+  const label = isTP ? "TP" : "SL";
+  const color = isTP
+    ? "text-green-400 border-green-700/40 bg-green-900/10"
+    : "text-red-400 border-red-700/40 bg-red-900/10";
+
+  async function handleActivate() {
+    setActivating(true);
+    try {
+      const res = await axios.post("/api/orders/single", {
+        ticker,
+        qty,
+        type: isTP ? "limit_sell" : "stop_sell",
+        price,
+      });
+      onActivated(res.data);
+    } catch (err) {
+      alert(err.response?.data?.detail || "Order fehlgeschlagen");
+    } finally {
+      setActivating(false);
+    }
+  }
+
+  return (
+    <tr className="border-t border-gray-800/40 bg-gray-800/10">
+      <td className="py-1.5 pr-2 pl-6 text-gray-700 text-[10px]">└</td>
+      <td colSpan={4} className="py-1.5 pr-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${color} opacity-50`}>{label}</span>
+          <span className="text-gray-600 text-[11px]">{qty} Stk.</span>
+          <span className="text-gray-500 text-[11px] font-mono">@ ${price?.toFixed(2)}</span>
+          <span className="text-[10px] px-1 py-0.5 rounded text-gray-600 border border-gray-800 italic">geplant</span>
+        </div>
+      </td>
+      <td />
+      <td className="text-right py-1.5">
+        <button
+          onClick={handleActivate}
+          disabled={activating}
+          title={`${label}-Order zum geplanten Preis aktivieren`}
+          className="text-[10px] px-2 py-0.5 bg-indigo-900/30 hover:bg-indigo-700/50 border border-indigo-700/40 text-indigo-400 hover:text-indigo-200 rounded transition disabled:opacity-50"
+        >
+          {activating ? "…" : "Aktivieren"}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export default function AlpacaPositions() {
-  const [positions, setPositions]   = useState(null);
-  const [orders,    setOrders]      = useState([]);
-  const [loading,   setLoading]     = useState(true);
-  const [error,     setError]       = useState(null);
-  const [selling,   setSelling]     = useState({});
-  const [addingFor, setAddingFor]   = useState(null); // ticker of open new-order form
+  const [positions,   setPositions]   = useState(null);
+  const [orders,      setOrders]      = useState([]);
+  const [dbPositions, setDbPositions] = useState({});   // ticker → DB PortfolioPosition
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState(null);
+  const [selling,     setSelling]     = useState({});
+  const [addingFor,   setAddingFor]   = useState(null);
 
   useEffect(() => { fetchAll(); }, []);
 
@@ -218,15 +273,24 @@ export default function AlpacaPositions() {
     setLoading(true);
     setError(null);
     try {
-      const [posRes, ordRes] = await Promise.allSettled([
+      const [posRes, ordRes, dbRes] = await Promise.allSettled([
         axios.get("/api/portfolio/alpaca"),
         axios.get("/api/orders"),
+        axios.get("/api/portfolio"),
       ]);
       setPositions(posRes.status === "fulfilled" ? posRes.value.data : []);
       setOrders(ordRes.status === "fulfilled" ? ordRes.value.data : []);
       if (posRes.status === "rejected") {
         const msg = posRes.reason?.response?.data?.detail ?? posRes.reason?.message;
         setError(msg);
+      }
+      // Build ticker → DB position map for planned SL/TP display
+      if (dbRes.status === "fulfilled") {
+        const map = {};
+        for (const p of dbRes.value.data?.positions ?? []) {
+          map[p.ticker] = p;
+        }
+        setDbPositions(map);
       }
     } finally {
       setLoading(false);
@@ -300,11 +364,18 @@ export default function AlpacaPositions() {
             </thead>
             <tbody>
               {positions.map((pos) => {
-                const plPct    = pos.unrealized_plpc != null ? (pos.unrealized_plpc * 100) : null;
-                const plAbs    = pos.unrealized_pl;
-                const isPos    = (plAbs ?? 0) >= 0;
+                const plPct     = pos.unrealized_plpc != null ? (pos.unrealized_plpc * 100) : null;
+                const plAbs     = pos.unrealized_pl;
+                const isPos     = (plAbs ?? 0) >= 0;
                 const posOrders = ordersByTicker[pos.ticker] || [];
                 const isAdding  = addingFor === pos.ticker;
+                const dbPos     = dbPositions[pos.ticker];
+
+                // Determine which planned orders to show (only when no active order of that type)
+                const hasActiveTP = posOrders.some(o => o.side === "sell" && o.type === "limit");
+                const hasActiveSL = posOrders.some(o => o.side === "sell" && (o.type === "stop" || o.type === "stop_limit"));
+                const showPlannedTP = !hasActiveTP && dbPos?.target != null;
+                const showPlannedSL = !hasActiveSL && dbPos?.stop_loss != null;
 
                 return (
                   <React.Fragment key={pos.ticker}>
@@ -327,7 +398,6 @@ export default function AlpacaPositions() {
                       </td>
                       <td className="text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          {/* Add new order */}
                           <button
                             onClick={() => setAddingFor(isAdding ? null : pos.ticker)}
                             title="Neue Order setzen (TP / SL)"
@@ -339,7 +409,6 @@ export default function AlpacaPositions() {
                           >
                             +
                           </button>
-                          {/* Market sell */}
                           <button
                             onClick={() => handleSell(pos)}
                             disabled={!!selling[pos.ticker]}
@@ -362,7 +431,7 @@ export default function AlpacaPositions() {
                       />
                     )}
 
-                    {/* Child order rows (TP + SL) */}
+                    {/* Active child orders (TP + SL) */}
                     {posOrders.map(order => (
                       <OrderRow
                         key={order.id}
@@ -371,6 +440,26 @@ export default function AlpacaPositions() {
                         onModified={handleOrderModified}
                       />
                     ))}
+
+                    {/* Planned orders from DB — shown when no active order of that type exists */}
+                    {showPlannedTP && (
+                      <PlannedOrderRow
+                        ticker={pos.ticker}
+                        type="tp"
+                        price={dbPos.target}
+                        qty={pos.qty}
+                        onActivated={handleOrderPlaced}
+                      />
+                    )}
+                    {showPlannedSL && (
+                      <PlannedOrderRow
+                        ticker={pos.ticker}
+                        type="sl"
+                        price={dbPos.stop_loss}
+                        qty={pos.qty}
+                        onActivated={handleOrderPlaced}
+                      />
+                    )}
                   </React.Fragment>
                 );
               })}
