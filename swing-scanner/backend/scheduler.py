@@ -15,6 +15,7 @@ from backend.analyzer import analyze_chart
 from backend.chart_fetcher import render_chart
 from backend.config import settings
 from backend.database import (
+    PostMortemResult,
     PredictionArchive,
     ScanFunnel,
     ScanResult,
@@ -536,6 +537,129 @@ async def portfolio_signal_check(ctx: dict):
         logger.info("Trigger check: %d triggers fired", len(triggered))
     except Exception as exc:
         logger.error("Trigger check failed: %s", exc)
+
+
+async def post_mortem_scan(ctx: dict):
+    """
+    22:40 UTC — Post-Mortem Analyzer: top gainers des Tages vs. Scanner-Kandidaten.
+    Klassifiziert missed movers als 'good_reject' (technischer Grund) oder
+    'missed' (echter Blinder Fleck ohne Ablehnungsgrund).
+    """
+    import yfinance as yf
+    from sqlmodel import Session, select
+    from backend.database import get_engine
+    from backend.scanner.screener import _filter_reason, _get_filter_params, compute_indicators
+
+    logger.info("=== post_mortem_scan ===")
+    scan_date = date.today()
+
+    REJECTION_LABELS = {
+        "sma200": "Kurs unter SMA200",
+        "sma50": "Kurs unter SMA50",
+        "sma20": "Kurs unter SMA20",
+        "volume_min": "Volumen zu gering",
+        "rsi_range": "RSI außerhalb Bereich",
+        "rsi_bear": "RSI zu hoch (Bear-Regime)",
+        "price_range": "Kurs außerhalb Filter",
+        "relative_strength": "Underperformance vs. SPY",
+        "volume_surge": "Kein Volumen-Ausbruch",
+        "nan_indicators": "Zu wenig Daten",
+        "insufficient_bars": "Zu wenig Bars",
+    }
+
+    try:
+        engine = get_engine()
+
+        # 1. Gestern's Kandidaten aus DB laden
+        yesterday = scan_date - timedelta(days=1)
+        with Session(engine) as s:
+            yesterday_rows = s.exec(
+                select(ScanResult).where(ScanResult.scan_date == yesterday)
+            ).all()
+        yesterday_tickers = {r.ticker for r in yesterday_rows}
+        yesterday_active  = {r.ticker for r in yesterday_rows if r.candidate_status == "active"}
+
+        # 2. Universum laden und heutige Tagesgewinner bestimmen
+        try:
+            from backend.scanner.universe import get_universe
+            universe = await get_universe()
+        except Exception:
+            universe = []
+
+        if not universe:
+            logger.warning("post_mortem_scan: Universum leer, abgebrochen")
+            return
+
+        # Batch-Fetch via yfinance download für Geschwindigkeit
+        gainers = []
+        try:
+            import pandas as pd
+            tickers_str = " ".join(universe[:400])
+            df_batch = yf.download(tickers_str, period="2d", auto_adjust=True, progress=False)
+            closes = df_batch.get("Close")
+            if closes is not None and not closes.empty:
+                pct = closes.pct_change().iloc[-1] * 100
+                for sym, val in pct.items():
+                    if pd.notna(val):
+                        gainers.append((str(sym), float(val), float(closes[sym].iloc[-1])))
+        except Exception as exc:
+            logger.warning("post_mortem_scan: Batch-Fetch fehlgeschlagen: %s", exc)
+
+        top_gainers = sorted(gainers, key=lambda x: -x[1])[:30]
+        logger.info("post_mortem_scan: %d Gewinner für Analyse", len(top_gainers))
+
+        # 3. Pro Ticker klassifizieren
+        results = []
+        params = _get_filter_params("Bull Breakout")
+        for sym, pct, price in top_gainers:
+            was_cand   = sym in yesterday_tickers
+            was_active = sym in yesterday_active
+            rejection  = None
+            category   = "was_candidate" if was_cand else "missed"
+
+            if not was_cand:
+                try:
+                    df = yf.Ticker(sym).history(period="60d")
+                    df = compute_indicators(df)
+                    rejection = _filter_reason(df, params, regime="bull")
+                    if rejection:
+                        category = "good_reject"
+                except Exception as e:
+                    logger.debug("post_mortem filter failed for %s: %s", sym, e)
+                    rejection = "fetch_error"
+
+            results.append(PostMortemResult(
+                tenant_id=1,
+                scan_date=scan_date,
+                ticker=sym,
+                pct_change=round(pct, 2),
+                close_price=round(price, 2),
+                was_candidate=was_cand,
+                was_active=was_active,
+                rejection_reason=rejection,
+                category=category,
+            ))
+
+        # 4. Speichern (alte Einträge für heute zuerst löschen)
+        from sqlmodel import delete as _delete
+        with Session(engine) as s:
+            s.exec(
+                _delete(PostMortemResult).where(PostMortemResult.scan_date == scan_date)
+            )
+            for r in results:
+                s.add(r)
+            s.commit()
+
+        missed      = sum(1 for r in results if r.category == "missed")
+        good_reject = sum(1 for r in results if r.category == "good_reject")
+        was_cand    = sum(1 for r in results if r.category == "was_candidate")
+        logger.info(
+            "post_mortem_scan %s: %d total | %d war_kandidat | %d gut_abgelehnt | %d blinder_fleck",
+            scan_date, len(results), was_cand, good_reject, missed
+        )
+
+    except Exception as exc:
+        logger.error("post_mortem_scan failed: %s", exc, exc_info=True)
 
 
 async def watchlist_check(ctx: dict):
@@ -1275,6 +1399,7 @@ class WorkerSettings:
         entry_zone_check,
         check_scan_health,
         auto_paper_trade,
+        post_mortem_scan,
     ]
     cron_jobs = [
         cron(market_regime_update, hour={22}, minute={0}, run_at_startup=False),
@@ -1285,6 +1410,7 @@ class WorkerSettings:
         cron(performance_update, hour={22}, minute={45}, run_at_startup=False),
         cron(market_update_auto, hour={22}, minute={50}, run_at_startup=False),
         cron(daily_summary_notification, hour={22}, minute={55}, run_at_startup=False),
+        cron(post_mortem_scan, hour={22}, minute={40}, run_at_startup=False),
         cron(check_scan_health, hour={23}, minute={30}, run_at_startup=False),
         # Entry-zone check: hourly 14–20 UTC (09:00–15:00 ET, while market is open)
         cron(entry_zone_check, hour={14, 15, 16, 17, 18, 19, 20}, minute={0}, run_at_startup=False),

@@ -708,6 +708,50 @@ async def get_scan_by_module(
 
 
 # ---------------------------------------------------------------------------
+# Post-Mortem Analyzer
+# ---------------------------------------------------------------------------
+
+@app.get("/api/scanner/post-mortem")
+async def get_post_mortem(
+    date_str: Optional[str] = None,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Daily post-mortem: top gainers vs. scanner candidates.
+    Categories: 'was_candidate' | 'good_reject' | 'missed' (blind spot).
+    """
+    from backend.database import PostMortemResult, get_engine
+    from sqlmodel import Session, select as sql_select
+    target_date = date.fromisoformat(date_str) if date_str else date.today()
+    with Session(get_engine()) as s:
+        rows = s.exec(
+            sql_select(PostMortemResult)
+            .where(PostMortemResult.scan_date == target_date)
+            .order_by(PostMortemResult.pct_change.desc())
+        ).all()
+    return {
+        "date":    target_date.isoformat(),
+        "results": [r.model_dump() for r in rows],
+        "summary": {
+            "was_candidate": sum(1 for r in rows if r.category == "was_candidate"),
+            "good_reject":   sum(1 for r in rows if r.category == "good_reject"),
+            "missed":        sum(1 for r in rows if r.category == "missed"),
+        },
+    }
+
+
+@app.post("/api/scanner/post-mortem/trigger")
+async def trigger_post_mortem(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Manually trigger the post-mortem scan (for testing)."""
+    import asyncio
+    from backend.scheduler import post_mortem_scan
+    asyncio.create_task(post_mortem_scan({}))
+    return {"status": "triggered"}
+
+
+# ---------------------------------------------------------------------------
 # Ghost Portfolio — Predictions (1.7)
 # ---------------------------------------------------------------------------
 

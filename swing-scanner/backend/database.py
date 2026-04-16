@@ -2252,3 +2252,26 @@ def mark_trigger_reached(scan_result_id: int) -> None:
             sr.trigger_reached = True
             session.add(sr)
             session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Post-Mortem Analyzer
+# ---------------------------------------------------------------------------
+
+class PostMortemResult(SQLModel, table=True):
+    """
+    Daily record of top gainers vs. scanner candidates.
+    Categorizes missed movers as 'good_reject' (technical reason) or 'missed' (blind spot).
+    """
+    __tablename__ = "post_mortem_result"
+    id:               Optional[int]   = Field(default=None, primary_key=True)
+    tenant_id:        int             = Field(default=1, index=True)
+    scan_date:        date            = Field(index=True)
+    ticker:           str             = Field(index=True)
+    pct_change:       float                            # % gain on scan_date
+    close_price:      Optional[float] = None
+    was_candidate:    bool            = False          # True = appeared in yesterday's scan
+    was_active:       bool            = False          # True = candidate_status == "active"
+    rejection_reason: Optional[str]  = None           # "sma200"|"volume_min"|"rsi_range" etc.
+    category:         str            = "missed"       # "missed"|"good_reject"|"was_candidate"
+    created_at:       datetime       = Field(default_factory=datetime.utcnow)
