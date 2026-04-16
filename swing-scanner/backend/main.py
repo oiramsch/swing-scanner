@@ -1882,6 +1882,35 @@ async def get_alpaca_positions(current_user: AuthenticatedUser = Depends(get_cur
 # Research Endpoint (yfinance — BigData.com als Drop-in geplant)
 # ---------------------------------------------------------------------------
 
+def _fetch_rss_news(sym: str, limit: int = 8) -> list[dict]:
+    """Fetch news from Yahoo Finance RSS — free, no API key, more reliable than yfinance.news."""
+    import urllib.request
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
+
+    url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={sym}&region=US&lang=en-US"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            root = ET.fromstring(r.read())
+        result = []
+        for item in root.findall(".//item")[:limit]:
+            pub_raw = item.findtext("pubDate", "")
+            try:
+                pub_ts = int(parsedate_to_datetime(pub_raw).timestamp()) if pub_raw else None
+            except Exception:
+                pub_ts = None
+            result.append({
+                "title":        item.findtext("title", "").strip(),
+                "link":         item.findtext("link", "").strip(),
+                "publisher":    "Yahoo Finance",
+                "published_ts": pub_ts,
+            })
+        return result
+    except Exception:
+        return []
+
+
 @app.get("/api/research/{ticker}")
 async def research_ticker(
     ticker: str,
@@ -1916,28 +1945,7 @@ async def research_ticker(
         except Exception:
             pass
         try:
-            now_ts = time.time()
-            week_cutoff = now_ts - (7 * 24 * 3600)
-            raw_news = t.news or []
-
-            def _pub_ts(n):
-                pt = n.get("providerPublishTime")
-                if pt is None:
-                    return None
-                try:
-                    pt = float(pt)
-                    return pt / 1000.0 if pt > 1e12 else pt
-                except (TypeError, ValueError):
-                    return None
-
-            # 7-Tage-Fenster; falls leer → letzte 10 ohne Zeitfilter
-            news = []
-            for n in raw_news:
-                ts = _pub_ts(n)
-                if ts is None or ts > week_cutoff:
-                    news.append(n)
-            if not news:
-                news = raw_news[:10]
+            news = _fetch_rss_news(sym)
         except Exception:
             pass
         return info, hist, cal, news
@@ -2125,6 +2133,65 @@ async def research_seasonal(
     }
 
 
+@app.get("/api/research/{ticker}/financials")
+async def research_financials(
+    ticker: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    """
+    Analyst consensus + quarterly income statement (lazy, fetched on demand).
+    Data source: yfinance (free). Returns analyst target/recommendation + last 4 quarters IS.
+    """
+    import asyncio
+    import yfinance as yf
+
+    sym = ticker.upper().strip()
+
+    def _fetch():
+        t    = yf.Ticker(sym)
+        info = t.info or {}
+
+        analyst = {
+            "target_price":   info.get("targetMeanPrice"),
+            "target_high":    info.get("targetHighPrice"),
+            "target_low":     info.get("targetLowPrice"),
+            "recommendation": info.get("recommendationKey"),
+            "num_analysts":   info.get("numberOfAnalystOpinions"),
+            "current_price":  info.get("currentPrice") or info.get("regularMarketPrice"),
+        }
+
+        def _safe(df, row, col):
+            try:
+                return float(df.loc[row, col])
+            except Exception:
+                return None
+
+        quarters = []
+        try:
+            qis = t.quarterly_income_stmt
+            if qis is not None and not qis.empty:
+                for col in qis.columns[:4]:
+                    quarters.append({
+                        "period":       str(col.date()),
+                        "revenue":      _safe(qis, "Total Revenue",  col),
+                        "gross_profit": _safe(qis, "Gross Profit",   col),
+                        "net_income":   _safe(qis, "Net Income",     col),
+                        "ebitda":       _safe(qis, "EBITDA",         col),
+                    })
+        except Exception:
+            pass
+
+        return analyst, quarters
+
+    loop = asyncio.get_event_loop()
+    try:
+        analyst, quarters = await loop.run_in_executor(None, _fetch)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {"analyst": analyst, "quarters": quarters}
+
+
 @app.post("/api/research/{symbol}/chat")
 async def research_chat(
     symbol: str,
@@ -2174,8 +2241,7 @@ async def research_chat(
         except Exception:
             pass
         try:
-            raw_news = t.news or []
-            news = [n for n in raw_news[:5] if (n.get("title") or "").strip()]
+            news = _fetch_rss_news(sym, limit=5)
         except Exception:
             pass
         return info, hist_1y, cal, news
