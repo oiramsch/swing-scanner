@@ -43,7 +43,8 @@ def place_bracket_order(
     stop_loss_price: Union[Decimal, float],
 ) -> dict:
     """
-    Place a DAY bracket limit order: entry limit + take-profit limit + stop-loss stop.
+    Place a GTC bracket limit order: entry limit + take-profit limit + stop-loss stop.
+    GTC ensures child orders (TP/SL) persist across trading days and do not expire at close.
     """
     from alpaca.trading.requests import LimitOrderRequest, TakeProfitRequest, StopLossRequest
     from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
@@ -54,7 +55,7 @@ def place_bracket_order(
         qty=qty,
         side=OrderSide.BUY,
         limit_price=round(limit_price, 2),
-        time_in_force=TimeInForce.DAY,
+        time_in_force=TimeInForce.GTC,
         order_class=OrderClass.BRACKET,
         take_profit=TakeProfitRequest(limit_price=round(take_profit_price, 2)),
         stop_loss=StopLossRequest(stop_price=round(stop_loss_price, 2)),
@@ -75,8 +76,9 @@ def place_short_bracket_order(
     stop_loss_price: Union[Decimal, float],
 ) -> dict:
     """
-    Place a short sell bracket order: sell-short entry + buy-to-cover stop + buy-to-cover limit.
+    Place a short sell bracket order (GTC): sell-short entry + buy-to-cover stop + buy-to-cover limit.
     Only executes on paper accounts (guard enforced here and in AlpacaConnector).
+    GTC ensures child orders persist across trading days.
     """
     if not creds.get("is_paper", True):
         raise ValueError("Short selling nur auf Paper-Konto erlaubt.")
@@ -90,7 +92,7 @@ def place_short_bracket_order(
         qty=qty,
         side=OrderSide.SELL,                                     # sell short
         limit_price=round(limit_price, 2),
-        time_in_force=TimeInForce.DAY,
+        time_in_force=TimeInForce.GTC,
         order_class=OrderClass.BRACKET,
         take_profit=TakeProfitRequest(limit_price=round(take_profit_price, 2)),  # buy to cover
         stop_loss=StopLossRequest(stop_price=round(stop_loss_price, 2)),         # buy to cover
