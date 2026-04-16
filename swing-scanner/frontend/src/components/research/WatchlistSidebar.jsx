@@ -13,10 +13,12 @@ function RsiBadge({ rsi }) {
 }
 
 export default function WatchlistSidebar({ activeTicker, onSelect }) {
-  const [items,   setItems]   = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [loadErr, setLoadErr] = useState(false);
-  const [adding,  setAdding]  = useState(false);
+  const [items,      setItems]      = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [loadErr,    setLoadErr]    = useState(false);
+  const [adding,     setAdding]     = useState(false);
+  const [candidates,       setCandidates]       = useState([]);
+  const [candidateScanDate, setCandidateScanDate] = useState(null);
 
   async function load() {
     setLoadErr(false);
@@ -30,7 +32,21 @@ export default function WatchlistSidebar({ activeTicker, onSelect }) {
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    axios.get("/api/candidates")
+      .then(res => {
+        const list = Array.isArray(res.data?.candidates) ? res.data.candidates : [];
+        const scanDate = res.data?.stale_date || res.data?.scan_date || null;
+        const active = list
+          .filter(c => (c.candidate_status || "active") === "active")
+          .sort((a, b) => (b.composite_score || 0) - (a.composite_score || 0))
+          .slice(0, 8);
+        setCandidates(active);
+        setCandidateScanDate(scanDate);
+      })
+      .catch(err => { console.error("Failed to load candidates:", err); });
+  }, []);
 
   async function handleAdd() {
     if (!activeTicker) return;
@@ -135,6 +151,43 @@ export default function WatchlistSidebar({ activeTicker, onSelect }) {
           </div>
         ))}
       </div>
+
+      {/* Scanner-Kandidaten */}
+      {candidates.length > 0 && (
+        <div className="border-t border-gray-800 flex-shrink-0">
+          <div className="px-3 py-2 flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider">Scanner</span>
+            {candidateScanDate && (
+              <span className={`text-[9px] ${candidateScanDate !== new Date().toISOString().slice(0,10) ? "text-orange-500" : "text-gray-700"}`}>
+                {candidateScanDate}
+              </span>
+            )}
+          </div>
+          <div className="overflow-y-auto max-h-[280px]">
+            {candidates.map(c => (
+              <div
+                key={c.id}
+                onClick={() => onSelect(c.ticker)}
+                className={`flex items-center justify-between px-3 py-1.5 border-b border-gray-800/60 last:border-0 cursor-pointer hover:bg-gray-800/40 transition ${
+                  c.ticker === activeTicker ? "bg-indigo-900/20" : ""
+                }`}
+              >
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-semibold text-white">{c.ticker}</span>
+                  <span className="text-[10px] text-gray-600 ml-1.5 truncate">{c.setup_type}</span>
+                </div>
+                {c.crv_calculated != null && (
+                  <span className={`text-[10px] font-semibold flex-shrink-0 ${
+                    c.crv_calculated >= 2 ? "text-green-400" : "text-yellow-400"
+                  }`}>
+                    {c.crv_calculated.toFixed(1)}x
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

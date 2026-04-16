@@ -1,10 +1,19 @@
 /**
  * ResearchChat — interaktiver KI-Assistent für einen Ticker.
  * Startet automatisch mit einer initialen Analyse und erlaubt freie Folgefragen.
+ * Initiale Analyse wird per ticker+datum in localStorage gecacht (kein erneuter API-Call).
  * Wenn die KI Trade-Parameter vorschlägt, erscheint ein "Plan erstellen ↗" Button.
  */
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function cacheKey(ticker) {
+  return `research_analysis_${ticker}_${todayStr()}`;
+}
 
 export default function ResearchChat({ ticker, onSuggestPlan }) {
   const [messages,  setMessages]  = useState([]);
@@ -16,7 +25,7 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
   // Track the ticker that is active when a request is sent — ignore stale responses
   const activeTicker = useRef(ticker);
 
-  // Re-start chat when ticker changes
+  // Re-start chat when ticker changes; use localStorage cache if available
   useEffect(() => {
     if (!ticker) return;
     activeTicker.current = ticker;
@@ -24,6 +33,18 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
     setInput("");
     setError(null);
     setLoading(false);
+
+    try {
+      const cached = localStorage.getItem(cacheKey(ticker));
+      if (cached) {
+        const { content, suggestedPlan } = JSON.parse(cached);
+        setMessages([{ role: "assistant", content, suggestedPlan: suggestedPlan ?? null, fromCache: true }]);
+        return;
+      }
+    } catch (e) {
+      console.error("Cache read failed for", ticker, e);
+    }
+
     sendMessage("Analysiere dieses Setup als Swing-Trading-Kandidat.", [], ticker);
   }, [ticker]);
 
@@ -32,12 +53,21 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  function handleRefresh() {
+    try { localStorage.removeItem(cacheKey(ticker)); } catch (e) { console.error("Cache remove failed for", ticker, e); }
+    activeTicker.current = ticker;
+    setMessages([]);
+    setError(null);
+    sendMessage("Analysiere dieses Setup als Swing-Trading-Kandidat.", [], ticker);
+  }
+
   async function sendMessage(text, history, forTicker) {
     const msg = (text ?? input).trim();
     if (!msg) return;
 
     const requestTicker = forTicker ?? ticker;
     const newHistory = history ?? messages.map(m => ({ role: m.role, content: m.content }));
+    const isInitialAnalysis = Array.isArray(history) && history.length === 0;
 
     // Optimistically add user message (skip for initial auto-message)
     if (history === undefined) {
@@ -58,10 +88,20 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
       if (activeTicker.current !== requestTicker) return;
 
       const { reply, suggested_plan } = res.data;
-      setMessages(prev => [
-        ...prev,
-        { role: "assistant", content: reply, suggestedPlan: suggested_plan ?? null },
-      ]);
+      const newMsg = { role: "assistant", content: reply, suggestedPlan: suggested_plan ?? null };
+      setMessages(prev => [...prev, newMsg]);
+
+      // Cache the initial analysis for today
+      if (isInitialAnalysis) {
+        try {
+          localStorage.setItem(cacheKey(requestTicker), JSON.stringify({
+            content: reply,
+            suggestedPlan: suggested_plan ?? null,
+          }));
+        } catch (e) {
+          console.error("Cache write failed for", requestTicker, e);
+        }
+      }
     } catch (err) {
       if (activeTicker.current !== requestTicker) return;
       setError(err.response?.data?.detail || "Claude API nicht erreichbar.");
@@ -80,6 +120,9 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
     }
   }
 
+  const firstMsg = messages[0];
+  const isCached = firstMsg?.fromCache === true;
+
   return (
     <div className="flex flex-col h-full min-h-[420px]">
       {/* Disclaimer */}
@@ -87,6 +130,19 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
         <span className="mt-0.5">⚠️</span>
         <span>Diese KI-Analyse dient ausschließlich als Informationsquelle — keine Anlage- oder Handelsberatung. Alle Entscheidungen auf eigenes Risiko.</span>
       </div>
+
+      {/* Cache badge */}
+      {isCached && (
+        <div className="flex items-center gap-2 mb-2 px-1 flex-shrink-0">
+          <span className="text-[10px] text-gray-600">💾 Gecacht · {todayStr()}</span>
+          <button
+            onClick={handleRefresh}
+            className="text-[10px] text-indigo-400 hover:text-indigo-300 transition"
+          >
+            Neu analysieren
+          </button>
+        </div>
+      )}
 
       {/* Message list */}
       <div className="flex-1 overflow-y-auto space-y-3 pr-1 mb-3">

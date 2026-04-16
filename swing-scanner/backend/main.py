@@ -1917,22 +1917,27 @@ async def research_ticker(
             pass
         try:
             now_ts = time.time()
-            cutoff = now_ts - (48 * 3600)
+            week_cutoff = now_ts - (7 * 24 * 3600)
             raw_news = t.news or []
+
+            def _pub_ts(n):
+                pt = n.get("providerPublishTime")
+                if pt is None:
+                    return None
+                try:
+                    pt = float(pt)
+                    return pt / 1000.0 if pt > 1e12 else pt
+                except (TypeError, ValueError):
+                    return None
+
+            # 7-Tage-Fenster; falls leer → letzte 10 ohne Zeitfilter
             news = []
             for n in raw_news:
-                publish_time = n.get("providerPublishTime")
-                if publish_time is None:
+                ts = _pub_ts(n)
+                if ts is None or ts > week_cutoff:
                     news.append(n)
-                    continue
-                try:
-                    publish_time = float(publish_time)
-                    if publish_time > 1e12:
-                        publish_time /= 1000.0
-                    if publish_time > cutoff:
-                        news.append(n)
-                except (TypeError, ValueError):
-                    news.append(n)
+            if not news:
+                news = raw_news[:10]
         except Exception:
             pass
         return info, hist, cal, news
@@ -2292,7 +2297,7 @@ TRADE_JSON:{{"entry_low":X,"entry_high":X,"stop_loss":X,"target":X}}"""
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=600,
+            max_tokens=1200,
             system=system_prompt,
             messages=messages,
         )
