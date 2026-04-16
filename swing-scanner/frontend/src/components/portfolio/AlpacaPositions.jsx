@@ -214,7 +214,7 @@ function parseAlpacaError(detail) {
 // ---------------------------------------------------------------------------
 // Planned order row — SL/TP from DB position when no active order exists
 // ---------------------------------------------------------------------------
-function PlannedOrderRow({ ticker, type, price, qty, currentPrice, onActivated }) {
+function PlannedOrderRow({ ticker, type, price, qty, currentPrice, onActivated, onSold }) {
   const [activating, setActivating] = useState(false);
   const [errorMsg,   setErrorMsg]   = useState(null);
   const isTP = type === "tp";
@@ -249,8 +249,9 @@ function PlannedOrderRow({ ticker, type, price, qty, currentPrice, onActivated }
     setActivating(true);
     setErrorMsg(null);
     try {
-      await axios.post("/api/orders/sell", { ticker, qty });
-      onActivated({ ticker, type: "market_sell" });
+      const res = await axios.post("/api/orders/sell", { ticker, qty });
+      onActivated(res.data);
+      onSold?.();
     } catch (err) {
       setErrorMsg(parseAlpacaError(err.response?.data?.detail || "Market Sell fehlgeschlagen"));
     } finally {
@@ -504,6 +505,7 @@ export default function AlpacaPositions({ portfolioPositions }) {
                         qty={pos.qty}
                         currentPrice={pos.current_price}
                         onActivated={handleOrderPlaced}
+                        onSold={fetchAll}
                       />
                     )}
                     {showPlannedSL && (
@@ -514,6 +516,7 @@ export default function AlpacaPositions({ portfolioPositions }) {
                         qty={pos.qty}
                         currentPrice={pos.current_price}
                         onActivated={handleOrderPlaced}
+                        onSold={fetchAll}
                       />
                     )}
                   </React.Fragment>
