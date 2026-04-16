@@ -266,9 +266,104 @@ function TabNews({ news }) {
   );
 }
 
+// ── Finanzen Tab ────────────────────────────────────────────────────────────
+
+function TabFinanzen({ ticker }) {
+  const [data,    setData]    = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState(null);
+
+  useEffect(() => {
+    if (!ticker) return;
+    setLoading(true);
+    setError(null);
+    axios.get(`/api/research/${ticker}/financials`)
+      .then(r => setData(r.data))
+      .catch(() => setError("Finanzdaten nicht verfügbar"))
+      .finally(() => setLoading(false));
+  }, [ticker]);
+
+  if (loading) return <div className="animate-pulse h-32 bg-gray-800/50 rounded-xl" />;
+  if (error)   return <div className="text-gray-500 text-sm text-center py-8">{error}</div>;
+  if (!data)   return null;
+
+  const { analyst, quarters } = data;
+  const rec = analyst?.recommendation;
+  const recColor = rec?.includes("buy") ? "text-green-400" : rec === "hold" ? "text-yellow-400" : rec?.includes("sell") ? "text-red-400" : "text-gray-300";
+  const upside = analyst?.target_price && analyst?.current_price
+    ? ((analyst.target_price / analyst.current_price - 1) * 100).toFixed(1)
+    : null;
+
+  return (
+    <div className="space-y-4">
+      {/* Analyst Konsensus */}
+      {analyst?.recommendation && (
+        <SectionCard title="Analyst Konsensus">
+          <div className="flex items-center gap-4 flex-wrap">
+            <span className={`text-lg font-bold uppercase ${recColor}`}>
+              {rec?.replace(/_/g, " ")}
+            </span>
+            {analyst.target_price != null && (
+              <span className="text-gray-300 text-sm">
+                Kursziel: <span className="font-mono font-semibold">${analyst.target_price.toFixed(2)}</span>
+                {upside != null && (
+                  <span className={`ml-1 text-xs ${parseFloat(upside) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                    ({parseFloat(upside) >= 0 ? "+" : ""}{upside}%)
+                  </span>
+                )}
+              </span>
+            )}
+            {(analyst.target_high != null || analyst.target_low != null) && (
+              <span className="text-gray-600 text-xs">
+                ↑ ${analyst.target_high?.toFixed(2)} / ↓ ${analyst.target_low?.toFixed(2)}
+                {analyst.num_analysts != null && ` · ${analyst.num_analysts} Analysten`}
+              </span>
+            )}
+          </div>
+        </SectionCard>
+      )}
+
+      {/* Quarterly Income Statement */}
+      {quarters.length > 0 && (
+        <SectionCard title="Quartalsfinanzen (letzte 4Q)">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-gray-500 border-b border-gray-700">
+                  <th className="text-left py-2 pr-3">Quartal</th>
+                  <th className="text-right py-2 pr-3">Umsatz</th>
+                  <th className="text-right py-2 pr-3">Bruttogewinn</th>
+                  <th className="text-right py-2 pr-3">Nettogewinn</th>
+                  <th className="text-right py-2">EBITDA</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quarters.map(q => (
+                  <tr key={q.period} className="border-b border-gray-800/50 hover:bg-gray-700/20">
+                    <td className="py-2 pr-3 text-gray-400 font-mono">{q.period}</td>
+                    {[q.revenue, q.gross_profit, q.net_income, q.ebitda].map((v, i) => (
+                      <td key={i} className={`text-right py-2 pr-3 font-mono ${v != null && v < 0 ? "text-red-400" : "text-gray-300"}`}>
+                        {v != null ? `$${(v / 1e9).toFixed(2)}B` : "—"}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
+      )}
+
+      {!analyst?.recommendation && quarters.length === 0 && (
+        <div className="text-gray-500 text-sm text-center py-8">Keine Finanzdaten verfügbar.</div>
+      )}
+    </div>
+  );
+}
+
 // ── Main ResearchTab ────────────────────────────────────────────────────────
 
-const TABS = ["Übersicht", "Saisonal", "News", "KI-Beratung"];
+const TABS = ["Übersicht", "Saisonal", "News", "Finanzen", "KI-Beratung"];
 
 export default function ResearchTab() {
   const [query,    setQuery]    = useState("");
@@ -438,6 +533,7 @@ export default function ResearchTab() {
                   <div className={activeTab === "Übersicht"   ? "block" : "hidden"}><TabUebersicht data={data} currentPrice={currentPrice} perf={perf} /></div>
                   {visitedTabs.has("Saisonal")    && <div className={activeTab === "Saisonal"    ? "block" : "hidden"}><TabSeasonal ticker={data.ticker} /></div>}
                   {visitedTabs.has("News")        && <div className={activeTab === "News"        ? "block" : "hidden"}><TabNews news={data.news} /></div>}
+                  {visitedTabs.has("Finanzen")    && <div className={activeTab === "Finanzen"    ? "block" : "hidden"}><TabFinanzen ticker={data.ticker} /></div>}
                   {visitedTabs.has("KI-Beratung") && <div className={activeTab === "KI-Beratung" ? "block" : "hidden"}><ResearchChat ticker={data.ticker} onSuggestPlan={plan => { setSuggestedPlan(plan); setDraftPlan({ entryLow: plan.entry_low, entryHigh: plan.entry_high, stopLoss: plan.stop_loss, target: plan.target }); setShowPlan(true); }} /></div>}
                 </div>
               </div>
