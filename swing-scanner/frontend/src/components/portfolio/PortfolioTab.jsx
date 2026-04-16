@@ -192,9 +192,11 @@ export default function PortfolioTab() {
   const hasAlpacaBal     = !!alpacaBal;
 
   // ── Trade Republic / manual portfolio ───────────────────────────────────
-  // Exclude Alpaca-managed positions — they are shown via AlpacaPositions below
+  // Exclude Alpaca-managed positions — only when Alpaca broker has a real DB id.
+  // If id is null (env-fallback), skip filter to avoid hiding manual/unassigned positions.
+  const hasAlpacaBrokerId = alpacaBroker?.id != null;
   const trPositions = (portfolio?.positions ?? []).filter(
-    p => !alpacaBroker || p.broker_id !== alpacaBroker.id
+    p => !hasAlpacaBrokerId || p.broker_id !== alpacaBroker.id
   );
   const trBudget    = portfolio?.budget?.start_budget ?? 0;
   const trInvested  = trPositions.reduce((sum, p) => sum + (p.position_value || 0), 0);
@@ -346,7 +348,7 @@ export default function PortfolioTab() {
             { label: "Verfügbar", value: `$${fmt(alpacaCash, "en")}`, colorClass: "text-green-400" },
           ] : null}
         />
-        <AlpacaPositions />
+        <AlpacaPositions portfolioPositions={portfolio?.positions} />
       </div>
 
       {showAdd && (

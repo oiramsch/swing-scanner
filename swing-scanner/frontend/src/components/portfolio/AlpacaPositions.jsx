@@ -258,39 +258,45 @@ function PlannedOrderRow({ ticker, type, price, qty, onActivated }) {
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-export default function AlpacaPositions() {
-  const [positions,   setPositions]   = useState(null);
-  const [orders,      setOrders]      = useState([]);
-  const [dbPositions, setDbPositions] = useState({});   // ticker → DB PortfolioPosition
-  const [loading,     setLoading]     = useState(true);
-  const [error,       setError]       = useState(null);
-  const [selling,     setSelling]     = useState({});
-  const [addingFor,   setAddingFor]   = useState(null);
+export default function AlpacaPositions({ portfolioPositions }) {
+  const [positions,    setPositions]    = useState(null);
+  const [orders,       setOrders]       = useState([]);
+  const [ordersError,  setOrdersError]  = useState(false);  // true if order fetch failed
+  const [loading,      setLoading]      = useState(true);
+  const [error,        setError]        = useState(null);
+  const [selling,      setSelling]      = useState({});
+  const [addingFor,    setAddingFor]    = useState(null);
+
+  // Build ticker → DB position map from prop (avoids expensive /api/portfolio call)
+  const dbPositions = React.useMemo(() => {
+    const map = {};
+    for (const p of portfolioPositions ?? []) {
+      map[p.ticker] = p;
+    }
+    return map;
+  }, [portfolioPositions]);
 
   useEffect(() => { fetchAll(); }, []);
 
   async function fetchAll() {
     setLoading(true);
     setError(null);
+    setOrdersError(false);
     try {
-      const [posRes, ordRes, dbRes] = await Promise.allSettled([
+      const [posRes, ordRes] = await Promise.allSettled([
         axios.get("/api/portfolio/alpaca"),
         axios.get("/api/orders"),
-        axios.get("/api/portfolio"),
       ]);
       setPositions(posRes.status === "fulfilled" ? posRes.value.data : []);
-      setOrders(ordRes.status === "fulfilled" ? ordRes.value.data : []);
       if (posRes.status === "rejected") {
         const msg = posRes.reason?.response?.data?.detail ?? posRes.reason?.message;
         setError(msg);
       }
-      // Build ticker → DB position map for planned SL/TP display
-      if (dbRes.status === "fulfilled") {
-        const map = {};
-        for (const p of dbRes.value.data?.positions ?? []) {
-          map[p.ticker] = p;
-        }
-        setDbPositions(map);
+      if (ordRes.status === "fulfilled") {
+        setOrders(ordRes.value.data);
+      } else {
+        setOrders([]);
+        setOrdersError(true);
       }
     } finally {
       setLoading(false);
@@ -371,11 +377,12 @@ export default function AlpacaPositions() {
                 const isAdding  = addingFor === pos.ticker;
                 const dbPos     = dbPositions[pos.ticker];
 
-                // Determine which planned orders to show (only when no active order of that type)
+                // Determine which planned orders to show (only when no active order of that type).
+                // Suppress entirely if orders fetch failed — can't distinguish "no orders" from "fetch error".
                 const hasActiveTP = posOrders.some(o => o.side === "sell" && o.type === "limit");
                 const hasActiveSL = posOrders.some(o => o.side === "sell" && (o.type === "stop" || o.type === "stop_limit"));
-                const showPlannedTP = !hasActiveTP && dbPos?.target != null;
-                const showPlannedSL = !hasActiveSL && dbPos?.stop_loss != null;
+                const showPlannedTP = !ordersError && !hasActiveTP && dbPos?.target != null;
+                const showPlannedSL = !ordersError && !hasActiveSL && dbPos?.stop_loss != null;
 
                 return (
                   <React.Fragment key={pos.ticker}>
