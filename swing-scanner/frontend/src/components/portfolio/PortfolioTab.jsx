@@ -192,12 +192,17 @@ export default function PortfolioTab() {
   const hasAlpacaBal     = !!alpacaBal;
 
   // ── Trade Republic / manual portfolio ───────────────────────────────────
-  const trBudget    = portfolio?.budget?.start_budget  ?? 0;
-  const trInvested  = portfolio?.total_invested        ?? 0;
-  const trAvailable = portfolio?.available_capital     ?? 0;
-  const trPnl       = portfolio?.closed_pnl            ?? 0;
+  // Exclude Alpaca-managed positions — they are shown via AlpacaPositions below
+  const trPositions = (portfolio?.positions ?? []).filter(
+    p => !alpacaBroker || p.broker_id !== alpacaBroker.id
+  );
+  const trBudget    = portfolio?.budget?.start_budget ?? 0;
+  const trInvested  = trPositions.reduce((sum, p) => sum + (p.position_value || 0), 0);
+  const trAvailable = trBudget - trInvested;
+  const trPnl       = portfolio?.closed_pnl ?? 0;
 
   // ── Consolidated totals (all in EUR) ────────────────────────────────────
+  // trInvested is now calculated from filtered trPositions (no Alpaca overlap)
   const totalBudget    = trBudget    + alpacaPortfolioV / eur2usd;
   const totalInvested  = trInvested  + alpacaInvested   / eur2usd;
   const totalAvailable = trAvailable + alpacaCash        / eur2usd;
@@ -323,7 +328,7 @@ export default function PortfolioTab() {
           ]}
         />
         <PortfolioByBroker
-          positions={portfolio?.positions ?? []}
+          positions={trPositions}
           onUpdate={fetchPortfolio}
         />
       </div>
