@@ -201,19 +201,34 @@ function NewOrderForm({ pos, onClose, onPlaced }) {
   );
 }
 
+// Parses Alpaca API error strings (often JSON) into a readable message.
+function parseAlpacaError(detail) {
+  try {
+    const obj = JSON.parse(detail);
+    return obj.message ?? detail;
+  } catch {
+    return detail;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Planned order row — SL/TP from DB position when no active order exists
 // ---------------------------------------------------------------------------
-function PlannedOrderRow({ ticker, type, price, qty, onActivated }) {
+function PlannedOrderRow({ ticker, type, price, qty, currentPrice, onActivated, onSold }) {
   const [activating, setActivating] = useState(false);
+  const [errorMsg,   setErrorMsg]   = useState(null);
   const isTP = type === "tp";
   const label = isTP ? "TP" : "SL";
   const color = isTP
     ? "text-green-400 border-green-700/40 bg-green-900/10"
     : "text-red-400 border-red-700/40 bg-red-900/10";
 
+  // SL is breached when the current price has already fallen below the stop price
+  const slBreached = !isTP && currentPrice != null && price != null && price >= currentPrice;
+
   async function handleActivate() {
     setActivating(true);
+    setErrorMsg(null);
     try {
       const res = await axios.post("/api/orders/single", {
         ticker,
@@ -223,7 +238,22 @@ function PlannedOrderRow({ ticker, type, price, qty, onActivated }) {
       });
       onActivated(res.data);
     } catch (err) {
-      alert(err.response?.data?.detail || "Order fehlgeschlagen");
+      setErrorMsg(parseAlpacaError(err.response?.data?.detail || "Order fehlgeschlagen"));
+    } finally {
+      setActivating(false);
+    }
+  }
+
+  async function handleMarketSell() {
+    if (!window.confirm(`Market-Sell ${qty} × ${ticker}?\nSL bereits bei $${price?.toFixed(2)} durchbrochen.`)) return;
+    setActivating(true);
+    setErrorMsg(null);
+    try {
+      const res = await axios.post("/api/orders/sell", { ticker, qty });
+      onActivated(res.data);
+      onSold?.();
+    } catch (err) {
+      setErrorMsg(parseAlpacaError(err.response?.data?.detail || "Market Sell fehlgeschlagen"));
     } finally {
       setActivating(false);
     }
@@ -237,19 +267,37 @@ function PlannedOrderRow({ ticker, type, price, qty, onActivated }) {
           <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold ${color} opacity-50`}>{label}</span>
           <span className="text-gray-600 text-[11px]">{qty} Stk.</span>
           <span className="text-gray-500 text-[11px] font-mono">@ ${price?.toFixed(2)}</span>
-          <span className="text-[10px] px-1 py-0.5 rounded text-gray-600 border border-gray-800 italic">geplant</span>
+          {slBreached ? (
+            <span className="text-[10px] px-1 py-0.5 rounded text-orange-400 border border-orange-700/50 bg-orange-900/10">
+              SL durchbrochen
+            </span>
+          ) : (
+            <span className="text-[10px] px-1 py-0.5 rounded text-gray-600 border border-gray-800 italic">geplant</span>
+          )}
+          {errorMsg && <span className="text-[10px] text-red-400">{errorMsg}</span>}
         </div>
       </td>
       <td />
       <td className="text-right py-1.5">
-        <button
-          onClick={handleActivate}
-          disabled={activating}
-          title={`${label}-Order zum geplanten Preis aktivieren`}
-          className="text-[10px] px-2 py-0.5 bg-indigo-900/30 hover:bg-indigo-700/50 border border-indigo-700/40 text-indigo-400 hover:text-indigo-200 rounded transition disabled:opacity-50"
-        >
-          {activating ? "…" : "Aktivieren"}
-        </button>
+        {slBreached ? (
+          <button
+            onClick={handleMarketSell}
+            disabled={activating}
+            title={`SL bei $${price?.toFixed(2)} bereits durchbrochen — sofort zum Marktpreis verkaufen`}
+            className="text-[10px] px-2 py-0.5 bg-red-700/40 hover:bg-red-700/70 border border-red-600/50 text-red-300 rounded transition disabled:opacity-50"
+          >
+            {activating ? "…" : "Market Sell"}
+          </button>
+        ) : (
+          <button
+            onClick={handleActivate}
+            disabled={activating}
+            title={`${label}-Order zum geplanten Preis aktivieren`}
+            className="text-[10px] px-2 py-0.5 bg-indigo-900/30 hover:bg-indigo-700/50 border border-indigo-700/40 text-indigo-400 hover:text-indigo-200 rounded transition disabled:opacity-50"
+          >
+            {activating ? "…" : "Aktivieren"}
+          </button>
+        )}
       </td>
     </tr>
   );
@@ -455,7 +503,9 @@ export default function AlpacaPositions({ portfolioPositions }) {
                         type="tp"
                         price={dbPos.target}
                         qty={pos.qty}
+                        currentPrice={pos.current_price}
                         onActivated={handleOrderPlaced}
+                        onSold={fetchAll}
                       />
                     )}
                     {showPlannedSL && (
@@ -464,7 +514,9 @@ export default function AlpacaPositions({ portfolioPositions }) {
                         type="sl"
                         price={dbPos.stop_loss}
                         qty={pos.qty}
+                        currentPrice={pos.current_price}
                         onActivated={handleOrderPlaced}
+                        onSold={fetchAll}
                       />
                     )}
                   </React.Fragment>
