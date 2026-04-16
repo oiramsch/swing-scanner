@@ -41,7 +41,9 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
         setMessages([{ role: "assistant", content, suggestedPlan: suggestedPlan ?? null, fromCache: true }]);
         return;
       }
-    } catch {}
+    } catch (e) {
+      console.error("Cache read failed for", ticker, e);
+    }
 
     sendMessage("Analysiere dieses Setup als Swing-Trading-Kandidat.", [], ticker);
   }, [ticker]);
@@ -52,7 +54,7 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
   }, [messages, loading]);
 
   function handleRefresh() {
-    try { localStorage.removeItem(cacheKey(ticker)); } catch {}
+    try { localStorage.removeItem(cacheKey(ticker)); } catch (e) { console.error("Cache remove failed for", ticker, e); }
     activeTicker.current = ticker;
     setMessages([]);
     setError(null);
@@ -96,7 +98,9 @@ export default function ResearchChat({ ticker, onSuggestPlan }) {
             content: reply,
             suggestedPlan: suggested_plan ?? null,
           }));
-        } catch {}
+        } catch (e) {
+          console.error("Cache write failed for", requestTicker, e);
+        }
       }
     } catch (err) {
       if (activeTicker.current !== requestTicker) return;

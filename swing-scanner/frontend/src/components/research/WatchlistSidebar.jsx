@@ -17,7 +17,8 @@ export default function WatchlistSidebar({ activeTicker, onSelect }) {
   const [loading,    setLoading]    = useState(true);
   const [loadErr,    setLoadErr]    = useState(false);
   const [adding,     setAdding]     = useState(false);
-  const [candidates, setCandidates] = useState([]);
+  const [candidates,       setCandidates]       = useState([]);
+  const [candidateScanDate, setCandidateScanDate] = useState(null);
 
   async function load() {
     setLoadErr(false);
@@ -35,13 +36,16 @@ export default function WatchlistSidebar({ activeTicker, onSelect }) {
     load();
     axios.get("/api/candidates")
       .then(res => {
-        const active = (res.data || [])
-          .filter(c => c.candidate_status === "active")
+        const list = Array.isArray(res.data?.candidates) ? res.data.candidates : [];
+        const scanDate = res.data?.stale_date || res.data?.scan_date || null;
+        const active = list
+          .filter(c => (c.candidate_status || "active") === "active")
           .sort((a, b) => (b.composite_score || 0) - (a.composite_score || 0))
           .slice(0, 8);
         setCandidates(active);
+        setCandidateScanDate(scanDate);
       })
-      .catch(() => {});
+      .catch(err => { console.error("Failed to load candidates:", err); });
   }, []);
 
   async function handleAdd() {
@@ -151,8 +155,13 @@ export default function WatchlistSidebar({ activeTicker, onSelect }) {
       {/* Scanner-Kandidaten */}
       {candidates.length > 0 && (
         <div className="border-t border-gray-800 flex-shrink-0">
-          <div className="px-3 py-2 text-[10px] font-semibold text-gray-600 uppercase tracking-wider">
-            Scanner heute
+          <div className="px-3 py-2 flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider">Scanner</span>
+            {candidateScanDate && (
+              <span className={`text-[9px] ${candidateScanDate !== new Date().toISOString().slice(0,10) ? "text-orange-500" : "text-gray-700"}`}>
+                {candidateScanDate}
+              </span>
+            )}
           </div>
           <div className="overflow-y-auto max-h-[280px]">
             {candidates.map(c => (

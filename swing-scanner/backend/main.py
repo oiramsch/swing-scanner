@@ -1931,7 +1931,11 @@ async def research_ticker(
                     return None
 
             # 7-Tage-Fenster; falls leer → letzte 10 ohne Zeitfilter
-            news = [n for n in raw_news if _pub_ts(n) is None or _pub_ts(n) > week_cutoff]
+            news = []
+            for n in raw_news:
+                ts = _pub_ts(n)
+                if ts is None or ts > week_cutoff:
+                    news.append(n)
             if not news:
                 news = raw_news[:10]
         except Exception:
