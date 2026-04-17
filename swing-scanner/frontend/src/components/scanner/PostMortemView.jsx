@@ -53,7 +53,7 @@ export default function PostMortemView() {
     setTriggering(true);
     try {
       await axios.post("/api/scanner/post-mortem/trigger");
-      setTimeout(() => { load(); setTriggering(false); }, 3000);
+      setTimeout(() => { load(); setTriggering(false); }, 15000);
     } catch {
       setTriggering(false);
     }

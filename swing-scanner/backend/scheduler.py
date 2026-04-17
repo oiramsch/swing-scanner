@@ -545,27 +545,16 @@ async def post_mortem_scan(ctx: dict):
     Klassifiziert missed movers als 'good_reject' (technischer Grund) oder
     'missed' (echter Blinder Fleck ohne Ablehnungsgrund).
     """
+    import asyncio as _asyncio
+    import json as _json
     import yfinance as yf
     from sqlmodel import Session, select
-    from backend.database import get_engine
-    from backend.scanner.screener import _filter_reason, _get_filter_params, compute_indicators
+    from backend.database import get_engine, get_active_universes
+    from backend.screener import _filter_reason, _get_filter_params, compute_indicators
+    from backend.providers.yfinance_provider import YFinanceProvider
 
     logger.info("=== post_mortem_scan ===")
     scan_date = date.today()
-
-    REJECTION_LABELS = {
-        "sma200": "Kurs unter SMA200",
-        "sma50": "Kurs unter SMA50",
-        "sma20": "Kurs unter SMA20",
-        "volume_min": "Volumen zu gering",
-        "rsi_range": "RSI außerhalb Bereich",
-        "rsi_bear": "RSI zu hoch (Bear-Regime)",
-        "price_range": "Kurs außerhalb Filter",
-        "relative_strength": "Underperformance vs. SPY",
-        "volume_surge": "Kein Volumen-Ausbruch",
-        "nan_indicators": "Zu wenig Daten",
-        "insufficient_bars": "Zu wenig Bars",
-    }
 
     try:
         engine = get_engine()
@@ -579,23 +568,35 @@ async def post_mortem_scan(ctx: dict):
         yesterday_tickers = {r.ticker for r in yesterday_rows}
         yesterday_active  = {r.ticker for r in yesterday_rows if r.candidate_status == "active"}
 
-        # 2. Universum laden und heutige Tagesgewinner bestimmen
-        try:
-            from backend.scanner.universe import get_universe
-            universe = await get_universe()
-        except Exception:
-            universe = []
+        # 2. Universum laden (identisch zu screener.py Step 1)
+        provider = YFinanceProvider()
+        active_universes = get_active_universes()
+        if active_universes:
+            symbols_set: set[str] = set()
+            for u in active_universes:
+                if u.tickers_source == "custom_json" and u.tickers_json:
+                    try:
+                        symbols_set.update(_json.loads(u.tickers_json))
+                    except Exception:
+                        pass
+                else:
+                    symbols_set.update(provider.get_symbols(u.tickers_source.replace("static_", "")))
+            universe = sorted(symbols_set)
+        else:
+            universe = provider.get_symbols("sp500")
 
         if not universe:
             logger.warning("post_mortem_scan: Universum leer, abgebrochen")
             return
 
-        # Batch-Fetch via yfinance download für Geschwindigkeit
+        # Batch-Fetch via yfinance download für Geschwindigkeit (non-blocking)
         gainers = []
         try:
             import pandas as pd
-            tickers_str = " ".join(universe[:400])
-            df_batch = yf.download(tickers_str, period="2d", auto_adjust=True, progress=False)
+            tickers_str = " ".join(universe)
+            df_batch = await _asyncio.to_thread(
+                yf.download, tickers_str, period="2d", auto_adjust=True, progress=False
+            )
             closes = df_batch.get("Close")
             if closes is not None and not closes.empty:
                 pct = closes.pct_change().iloc[-1] * 100
@@ -619,7 +620,7 @@ async def post_mortem_scan(ctx: dict):
 
             if not was_cand:
                 try:
-                    df = yf.Ticker(sym).history(period="60d")
+                    df = await _asyncio.to_thread(yf.Ticker(sym).history, period="60d")
                     df = compute_indicators(df)
                     rejection = _filter_reason(df, params, regime="bull")
                     if rejection:
@@ -627,6 +628,7 @@ async def post_mortem_scan(ctx: dict):
                 except Exception as e:
                     logger.debug("post_mortem filter failed for %s: %s", sym, e)
                     rejection = "fetch_error"
+                    category  = "good_reject"
 
             results.append(PostMortemResult(
                 tenant_id=1,

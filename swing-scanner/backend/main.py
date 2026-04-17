@@ -722,7 +722,10 @@ async def get_post_mortem(
     """
     from backend.database import PostMortemResult, get_engine
     from sqlmodel import Session, select as sql_select
-    target_date = date.fromisoformat(date_str) if date_str else date.today()
+    try:
+        target_date = date.fromisoformat(date_str) if date_str else date.today()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Ungültiges Datumsformat. Erwartet: YYYY-MM-DD.")
     with Session(get_engine()) as s:
         rows = s.exec(
             sql_select(PostMortemResult)
@@ -740,14 +743,19 @@ async def get_post_mortem(
     }
 
 
+def _run_post_mortem_sync() -> None:
+    import asyncio
+    from backend.scheduler import post_mortem_scan
+    asyncio.run(post_mortem_scan({}))
+
+
 @app.post("/api/scanner/post-mortem/trigger")
 async def trigger_post_mortem(
+    background_tasks: BackgroundTasks,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Manually trigger the post-mortem scan (for testing)."""
-    import asyncio
-    from backend.scheduler import post_mortem_scan
-    asyncio.create_task(post_mortem_scan({}))
+    background_tasks.add_task(_run_post_mortem_sync)
     return {"status": "triggered"}
 
 
