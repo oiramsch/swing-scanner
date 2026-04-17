@@ -3,6 +3,7 @@ import axios from "axios";
 import CandidateCard from "./CandidateCard.jsx";
 import FilterPanel from "./FilterPanel.jsx";
 import FunnelDiagnostics from "./FunnelDiagnostics.jsx";
+import PostMortemView from "./PostMortemView.jsx";
 
 // 1.4 — Regime → best module mapping
 const REGIME_MODULE = {
@@ -633,6 +634,9 @@ export default function ScannerTab({ scanStatus, onScanStatusChange, onScanStart
           )}
         </div>
       )}
+
+      {/* Post-Mortem Analyzer */}
+      <PostMortemView />
     </div>
   );
 }
